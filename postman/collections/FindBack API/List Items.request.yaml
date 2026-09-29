@@ -1,0 +1,7 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/api/v1/items?limit=20'
+order: 4000
+queryParams:
+  - key: limit
+    value: '20'

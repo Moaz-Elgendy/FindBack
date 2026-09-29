@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+.expo/
+dist/
+*.db
+celerybeat-schedule
+.coverage
+.pytest_cache/
+.DS_Store
+mobile/.expo-shared

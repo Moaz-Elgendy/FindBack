@@ -1,0 +1,7 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/api/v1/items/:item_id'
+order: 5000
+pathVariables:
+  - key: item_id
+    value: '{{item_id}}'

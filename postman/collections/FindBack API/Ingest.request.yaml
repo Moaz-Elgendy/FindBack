@@ -1,0 +1,15 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/api/v1/ingest'
+order: 2000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "url": "https://example.com/tutorial?utm_source=postman",
+      "preview": "A practical tutorial saved from Postman.",
+      "title_hint": "Example tutorial"
+    }

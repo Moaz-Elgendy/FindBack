@@ -1,0 +1,59 @@
+openapi: 3.0.3
+info:
+  title: FindBack API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      responses:
+        '200': { description: Service health }
+  /api/v1/ingest:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IngestRequest' }
+      responses:
+        '200': { description: Accepted }
+  /api/v1/sync/batch:
+    post:
+      responses:
+        '200': { description: Batch mapping }
+  /api/v1/search:
+    get:
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 10, maximum: 50 } }
+      responses:
+        '200': { description: Search results }
+  /api/v1/items:
+    get:
+      responses:
+        '200': { description: Paginated memories }
+  /api/v1/items/{item_id}:
+    parameters:
+      - { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      responses:
+        '200': { description: Memory detail }
+    delete:
+      responses:
+        '204': { description: Deleted }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    IngestRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+        preview: { type: string }
+        title_hint: { type: string }

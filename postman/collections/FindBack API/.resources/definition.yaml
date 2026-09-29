@@ -1,0 +1,13 @@
+$kind: collection
+name: FindBack API
+description: Save, sync, search, inspect, and delete FindBack memories.
+variables:
+  - key: base_url
+    value: 'http://localhost:8000'
+  - key: access_token
+    value: ''
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
