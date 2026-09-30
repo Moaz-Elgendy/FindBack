@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 from typing import Optional
 
@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session, sessionmaker, declarative_base
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://findback:findback@localhost:5432/findback")
 # Sync engine by design for the MVP (ARCHITECTURE previously overclaimed an async engine).
-SYNC_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://")
+SYNC_URL = DATABASE_URL.replace("postgresql://", "postgresql://")
 
-# backend/ — lets us resolve alembic.ini and the `app` package from any cwd
+# backend/ â€” lets us resolve alembic.ini and the `app` package from any cwd
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 Base = declarative_base()
@@ -61,7 +61,7 @@ def ensure_extensions() -> None:
 
 
 def create_all() -> None:
-    """Create schema from models. Dev convenience only — Alembic is the source of truth."""
+    """Create schema from models. Dev convenience only â€” Alembic is the source of truth."""
     ensure_extensions()
     Base.metadata.create_all(bind=get_engine())
 
@@ -113,4 +113,5 @@ def init_db() -> str:
             "Fix DB access/permissions, or set SCHEMA_BOOTSTRAP=create for a throwaway "
             "dev DB, or SCHEMA_BOOTSTRAP=none to migrate manually."
         ) from exc
+
 

@@ -36,9 +36,9 @@ class ApiClient {
               BaseOptions(
                 connectTimeout: const Duration(seconds: 10),
                 receiveTimeout: const Duration(seconds: 20),
-                // The queue inspects status codes itself; don't throw on 4xx/5xx
-                // before we have a chance to classify them.
-                validateStatus: (int? status) => status != null && status < 400,
+                // Accept all HTTP responses so _send can classify 4xx/5xx
+                // consistently instead of Dio throwing before classification.
+                validateStatus: (int? status) => status != null && status < 600,
               ),
             ) {
     _tokens = tokens ?? TokenStore();
@@ -126,11 +126,26 @@ class ApiClient {
       throw ApiException('malformed request: ${error.message}', kind: ApiFailureKind.malformed);
     }
 
+    final status = response.statusCode;
+    if (status == null || status >= 400) {
+      final detail = response.data is Map && response.data['detail'] is String
+          ? response.data['detail'] as String
+          : 'request failed with HTTP ${status ?? 'unknown'}';
+      throw ApiException(
+        detail,
+        statusCode: status,
+        kind: status == 401 || status == 403
+            ? ApiFailureKind.unauthorized
+            : status != null && status >= 500
+                ? ApiFailureKind.server
+                : ApiFailureKind.rejected,
+      );
+    }
     final data = response.data;
     if (data == null) return <String, dynamic>{}; // 204 No Content
     if (data is Map) return Map<String, dynamic>.from(data);
     throw ApiException('expected a JSON object, got ${data.runtimeType}',
-        statusCode: response.statusCode, kind: ApiFailureKind.malformed);
+        statusCode: status, kind: ApiFailureKind.malformed);
   }
 
   ApiException _classify(DioException error) {

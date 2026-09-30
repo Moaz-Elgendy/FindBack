@@ -1,9 +1,14 @@
-# Use this workspace to collaborate
 workspace:
   id: b371e8fd-ff5a-4f6a-81db-f7f567ea38fe
-
-# All resources in the `postman/` folder are automatically registered in Local View.
-# Point to additional files outside the `postman/` folder to register them individually. Example:
-#localResources:
-#  collections:
-#    - ../tests/E2E Test Collection/
+resourceNameMappings:
+  specs:
+    - ../postman/specs/FindBack API/index.yaml: index.yaml
+cloudResources:
+  collections:
+    ../postman/collections/FindBack API: 58587272-54c654c0-652c-481b-b850-e480d821d5c9
+  environments:
+    ../postman/environments/FindBack Local.environment.yaml: 58587272-be45d9ab-08fc-438f-a237-a46c82b5faeb
+  specs:
+    ../postman/specs/FindBack API/index.yaml: d41d7812-2c53-4da2-af79-c11ce2fd17c1
+  globals:
+    ../postman/globals/workspace.globals.yaml: 1f932923-c2b0-4bf8-864e-705ae2f61874
