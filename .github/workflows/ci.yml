@@ -16,7 +16,20 @@ jobs:
     defaults: { run: { working-directory: mobile } }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: npm, cache-dependency-path: mobile/package-lock.json }
-      - run: npm ci
-      - run: npx tsc --noEmit
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      # test/local_db_test.dart exercises the real SQLite statements through
+      # sqflite_common_ffi, which loads the system SQLite on Linux.
+      - name: Install SQLite (needed by the FFI database test)
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      # android/ and ios/ are generated per developer machine by
+      # tool/setup_mobile.sh; the Dart side neither needs nor imports them, so CI
+      # stays fast by leaving them out.
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test --reporter expanded

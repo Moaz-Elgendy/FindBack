@@ -16,12 +16,15 @@ cp .env.example .env
 # 2. Infra (Postgres+pgvector, Redis, API, Worker)
 docker compose up --build
 
-# 3. Mobile (Expo)
+# 3. Mobile (Flutter)
 cd mobile
-npm install
-npx expo start
+../tool/setup_mobile.sh     # generates android/ + ios/, then pub get + analyze + test
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 # Share any URL → FindBack → Saved ✓
 ```
+
+`10.0.2.2` is how the Android emulator reaches the host; use `http://localhost:8000`
+for the iOS simulator. See `mobile/README.md` for the offline queue and share-intake details.
 
 API: http://localhost:8000/docs
 Search: `GET /api/v1/search?q=chicken%20cream%20mushroom`
@@ -42,9 +45,14 @@ FindBack/
 │   │   ├── routers/
 │   │   └── services/
 │   └── requirements.txt
-├── mobile/              # Expo React Native (Share Extension + offline queue)
-│   ├── App.tsx
-│   └── src/
+├── mobile/              # Flutter client (offline SQLite queue + sync)
+│   ├── lib/
+│   │   ├── data/        # api_client.dart, local_db.dart, token_store.dart
+│   │   ├── services/    # capture / items / sync + app_services.dart
+│   │   └── features/home/
+│   └── test/
+├── tool/
+│   └── setup_mobile.sh  # flutter create + pub get + analyze + test
 ├── eval/
 │   └── golden.json      # 50 items + 100 vague queries for Recall@5
 ├── docker-compose.yml
@@ -60,7 +68,7 @@ See `docs/PRD.md`, `docs/ARCHITECTURE.md`, and `docs/OPERATIONS.md` for product,
 
 ```bash
 cd backend && python -m pytest -q
-cd ../mobile && npx tsc --noEmit
+cd ../mobile && flutter analyze && flutter test
 cd .. && python eval/eval_offline.py
 ```
 

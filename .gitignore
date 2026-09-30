@@ -11,4 +11,32 @@ celerybeat-schedule
 .coverage
 .pytest_cache/
 .DS_Store
-mobile/.expo-shared
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/.packages
+mobile/pubspec.lock
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/android/.gradle/
+mobile/**/*.g.dart
+mobile/**/*.freezed.dart
+# Absolute machine paths written by the Flutter tooling / Gradle. Committing
+# these breaks every other machine's build.
+mobile/.idea/
+mobile/android/local.properties
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+# Generated per developer machine by tool/setup_mobile.sh, so `git add mobile/`
+# stays clean. Drop the android/ (and ios/) line when the native share-intake
+# work lands — an intent-filter / Share Extension target has to be checked in.
+mobile/android/
+mobile/ios/
+mobile/linux/
+mobile/macos/
+mobile/windows/
+mobile/web/
+

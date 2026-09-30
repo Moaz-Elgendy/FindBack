@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
@@ -62,8 +62,7 @@ class ItemDetail(BaseModel):
     created_at: Optional[datetime]
     processed_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ExtractedMemory(BaseModel):
     summary: str

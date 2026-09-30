@@ -50,7 +50,7 @@ def process_item(self, item_id: str):
                     db.add(Chunk(item_id=item.id, chunk_idx=index, chunk_text=content, embedding=chunk_embedding))
         item.status = "ready"
         item.failure_reason = None
-        item.processed_at = datetime.datetime.utcnow()
+        item.processed_at = datetime.datetime.now(datetime.timezone.utc)
         db.commit()
         return {"id": str(item.id), "status": "ready"}
     except Exception as e:
