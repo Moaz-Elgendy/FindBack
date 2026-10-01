@@ -11,7 +11,7 @@ FindBack is a mobile app that acts as your personal memory for everything you sa
 ```bash
 # 1. Clone & env
 cp .env.example .env
-# edit OPENAI_API_KEY, FIRECRAWL_API_KEY
+# edit GROQ_API_KEY or GEMINI_API_KEY (see .env.example), FIRECRAWL_API_KEY
 
 # 2. Infra (Postgres+pgvector, Redis, API, Worker)
 docker compose up --build

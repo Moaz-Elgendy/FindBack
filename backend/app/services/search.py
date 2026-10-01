@@ -10,8 +10,9 @@ W_BM25 = float(os.getenv("BM25_WEIGHT", "0.3"))
 async def hybrid_search(db: Session, user_id, query: str, category: str = None, limit: int = 10):
     import time
     t0 = time.time()
-    # embed query if possible
-    q_emb = await embed_text(query) if query.strip() else None
+    # embed query if possible; task="query" matters for Gemini, which trains
+    # separate document and query vector spaces.
+    q_emb = await embed_text(query, task="query") if query.strip() else None
 
     # Vector candidates (cosine via pgvector <=> )
     vec_results = []

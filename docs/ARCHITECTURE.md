@@ -1,6 +1,6 @@
 # FindBack — Architecture Document
 
-**Stack (MVP):** Expo React Native (TS) + FastAPI (Python) + Postgres 16 + pgvector + Redis + OpenAI (gpt-4o-mini + text-embedding-3-small) + Firecrawl/Jina
+**Stack (MVP):** Expo React Native (TS) + FastAPI (Python) + Postgres 16 + pgvector + Redis + Groq/Gemini/OpenAI (pluggable, extraction + embeddings) + Firecrawl/Jina
 
 ## 1. System Overview
 
@@ -34,7 +34,8 @@ backend/app/
     canonical.py   # url -> canonical_url (strip utm, lower, sort query, remove hash)
     fetcher.py     # Firecrawl/Jina/Apify/yt-transcript strategy chain
     extractor.py   # LLM JSON extraction (temp 0.1, validated)
-    embedder.py    # OpenAI embeddings, memory_string builder
+    ai.py          # provider-agnostic chat/embeddings: Groq, Gemini, OpenAI
+    embedder.py    # memory_string/chunk builders + provider embeddings via ai.py
     search.py      # hybrid query, RRF, rerank
     storage.py     # R2/S3 raw snapshot
   tasks.py         # Celery tasks: process_item(item_id)
@@ -124,10 +125,10 @@ Mobile SQLite mirrors `items` (id, title, summary, tags, category, thumbnail, st
 3. Articles/Products → Firecrawl else Jina Reader (`https://cc.jina.ai/http://URL`) → Puppeteer fallback.
 Raw HTML/markdown stored to R2/S3 for reprocessing. Cost-capped via global canonical_url cache: reuse embedding if URL already ingested globally.
 
-**Extractor (single LLM JSON call, gpt-4o-mini, temp 0.1):**
+**Extractor (single LLM JSON call, temp 0.1, provider pluggable):**
 System prompt returns strict JSON schema: `{summary:25w, key_points[3], category enum, entities{ingredients,tech,people,topics,products}, intent enum, tags[3], title_clean}`. Validate with Pydantic; on failure retry once, else status=failed but raw preserved.
 
-**Memory string for embedding:** `title_clean + " " + summary + " " + join(key_points) + " " + join(flatten(entities))` — more matchable than raw transcript. Embedded via `text-embedding-3-small` (1536d). Long content: chunk 800 tokens, 20% overlap, store in `chunks`; search aggregates max(chunk_score).
+**Memory string for embedding:** `title_clean + " " + summary + " " + join(key_points) + " " + join(flatten(entities))` — more matchable than raw transcript. Embedded via the configured model (default `gemini-embedding-001`, 1536d). Long content: chunk 800 tokens, 20% overlap, store in `chunks`; search aggregates max(chunk_score).
 
 ## 6. Search Algorithm (Hybrid + RRF + Rerank)
 
