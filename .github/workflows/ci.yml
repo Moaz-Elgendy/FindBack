@@ -1,1 +1,66 @@
-name: CI\non: [push, pull_request]\njobs:\n  backend:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with: { python-version: '3.11' }\n      - run: pip install -r backend/requirements.txt\n      - run: python -m compileall backend/app backend/alembic\n      - run: pytest\n        working-directory: backend\n  mobile:\n    runs-on: ubuntu-latest\n    defaults: { run: { working-directory: mobile } }\n    steps:\n      - uses: actions/checkout@v4\n      - uses: subosito/flutter-action@v2\n        with:\n          channel: stable\n          cache: true\n      # test/local_db_test.dart exercises the real SQLite statements through\n      # sqflite_common_ffi, which loads the system SQLite on Linux.\n      - name: Install SQLite (needed by the FFI database test)\n        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev\n      # android/ and ios/ are generated per developer machine by\n      # tool/setup_mobile.sh; the Dart side neither needs nor imports them, so CI\n      # stays fast by leaving them out.\n      - name: Resolve packages\n        run: flutter pub get\n      - name: Analyze\n        run: flutter analyze\n      - name: Test\n        run: flutter test --reporter expanded\n
+name: CI
+on: [push, pull_request]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: findback
+          POSTGRES_PASSWORD: findback
+          POSTGRES_DB: findback
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U findback"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r backend/requirements.txt
+      - run: python -m compileall backend/app backend/alembic
+      - run: pytest
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://findback:findback@localhost:5432/findback
+          REDIS_URL: redis://localhost:6379/0
+          DEV_AUTH_ENABLED: "true"
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      # test/local_db_test.dart exercises the real SQLite statements through
+      # sqflite_common_ffi, which loads the system SQLite on Linux.
+      - name: Install SQLite (needed by the FFI database test)
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      # android/ and ios/ are generated per developer machine by
+      # tool/setup_mobile.sh; the Dart side neither needs nor imports them, so CI
+      # stays fast by leaving them out.
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test --reporter expanded

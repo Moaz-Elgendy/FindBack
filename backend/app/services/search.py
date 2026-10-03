@@ -1,101 +1,477 @@
+"""Hybrid memory search (Phase 12).
+
+Retrieval only. Nothing here recommends, suggests, or invents content the user
+never saved.
+
+Two retrieval paths, merged and ranked:
+
+    lexical  PostgreSQL full text over items.search_text and chunks.tsv
+    vector   cosine distance over items.embedding and chunks.embedding
+
+`search_text` (Phase 12) is the item's whole searchable document -- title,
+overview, highlights, entities, topics, and whatever `structured_data` holds --
+so a word the user remembers from a recipe's ingredients is findable even
+though it appears in no title and no summary.
+
+Every result carries a "matched because" reason built from terms that actually
+matched. `Matched: tutorial` is not a reason: a category is not a match.
+"""
+from __future__ import annotations
+
+import logging
 import os
-from sqlalchemy.orm import Session
+import re
+from datetime import datetime, timezone
+
 from sqlalchemy import text
-from app.services.embedder import embed_text
+from sqlalchemy.orm import Session
+
+from app.services import embedder
+
+log = logging.getLogger("findback.search")
 
 RRF_K = int(os.getenv("RRF_K", "60"))
 W_VEC = float(os.getenv("VECTOR_WEIGHT", "0.7"))
 W_BM25 = float(os.getenv("BM25_WEIGHT", "0.3"))
+# Phase 12: chunk evidence counts separately from item evidence. A chunk hit is
+# a specific moment; an item hit is the whole memory.
+W_CHUNK_VEC = float(os.getenv("CHUNK_VECTOR_WEIGHT", "0.5"))
+W_CHUNK_LEX = float(os.getenv("CHUNK_LEXICAL_WEIGHT", "0.35"))
+# How much a recent save can lift a result. This must stay far below the
+# smallest possible RRF contribution (a single last-place hit in the smallest
+# list is W_BM25/(RRF_K+limit) ~ 0.002), because recency is a tie-breaker: it
+# may order two memories that matched equally, never one that matched nothing.
+W_RECENCY = float(os.getenv("RECENCY_WEIGHT", "0.001"))
 
-async def hybrid_search(db: Session, user_id, query: str, category: str = None, limit: int = 10):
+# Words that carry no retrieval signal: grammar, and how people speak about
+# saving something. Deliberately short. Content words are NOT stopwords here --
+# "the AI presentation tool" is a search for three real words, and treating
+# "presentation" or "tool" as noise would throw away the user's own vocabulary.
+STOPWORDS = frozenset("""
+a an the this that these those my our your their its is are was were be been am
+i me we you they he she it to of in on at for with about from by as and or but
+if then than so such into over under again very just do does did doing
+have has had having save saved saving want wanted need needed look looking
+""".split())
+
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_.+]*")
+
+# Column order shared by every candidate query below. `content_id` sits before
+# the score so the score stays the LAST element: the keyword fallback below reads
+# it with `row[-1]`, and moving it would silently return a content id instead.
+_CONTENT_IDX = 8
+
+# The item columns every candidate query selects, in a fixed order.
+_ITEM_COLUMNS = ("i.id, i.title_clean, i.summary, i.tags, i.category, "
+                 "i.source_domain, i.thumbnail_url, i.created_at, i.content_id")
+
+
+def query_terms(query: str) -> list[str]:
+    """The words of a query that carry retrieval signal, in query order."""
+    seen, out = set(), []
+    for word in _WORD.findall(query or ""):
+        lowered = word.lower().strip("-._")
+        if not lowered or lowered in STOPWORDS or lowered in seen:
+            continue
+        seen.add(lowered)
+        out.append(lowered)
+    return out
+
+
+def matched_terms(terms: list[str], *texts: str | None) -> list[str]:
+    """Which of the query's words actually occur in these texts.
+
+    This is what makes the reason honest: a term is only claimed as a match
+    because the memory really contains it. Matching is on word starts so
+    "deploy" counts for "deployment".
+    """
+    haystack = " ".join(t for t in texts if t).lower()
+    hits = []
+    for term in terms:
+        if re.search(r"(?<![a-z0-9])" + re.escape(term), haystack):
+            hits.append(term)
+    return hits
+
+
+def evidence_reason(terms: list[str], row, note: str | None = None,
+                    chunk: tuple | None = None, document: str | None = None) -> str:
+    """Say what matched, in the user's own words.
+
+    "AWS + deployment + recovery" is a reason. "Matched: tutorial" is not: a
+    category was never matched on, it only describes the memory.
+    """
+    # Everything that was indexed for this memory: the stored document, and the
+    # user's own note about it.
+    hits = matched_terms(terms, document, row[1], row[2],
+                         " ".join(row[3] or []))
+    if hits:
+        return " + ".join(hits)
+
+    # Nothing matched in the title, brief or topics: then it matched the body.
+    chunk_text = chunk[10] if chunk else None
+    body_hits = matched_terms(terms, chunk_text)
+    if body_hits:
+        stamp = chunk[12] if chunk else None
+        where = f"at {stamp}" if stamp else "in the content"
+        return f"{' + '.join(body_hits)} ({where})"
+
+    if note and matched_terms(terms, note):
+        return f"{' + '.join(matched_terms(terms, note))} (your note)"
+
+    # No lexical evidence at all, so the reason is the semantic one: be honest
+    # that it matched on meaning rather than pretend a word matched.
+    return "similar meaning"
+
+
+def recency_boost(created_at, now: datetime | None = None) -> float:
+    """0.0 for an old save, up to 1.0 for one made just now.
+
+    Half-life of ~30 days, so "recent" means weeks rather than minutes.
+    """
+    if created_at is None:
+        return 0.0
+    now = now or datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    age_days = max((now - created_at).total_seconds() / 86400.0, 0.0)
+    return 0.5 ** (age_days / 30.0)
+
+
+def _cat_filter(category: str | None, alias: str = "") -> str:
+    return f"AND {alias}category = :cat" if category else ""
+
+
+def _with_notes(db: Session, user_id, ids: list[str]) -> dict[str, str]:
+    """The user's own private notes for these memories (Phase 12 user context).
+
+    A note is how the user remembers a thing: "the one I saved to try on the
+    laptop". It is searchable, and it is never shared.
+    """
+    if not ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT um.content_id::text, um.user_note
+        FROM user_memories um
+        WHERE um.user_id = :uid AND um.user_note IS NOT NULL
+          AND um.content_id::text = ANY(:ids)
+    """), {"uid": str(user_id), "ids": ids}).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def _documents(db: Session, user_id, item_ids: list[str]) -> dict[str, str]:
+    """The stored searchable document per item."""
+    if not item_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT id::text, coalesce(search_text, '')
+        FROM items
+        WHERE user_id = :uid AND id::text = ANY(:ids)
+    """), {"uid": str(user_id), "ids": item_ids}).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def or_tsquery(terms: list[str]) -> str:
+    """A tsquery that matches a document containing ANY of these terms.
+
+    Built here rather than with plainto/websearch_to_tsquery because those
+    default to AND, and a user who misremembers one word must still get the
+    memory. Terms are emitted bare (not quoted): PostgreSQL has no string form
+    for a quoted lexeme, and anything that is not a plain word is not a term
+    worth searching for anyway.
+    """
+    safe = []
+    for term in terms:
+        cleaned = re.sub(r"[^a-z0-9]+", "", term.lower())
+        if cleaned:
+            safe.append(cleaned)
+    # `|` is the tsquery OR operator. The word form ("OR") is rejected by
+    # to_tsquery, which is why this is built explicitly rather than assembled
+    # from a string of bare words.
+    return " | ".join(safe)
+
+
+def lexical_search(db: Session, user_id, query: str, terms: list[str],
+                   category: str | None = None, limit: int = 50):
+    """Full-text candidates from the item's whole searchable document.
+
+    The terms are OR'd, not AND'd. `plainto_tsquery` ANDs every word, so "aws
+    fixing deployment" would match only a memory containing all three, and a
+    user who misremembers one word would get nothing at all. The OR is built
+    explicitly rather than left to `websearch_to_tsquery`, which would depend
+    on operator parsing.
+
+    Both `search_text_tsv` and the original `tsv` are consulted: a memory saved
+    before Phase 12 has no `search_text`, but it always has `tsv`, and it must
+    not become unfindable because this phase added a better index.
+    """
+    if not terms:
+        return []
+    try:
+        return db.execute(text(f"""
+            SELECT {_ITEM_COLUMNS},
+                   greatest(ts_rank(i.search_text_tsv, to_tsquery('english', :q)),
+                            ts_rank(i.tsv, to_tsquery('english', :q))) AS rank
+            FROM items i
+            WHERE i.user_id = :uid AND i.status = 'ready'
+              AND (i.search_text_tsv @@ to_tsquery('english', :q)
+                   OR i.tsv @@ to_tsquery('english', :q))
+              {_cat_filter(category, 'i.')}
+            ORDER BY rank DESC
+            LIMIT :lim
+        """), {"uid": str(user_id), "q": or_tsquery(terms),
+               "cat": category, "lim": limit}).fetchall()
+    except Exception as e:
+        log.warning("[search] lexical failed: %s", e)
+        return []
+
+
+def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
+                         limit: int = 50):
+    """Full-text candidates from inside the content, with the matched chunk."""
+    if not terms:
+        return []
+    try:
+        return db.execute(text("""
+            SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
+                   i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
+                   ts_rank(c.tsv, to_tsquery('english', :q)) AS rank,
+                   c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
+            FROM chunks c
+            JOIN items i ON i.id = c.item_id
+            WHERE i.user_id = :uid AND i.status = 'ready'
+              AND c.tsv @@ to_tsquery('english', :q)
+            ORDER BY rank DESC
+            LIMIT :lim
+        """), {"uid": str(user_id), "q": or_tsquery(terms),
+               "lim": limit}).fetchall()
+    except Exception as e:
+        log.warning("[search] chunk lexical failed: %s", e)
+        return []
+
+
+def vector_search(db: Session, user_id, q_emb, category: str | None = None,
+                  limit: int = 50):
+    """Semantic candidates from the item's own memory vector."""
+    if q_emb is None:
+        return []
+    vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
+    try:
+        return db.execute(text(f"""
+            SELECT {_ITEM_COLUMNS},
+                   1 - (i.embedding <=> CAST(:qvec AS vector)) AS cosine
+            FROM items i
+            WHERE i.user_id = :uid AND i.status = 'ready'
+              AND i.embedding IS NOT NULL
+              {_cat_filter(category, 'i.')}
+            ORDER BY i.embedding <=> CAST(:qvec AS vector)
+            LIMIT :lim
+        """), {"uid": str(user_id), "qvec": vec_str,
+               "cat": category, "lim": limit}).fetchall()
+    except Exception as e:
+        log.warning("[search] vector failed: %s", e)
+        return []
+
+
+def _content_key(row) -> str:
+    """Identity used to collapse repeat saves of one piece of content (Phase 3).
+
+    Rows are keyed by `content_id`, so two item rows a user saved under
+    different URLs that resolved to the same ContentAsset appear once. Rows
+    with no asset (NULL content_id) fall back to their item id, so unrelated
+    legacy rows are never collapsed into each other.
+    """
+    content_id = row[_CONTENT_IDX]
+    return str(content_id) if content_id is not None else f"item:{row[0]}"
+
+
+def _dedupe_rows(rows) -> list:
+    """Keep the first row per piece of content, preserving the given order."""
+    seen = set()
+    kept = []
+    for row in rows:
+        key = _content_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(row)
+    return kept
+
+async def chunk_search(db: Session, user_id, query: str, limit: int = 50):
+    """Find the chunks a query matches, not just the memories it matches.
+
+    The item's own embedding is built from its title and brief, so a query
+    about something the title never mentions scores badly against it. The chunks
+    are the content itself, so they are where that query actually lands.
+
+    Returns the item rows plus the winning chunk, so the caller can say *what*
+    matched and *when* it was said.
+    """
+    if not query.strip():
+        return []
+    # Called through the module, not imported by name: a test (or a future
+    # provider swap) can then replace it without reloading this module.
+    q_emb = await embedder.embed_text(query, task="query")
+    if q_emb is None:
+        return []
+    vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
+    try:
+        return db.execute(text("""
+            SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
+                   i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
+                   1 - (c.embedding <=> CAST(:qvec AS vector)) AS cosine,
+                   c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
+            FROM chunks c
+            JOIN items i ON i.id = c.item_id
+            WHERE i.user_id = :uid AND i.status = 'ready'
+            ORDER BY c.embedding <=> CAST(:qvec AS vector)
+            LIMIT :lim
+        """), {"uid": str(user_id), "qvec": vec_str, "lim": limit}).fetchall()
+    except Exception as e:  # a vector outage must not take search down
+        log.warning("[search] chunk search failed: %s", e)
+        return []
+
+
+
+def _ranks(rows) -> dict[str, int]:
+    """Map item id -> rank (1-based) for one candidate list.
+
+    Kept separate from the weight so a rank map cannot confuse an item id with
+    its own bookkeeping.
+    """
+    return {str(row[0]): index + 1 for index, row in enumerate(rows)}
+
+
+def metadata_filter(source_domain: str | None, saved_after: datetime | None,
+                    saved_before: datetime | None) -> dict:
+    """Metadata a user can filter by: where it came from and when it was saved.
+
+    Applied after retrieval rather than inside it, so every candidate list is
+    filtered identically and no list can smuggle in a row the others excluded.
+    """
+    meta: dict = {}
+    if source_domain:
+        meta["source_domain"] = source_domain
+    if saved_after is not None:
+        meta["after"] = saved_after
+    if saved_before is not None:
+        meta["before"] = saved_before
+    return meta
+
+
+def _filter_rows(rows, meta: dict) -> list:
+    """Drop candidates that do not match the metadata filter."""
+    if not meta or not rows:
+        return list(rows)
+    domain = meta.get("source_domain")
+    after = meta.get("after")
+    before = meta.get("before")
+    kept = []
+    for row in rows:
+        if domain and row[5] != domain:
+            continue
+        created = row[7]
+        if created is not None:
+            if after is not None and created < after:
+                continue
+            if before is not None and created > before:
+                continue
+        kept.append(row)
+    return kept
+
+
+async def hybrid_search(db: Session, user_id, query: str, category: str = None,
+                        limit: int = 10, source_domain: str = None,
+                        saved_after: datetime = None,
+                        saved_before: datetime = None):
+    """Find the user's own memories. Retrieval only: nothing is recommended.
+
+    Four candidate lists are merged with Reciprocal Rank Fusion and then nudged
+    by recency:
+
+        items by meaning        items by words
+        chunks by meaning       chunks by words
+
+    RRF is used rather than raw score sums because the four lists are on
+    incomparable scales (cosine vs ts_rank), and because a rank is exactly what
+    each list can honestly contribute.
+    """
     import time
     t0 = time.time()
-    # embed query if possible; task="query" matters for Gemini, which trains
-    # separate document and query vector spaces.
-    q_emb = await embed_text(query, task="query") if query.strip() else None
+    terms = query_terms(query)
+    # Embed once. task="query" matters for Gemini, which trains separate
+    # document and query vector spaces.
+    # Called through the module rather than imported by name, so a test (or a
+    # future provider swap) can replace the call without reloading this module.
+    q_emb = await embedder.embed_text(query, task="query") if query.strip() else None
 
-    # Vector candidates (cosine via pgvector <=> )
-    vec_results = []
-    if q_emb is not None:
-        try:
-            vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
-            # items.embedding <=> query
-            cat_filter = "AND category = :cat" if category else ""
-            rows = db.execute(text(f"""
-                SELECT id, title_clean, summary, tags, category, source_domain, thumbnail_url, created_at,
-                       1 - (embedding <=> CAST(:qvec AS vector)) as cosine
-                FROM items
-                WHERE user_id = :uid AND status='ready' AND embedding IS NOT NULL {cat_filter}
-                ORDER BY embedding <=> CAST(:qvec AS vector)
-                LIMIT 50
-            """), {"uid": str(user_id), "qvec": vec_str, "cat": category} if category else {"uid": str(user_id), "qvec": vec_str}).fetchall()
-            vec_results = rows
-        except Exception as e:
-            print(f"[search] vector failed: {e}")
-            vec_results = []
+    meta = metadata_filter(source_domain, saved_after, saved_before)
+    lex_rows = _filter_rows(lexical_search(db, user_id, query, terms, category),
+                            meta)
+    vec_rows = _filter_rows(vector_search(db, user_id, q_emb, category), meta)
+    chunk_vec_rows = _filter_rows(
+        await chunk_search(db, user_id, query), meta)
+    chunk_lex_rows = _filter_rows(
+        chunk_lexical_search(db, user_id, query, terms), meta)
 
-    # BM25 via tsv
-    bm_rows = []
-    try:
-        # use plainto_tsquery for natural language
-        cat_filter2 = "AND category = :cat" if category else ""
-        bm_rows = db.execute(text(f"""
-            SELECT id, title_clean, summary, tags, category, source_domain, thumbnail_url, created_at,
-                   ts_rank(tsv, plainto_tsquery('english', :q)) as rank
-            FROM items
-            WHERE user_id = :uid AND status='ready' AND tsv @@ plainto_tsquery('english', :q) {cat_filter2}
-            ORDER BY rank DESC
-            LIMIT 50
-        """), {"uid": str(user_id), "q": query, "cat": category} if category else {"uid": str(user_id), "q": query}).fetchall()
-    except Exception as e:
-        print(f"[search] bm25 failed: {e}")
+    # The whole searchable document per item, so the reason can be checked
+    # against everything that was actually indexed -- structured_data and
+    # entities included, not just the title.
+    documents = _documents(db, user_id,
+                           list({str(r[0]) for r in
+                                 lex_rows + vec_rows + chunk_vec_rows + chunk_lex_rows}))
 
-    # RRF fusion
-    rank_vec = {str(r[0]): i+1 for i, r in enumerate(vec_results)}
-    rank_bm  = {str(r[0]): i+1 for i, r in enumerate(bm_rows)}
-    vec_map = {str(r[0]): r for r in vec_results}
-    bm_map  = {str(r[0]): r for r in bm_rows}
-    all_ids = set(rank_vec) | set(rank_bm)
-    # if no vector (no key), fallback to keyword + recency for offline/dev
-    if not q_emb or not vec_results:
-        if not bm_rows:
-            # last resort: LIKE substring over title/summary
-            try:
-                like_rows = db.execute(text("""
-                    SELECT id, title_clean, summary, tags, category, source_domain, thumbnail_url, created_at, 0.0 as rank
-                    FROM items WHERE user_id=:uid AND status='ready'
-                    AND (title_clean ILIKE :pat OR summary ILIKE :pat)
-                    ORDER BY created_at DESC LIMIT :lim
-                """), {"uid": str(user_id), "pat": f"%{query}%", "lim": limit}).fetchall()
-                took = int((time.time()-t0)*1000)
-                return [{"row": r, "score": 0.5 - i*0.01, "match_reason": f"Matched: {query}"} for i,r in enumerate(like_rows)], took
-            except Exception as e:
-                print(f"[search] like fallback failed: {e}")
-                return [], int((time.time()-t0)*1000)
-        else:
-            took = int((time.time()-t0)*1000)
-            return [{"row": r, "score": float(r[-1] if len(r)>0 else 0), "match_reason": f"Matched: {query}"} for r in bm_rows[:limit]], took
+    if not any((lex_rows, vec_rows, chunk_vec_rows, chunk_lex_rows)):
+        took = int((time.time() - t0) * 1000)
+        return [], took
+
+    rows_by_id: dict[str, tuple] = {}
+    # The best chunk per item, per list: several chunks of one video are one
+    # memory to the user, not several results.
+    chunk_by_id: dict[str, tuple] = {}
+    for rows in (lex_rows, vec_rows, chunk_vec_rows, chunk_lex_rows):
+        for row in rows:
+            key = str(row[0])
+            rows_by_id.setdefault(key, tuple(row[:9]))
+            if len(row) > 13:
+                chunk_by_id.setdefault(key, row)
+
+    # (rank map, weight) per candidate list, in the order their weights are set.
+    sources = [
+        (_ranks(lex_rows), W_BM25),
+        (_ranks(vec_rows), W_VEC),
+        (_ranks(chunk_vec_rows), W_CHUNK_VEC),
+        (_ranks(chunk_lex_rows), W_CHUNK_LEX),
+    ]
+
+    notes = _with_notes(db, user_id,
+                        list({str(r[8]) for r in rows_by_id.values()
+                              if r[8] is not None}))
 
     scored = []
-    for iid in all_ids:
-        rv = rank_vec.get(iid)
-        rb = rank_bm.get(iid)
-        s = 0.0
-        if rv: s += W_VEC * (1.0 / (RRF_K + rv))
-        if rb: s += W_BM25 * (1.0 / (RRF_K + rb))
-        row = vec_map.get(iid) or bm_map.get(iid)
-        scored.append((iid, s, row))
+    for iid, row in rows_by_id.items():
+        score = sum(weight * (1.0 / (RRF_K + rank[iid]))
+                    for rank, weight in sources if iid in rank)
+        score += W_RECENCY * recency_boost(row[7])
+        scored.append((iid, score, row))
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    # Build results with match_reason from tags/entities overlap
-    results = []
-    for iid, score, row in scored[:limit]:
-        # row is tuple from SELECT; extract fields by index: 0:id,1:title_clean,2:summary,3:tags,4:category,5:source_domain,6:thumbnail,7:created_at,8:cosine/rank
-        q_lower = query.lower()
-        tags = row[3] or []
-        # find overlapping tag/entity words
-        matched = [t for t in tags if t.lower() in q_lower] if tags else []
-        reason = f"Matched: {', '.join(matched)}" if matched else f"Matched: { (row[4] or 'memory') }"
-        results.append({"row": row, "score": score, "match_reason": reason})
-    took = int((time.time()-t0)*1000)
+    results, seen_content = [], set()
+    for iid, score, row in scored:
+        key = _content_key(row)
+        if key in seen_content:
+            continue
+        seen_content.add(key)
+        chunk = chunk_by_id.get(iid)
+        note = notes.get(str(row[8])) if row[8] is not None else None
+        results.append({"row": row, "score": score,
+                        "match_reason": evidence_reason(
+                            terms, row, note, chunk,
+                            document=documents.get(iid)),
+                        "matched_chunk": chunk[10] if chunk else None,
+                        "matched_at": chunk[12] if chunk else None})
+        if len(results) >= limit:
+            break
+    took = int((time.time() - t0) * 1000)
     return results, took
+
+

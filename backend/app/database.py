@@ -28,9 +28,25 @@ def get_engine() -> Engine:
 
 
 def get_sessionmaker() -> sessionmaker:
+    """A session factory bound to the CURRENT engine.
+
+    Cached against the engine it was built for, not just cached. A stale
+    sessionmaker is a trap that looks like a working code path: `test_phase5_outbox`
+    and several others repoint the module-level `_engine` at a throwaway
+    database and expect `SessionLocal()` to follow. When the sessionmaker was
+    cached unconditionally, the worker's own SQL went to whatever database was
+    current when it was first built, so the test asserted on rows nothing had
+    written to it and failed for reasons that had nothing to do with the code
+    under test.
+
+    Rebuilding on an engine change is a few lines and removes the whole class of
+    contamination, including from tests that were written before it mattered.
+    """
     global _sessionmaker
-    if _sessionmaker is None:
-        _sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
+    engine = get_engine()
+    if _sessionmaker is None or _sessionmaker.kw.get("bind") is not engine:
+        _sessionmaker = sessionmaker(autocommit=False, autoflush=False,
+                                     bind=engine)
     return _sessionmaker
 
 
@@ -60,9 +76,23 @@ def ensure_extensions() -> None:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
 
 
+def ensure_tsv_function() -> None:
+    """Install immutable_array_to_string before any table references it.
+
+    SCHEMA_BOOTSTRAP=create builds the schema from the ORM and never runs
+    Alembic, so this function would otherwise be missing and the `tsv`
+    generated column would fail to be created.
+    """
+    from app.models import IMMUTABLE_ARRAY_TO_STRING_SQL
+
+    with get_engine().begin() as conn:
+        conn.execute(text(IMMUTABLE_ARRAY_TO_STRING_SQL))
+
+
 def create_all() -> None:
     """Create schema from models. Dev convenience only â€” Alembic is the source of truth."""
     ensure_extensions()
+    ensure_tsv_function()
     Base.metadata.create_all(bind=get_engine())
 
 

@@ -5,6 +5,7 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models import Item
 from app.schemas import ItemDetail
+from app.services import retention
 
 router = APIRouter(prefix="/api/v1/items", tags=["items"])
 
@@ -30,6 +31,15 @@ def get_item(item_id: str, db: Session = Depends(get_db), user = Depends(get_cur
 def delete_item(item_id: str, db: Session = Depends(get_db), user = Depends(get_current_user)):
     item = db.query(Item).filter(Item.id == item_id, Item.user_id == user.id).first()
     if not item: raise HTTPException(404, "not found")
-    db.delete(item)
-    db.commit()
+    if item.content_id is None:
+        # A row with no asset (created before Phase 1, or unlinked): there is no
+        # memory to remove, so the row itself is the whole save.
+        db.delete(item)
+        db.commit()
+        return None
+    # The save is the item AND this user's memory of the content. Deleting only
+    # the item would leave the note, the intent and the save history behind, and
+    # a later save of the same link would bring them back. delete_save removes
+    # the item(s) first and then the memory, in one transaction.
+    retention.delete_save(db, user.id, item.content_id)
     return None

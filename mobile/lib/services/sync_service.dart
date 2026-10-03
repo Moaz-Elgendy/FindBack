@@ -34,6 +34,7 @@ class SyncService {
     required FailureMarker markFailed,
     ConnectivityProbe? isOnline,
     ConnectivityChanges? changes,
+    Duration heartbeatInterval = heartbeat,
     Duration retryCeiling = const Duration(minutes: 5),
     Duration retryBase = const Duration(seconds: 1),
   })  : _pending = pending,
@@ -42,6 +43,7 @@ class SyncService {
         _markFailed = markFailed,
         _isOnline = isOnline ?? systemIsOnline,
         _changes = changes ?? systemConnectivityChanges(),
+        _heartbeatInterval = heartbeatInterval,
         _retryCeiling = retryCeiling,
         _retryBase = retryBase;
 
@@ -60,6 +62,9 @@ class SyncService {
   final FailureMarker _markFailed;
   final ConnectivityProbe _isOnline;
   final ConnectivityChanges _changes;
+  // The heartbeat interval is configurable so a test can drive the timer rather
+  // than wait 30 seconds for it.
+  final Duration _heartbeatInterval;
   final Duration _retryCeiling;
   final Duration _retryBase;
 
@@ -106,12 +111,12 @@ class SyncService {
   }
 
   /// Flushes on launch, on every connectivity transition, and on a heartbeat.
-  void start({void Function(int flushed)? onFlushed, Duration interval = heartbeat}) {
+  void start({void Function(int flushed)? onFlushed, Duration? interval}) {
     _onFlushed = onFlushed;
     _subscription ??= _changes().listen((bool online) {
       if (online) flush();
     });
-    _heartbeat ??= Timer.periodic(interval, (_) => flush());
+    _heartbeat ??= Timer.periodic(interval ?? _heartbeatInterval, (_) => flush());
     flush();
   }
 

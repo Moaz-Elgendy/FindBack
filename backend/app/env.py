@@ -130,6 +130,12 @@ EMBEDDING_BATCH_SIZE = max(1, min(100, get_int("EMBEDDING_BATCH_SIZE", 96)))
 AI_TIMEOUT = get_float("AI_TIMEOUT_SECONDS", 45.0)
 # Total attempts, not retries-after-the-first: one try plus retries.
 AI_MAX_ATTEMPTS = max(1, get_int("AI_MAX_RETRIES", 3))
+
+# Phase 14. Hours a fetched page is kept before it is discarded. Zero means
+# "drop it as soon as the pipeline finishes", which is the default: the stages
+# need the raw text only while they run, and afterwards it is a verbatim copy
+# of something the user read. See docs/OPERATIONS.md.
+RAW_TEXT_RETENTION_HOURS = max(0, get_int("RAW_TEXT_RETENTION_HOURS", 0))
 # Hard cap on the extractor's completion, so a rambling model cannot hold an
 # ingest request open indefinitely. ~900 tokens is ample for a 6-field object.
 EXTRACTOR_MAX_TOKENS = get_int("EXTRACTOR_MAX_TOKENS", 900)

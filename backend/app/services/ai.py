@@ -360,6 +360,22 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
     return min(BACKOFF_CAP, BACKOFF_BASE * (2 ** (attempt - 1))) * (0.8 + 0.4 * random.random())
 
 
+async def _wait_for_rate_limit(provider: str) -> None:
+    """Block until this provider's token bucket allows another call.
+
+    Phase 7. Waiting here rather than retrying after a 429 keeps us inside the
+    published quota, which is cheaper for everyone than being throttled. The
+    sleep is yielded to the event loop so other coroutines keep running.
+    """
+    import asyncio as _asyncio
+
+    from app.services.limits import rate_limiter_for
+
+    bucket = rate_limiter_for(provider)
+    while not bucket.try_acquire():
+        await _asyncio.sleep(min(0.05, 1.0 / bucket.rate_per_sec))
+
+
 async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
                      attempts: int | None = None, timeout: float | None = None) -> dict:
     """POST JSON and return the decoded object body, retrying what can recover.
@@ -377,6 +393,10 @@ async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
     for attempt in range(1, attempts + 1):
         body = {k: v for k, v in payload.items() if k not in dropped}
         response = None  # never let a prior attempt's Retry-After leak forward
+        # Phase 7: stay inside the provider's published quota by waiting for a
+        # token BEFORE sending, instead of sending and being rejected with 429.
+        # The bucket is per provider; the same call shapes every AI request.
+        await _wait_for_rate_limit(provider)
         try:
             async with httpx.AsyncClient(timeout=timeout, transport=_TRANSPORT) as client:
                 response = await client.post(url, headers=headers, json=body)

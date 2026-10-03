@@ -1,4 +1,71 @@
-# Operations
+# Operations and Data Retention
+
+## Data retention and deletion
+
+What FindBack keeps, for how long, and how it is removed. Phase 14 made this
+explicit; before that it was implied by the schema.
+
+## The three lifetimes
+
+They differ on purpose, because the three kinds of data differ.
+
+| Data | Lifetime | Why |
+|---|---|---|
+| **Raw text** — the fetched page, transcript, raw snapshot | Until the pipeline finishes, then dropped | The stages need it and nothing after them does. It is a verbatim copy of something the user read. |
+| **Derived text** — brief, chunks, vectors, search document | As long as the memory exists | This *is* the memory. Removing it would remove the thing the user saved. |
+| **User context** — note, intent | Until the user removes it, or the save is deleted | Nobody else's business, and removable on demand. |
+
+`RAW_TEXT_RETENTION_HOURS` controls the first row. It defaults to **0**: raw
+text is dropped as soon as the pipeline reaches READY.
+
+## Content that is shared
+
+`content_assets` holds the content itself and may be `PUBLIC`, in which case
+more than one user points at it (PRODUCT.md rule 3). Deleting one user's save
+deletes that user's items, their `user_memories` row and the derived data that
+belongs to them — **and not the asset**, which another user may still hold.
+
+This is the only place in the system where "delete" does not mean "remove every
+trace", and it is deliberate.
+
+## Removing things
+
+```python
+from app.services import retention
+
+retention.purge_raw_text(db)             # drop raw text, keep the memory
+retention.purge_expired_raw_text(db)     # apply the retention window
+retention.delete_save(db, user_id, content_id)
+retention.retention_policy()             # the policy, as data
+```
+
+The active policy is served at `GET /health` under `retention`, so an operator
+can confirm it without reading the code.
+
+## What is never written to logs
+
+A saved page, a transcript, and anything derived from them are the user's
+content. `app/services/privacy.py` enforces this:
+
+- `describe(value)` logs a length and a SHA-256 digest, never the value.
+- `PrivacyFilter` redacts registered private values out of **any** log record,
+  including ones produced by httpx, sqlalchemy or uvicorn, and redacts long
+  runs of prose that were never registered.
+- Values are registered by digest, so the filter is not itself a second copy
+  of the private data.
+
+The filter is installed on every handler at startup in `app/main.py`.
+
+## The AI gateway
+
+All model access goes through `app/services/ai_gateway.py`. Provider
+configuration — keys, endpoints, model ids — lives in `app/services/ai.py` and
+in environment variables; no other module names a provider. Swapping providers
+means registering a factory and setting the name, not editing callers.
+
+The provider sends the user's content to a third party. That is inherent to the
+product and is the reason this page exists.
+
 
 ## Local run
 Copy `.env.example` to `.env`, set `DEV_AUTH_ENABLED=true` only for local development, then run `docker compose up --build`. Apply schema changes with `docker compose exec api alembic upgrade head`.

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:findback/data/api_client.dart';
 import 'package:findback/models/item.dart';
 import 'package:findback/services/sync_service.dart';
@@ -205,5 +207,77 @@ void main() {
       isOnline: () async => true,
     );
     expect(await sync.flush(), 0);
+  });
+
+  // --- Phase 15: the capture is never lost without internet ---------------
+
+  test('a capture taken offline is sent once the network comes back', () async {
+    // The whole offline contract in one test: nothing is sent while there is no
+    // connection, and the moment there is one, the queued capture goes.
+    final _Recorder rec = _Recorder();
+    bool online = false;
+    final StreamController<bool> connectivity =
+        StreamController<bool>.broadcast();
+    addTearDown(connectivity.close);
+
+    final SyncService sync = SyncService(
+      pending: () async => online ? <SyncItem>[_item('c1')] : <SyncItem>[],
+      send: (List<SyncItem> batch) async {
+        rec.sent.addAll(batch);
+        return SyncBatchResult(
+          mapped: <MappedSave>[
+            MappedSave(clientId: batch.single.clientId, serverId: 'server-1'),
+          ],
+          failedClientIds: const <String>[],
+        );
+      },
+      apply: rec.apply,
+      markFailed: rec.markFailed,
+      isOnline: () async => online,
+      changes: () => connectivity.stream,
+    );
+    addTearDown(sync.stop);
+
+    // Offline: the capture waits, and the API is never touched.
+    expect(await sync.flush(), 0);
+    expect(rec.sent, isEmpty, reason: 'no request may be made while offline');
+
+    sync.start();
+
+    // Reconnect.
+    online = true;
+    connectivity.add(true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(rec.sent.single.clientId, 'c1');
+    expect(rec.applied.single.single.serverId, 'server-1');
+  });
+
+  test('a capture saved while offline is still sent by the heartbeat', () async {
+    // Reconnect is not the only trigger: the timer is what saves a capture when
+    // the app is left open after the network comes back.
+    final _Recorder rec = _Recorder();
+    final SyncService sync = SyncService(
+      pending: () async => <SyncItem>[_item('c2')],
+      send: (List<SyncItem> batch) async {
+        rec.sent.addAll(batch);
+        return SyncBatchResult(
+          mapped: <MappedSave>[
+            MappedSave(clientId: batch.single.clientId, serverId: 'server-2'),
+          ],
+          failedClientIds: const <String>[],
+        );
+      },
+      apply: rec.apply,
+      markFailed: rec.markFailed,
+      isOnline: () async => true,
+      changes: () => const Stream<bool>.empty(),
+    );
+    addTearDown(sync.stop);
+
+    sync.start(interval: const Duration(milliseconds: 10));
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(rec.sent.map((SyncItem s) => s.clientId), contains('c2'));
   });
 }

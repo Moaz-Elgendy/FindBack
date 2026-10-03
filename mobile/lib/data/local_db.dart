@@ -76,6 +76,12 @@ class LocalDb {
 
   /// Enqueues a save and inserts an optimistic row so search works offline.
   /// Returns the `client_id` the server will later echo back.
+  ///
+  /// Saving the same URL twice while offline must not enqueue it twice. Both
+  /// would map to one server id on sync, and the second rename would collide on
+  /// the `items` primary key -- so the user would see a duplicate, or the drain
+  /// would throw. The first capture already represents the save, so the repeat
+  /// reuses its queue row.
   Future<String> queueSave({
     required String url,
     String? preview,
@@ -83,6 +89,9 @@ class LocalDb {
     DateTime? capturedAt,
   }) async {
     final now = capturedAt ?? DateTime.now();
+    final existing = await _pendingForUrl(url);
+    if (existing != null) return existing;
+
     final clientId = '${now.millisecondsSinceEpoch}'
         '-${now.microsecondsSinceEpoch.remainder(1000000).toRadixString(36)}';
     await db.transaction((txn) async {
@@ -108,6 +117,23 @@ class LocalDb {
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
     return clientId;
+  }
+
+  /// The client id of a still-queued capture of this exact URL, if any.
+  ///
+  /// `failed` rows are included on purpose: the user still has not got this
+  /// saved, so a retry of the same link should revive the existing row rather
+  /// than add a second one.
+  Future<String?> _pendingForUrl(String url) async {
+    final rows = await db.query(
+      'sync_queue',
+      columns: const ['client_id'],
+      where: "url = ? AND status IN ('pending', 'failed')",
+      whereArgs: <Object?>[url],
+      orderBy: 'captured_at ASC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['client_id'] as String;
   }
 
   Future<List<SyncItem>> pendingQueue({int limit = queueBatchSize}) async {
@@ -150,6 +176,14 @@ class LocalDb {
           // A later fetch already cached the server row; drop the optimistic one.
           await txn.delete('items', where: 'id = ?', whereArgs: <Object?>[localId]);
         } else {
+          // Another queued capture of the same URL can map to this same server
+          // id. Renaming into it would violate the primary key, so any earlier
+          // optimistic row already sitting on that id is dropped first.
+          await txn.delete(
+            'items',
+            where: 'id = ?',
+            whereArgs: <Object?>[save.serverId],
+          );
           await txn.rawUpdate(
             'UPDATE items SET id = ? WHERE id = ?',
             <Object?>[save.serverId, localId],

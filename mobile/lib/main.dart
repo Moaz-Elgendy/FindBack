@@ -11,6 +11,9 @@ Future<void> main() async {
     // Queue draining starts after the first frame: opening SQLite or reaching
     // the API must never delay the search box.
     await services.startSync();
+    // A share that launched the app is saved here, through the same capture
+    // path, so it is queued offline exactly like a typed save would be.
+    await services.startShareHandling();
   } catch (error) {
     // A broken database or keystore is unrecoverable at runtime, but the user
     // deserves to know that rather than seeing a white screen.

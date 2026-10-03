@@ -8,7 +8,21 @@ import app.models  # noqa: F401
 config = context.config
 config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url")))
 if config.config_file_name:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False, explicitly.
+    #
+    # Alembic's generated env.py calls fileConfig with Python's default,
+    # disable_existing_loggers=True, which walks every logger that already
+    # exists and sets `.disabled = True` on the ones the ini does not name.
+    # `alembic upgrade head` runs IN-PROCESS on API startup (database.init_db),
+    # so the loggers it silences are the application's own -- every
+    # findback.* logger, including findback.auth.
+    #
+    # The effect is that the API logs nothing at all from the moment the
+    # schema bootstrap runs until the process restarts: the startup log line,
+    # every provider warning, and the Phase 16 auth refusals all go silent.
+    # Nothing in the test suite noticed, because the only tests that read a
+    # log record ran before their own fixture invoked Alembic.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 target_metadata = Base.metadata
 
 

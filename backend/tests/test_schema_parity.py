@@ -14,10 +14,14 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.schema import CreateTable, CreateIndex
 
-from app.models import TSV_EXPRESSION, Chunk, Item, User
+from app.models import (
+    IMMUTABLE_ARRAY_TO_STRING_SQL, TSV_EXPRESSION, Chunk, ContentAsset, Item, User,
+    UserMemory,
+)
 
 DIALECT = postgresql.dialect()
-MIGRATION = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0001_initial.py"
+MIGRATION_DIR = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+MIGRATION = MIGRATION_DIR / "0001_initial.py"
 
 
 def norm(value: str) -> str:
@@ -36,15 +40,42 @@ def migration_source() -> str:
     return MIGRATION.read_text(encoding="utf-8")
 
 
+def all_migration_source() -> str:
+    """Every revision, so columns added by a later migration are still counted."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(MIGRATION_DIR.glob("*.py")))
+
+
 def migration_columns(table: str) -> set:
-    line = re.search(r'op\.create_table\("%s",.*' % table, migration_source()).group(0)
-    cols = set(re.findall(r'sa\.Column\("(\w+)"', line))
+    source = all_migration_source()
+    # Take only this table's create_table(...) call, not the rest of the file.
+    start = re.search(r'op\.create_table\(\s*"%s",' % re.escape(table), source)
+    if not start:
+        # The table is not created by a create_table call (or not yet at all).
+        return set()
+    chunk = source[start.start():]
+    end = chunk.find("\n    op.")
+    if end != -1:
+        chunk = chunk[:end]
+    cols = set(re.findall(r'sa\.Column\("(\w+)"', chunk))
     if table == "items":
         cols.add("tsv")  # added by the raw ALTER TABLE right after create_table
+    # Columns a later revision bolted onto an existing table.
+    for extra in re.findall(r'op\.add_column\(\s*"%s",\s*sa\.Column\(\s*"(\w+)"' % re.escape(table), source):
+        cols.add(extra)
+    # Columns added as raw SQL, which op.add_column cannot express because the
+    # generated clause is not a Column. 0009 adds items.search_text_tsv and
+    # chunks.tsv this way.
+    for extra in re.findall(
+            r'ALTER TABLE %s\s+ADD COLUMN (\w+)' % re.escape(table), source):
+        cols.add(extra)
     return cols
 
 
-@pytest.mark.parametrize("model", [User, Item, Chunk], ids=["users", "items", "chunks"])
+@pytest.mark.parametrize(
+    "model",
+    [User, Item, Chunk, ContentAsset, UserMemory],
+    ids=["users", "items", "chunks", "content_assets", "user_memories"],
+)
 def test_model_columns_match_migration(model):
     assert set(model.__table__.columns.keys()) == migration_columns(model.__tablename__)
 
@@ -53,6 +84,30 @@ def test_tsv_expression_matches_migration_verbatim():
     expr = re.search(r"ADD COLUMN tsv tsvector GENERATED ALWAYS AS \((.*?)\) STORED",
                      migration_source(), re.S).group(1)
     assert norm(TSV_EXPRESSION) == norm(expr)
+
+
+def test_tsv_expression_uses_the_immutable_wrapper():
+    """The builtin array_to_string is STABLE and can never be in a STORED column."""
+    # Substring-safe: "array_to_string" is contained in "immutable_array_to_string".
+    assert not re.search(r"(?<!immutable_)array_to_string", TSV_EXPRESSION)
+    assert "immutable_array_to_string(tags,' ')" in TSV_EXPRESSION
+
+
+def test_wrapper_function_ddl_matches_migration_verbatim():
+    """Both schema paths must install the exact same function body."""
+    block = re.search(r'IMMUTABLE_ARRAY_TO_STRING_SQL = """(.*?)"""',
+                      migration_source(), re.S).group(1)
+    assert norm(block) == norm(IMMUTABLE_ARRAY_TO_STRING_SQL)
+
+
+def test_wrapper_is_declared_immutable_and_uses_only_immutable_operations():
+    ddl = IMMUTABLE_ARRAY_TO_STRING_SQL
+    assert "IMMUTABLE" in ddl
+    # Nothing from the STABLE builtin family may leak back into the body.
+    # Substring-safe, so the wrapper's own name does not trip the check.
+    assert not re.search(r"(?<!immutable_)array_to_string", ddl)
+    for stable_builtin in ("array_agg", "now(", "random("):
+        assert stable_builtin not in ddl
 
 
 def test_tsv_renders_as_stored_generated_column():
@@ -90,12 +145,13 @@ def test_orm_never_writes_tsv():
 def test_items_indexes_match_migration():
     assert {ix.name for ix in Item.__table__.indexes} == {
         "items_user_created_idx", "items_category_idx", "items_tsv_idx", "items_embedding_hnsw",
+        "items_search_text_tsv_idx",
     }
 
 
 def test_chunks_indexes_match_migration():
     assert {ix.name for ix in Chunk.__table__.indexes} == {
-        "chunks_item_idx", "chunks_embedding_hnsw",
+        "chunks_item_idx", "chunks_embedding_hnsw", "chunks_tsv_idx",
     }
 
 
@@ -109,6 +165,24 @@ def test_vector_indexes_are_hnsw_cosine(model, index):
     ddl = index_ddl(model)[index]
     assert "USING hnsw" in ddl
     assert "vector_cosine_ops" in ddl
+
+
+def test_privacy_indexes_match_migration():
+    """Phase 4's uniqueness must stay privacy-scoped in both places.
+
+    A plain UNIQUE(dedupe_key) would forbid two users from each holding a
+    private copy of the same URL, which is the whole point of the phase.
+    """
+    assert {ix.name for ix in ContentAsset.__table__.indexes} == {
+        "content_assets_public_dedupe_uq", "content_assets_owner_dedupe_uq",
+        "content_assets_canonical_url_idx", "content_assets_processing_status_idx",
+    }
+    public = index_ddl(ContentAsset)["content_assets_public_dedupe_uq"]
+    owner = index_ddl(ContentAsset)["content_assets_owner_dedupe_uq"]
+    assert "UNIQUE" in public and "dedupe_key" in public
+    assert "visibility = 'PUBLIC'" in public
+    assert "owner_user_id, dedupe_key" in owner.replace("(", "").replace(")", "")
+    assert "visibility <> 'PUBLIC'" in owner
 
 
 def test_unique_constraint_still_guards_duplicates():

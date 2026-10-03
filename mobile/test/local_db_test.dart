@@ -107,4 +107,83 @@ void main() {
     expect(await db.deleteItem('uuid-1'), 1);
     expect(await db.recentLocalItems(), isEmpty);
   });
+
+  // --- Phase 15: the offline contract --------------------------------------
+
+  test('an offline capture is stored, searchable and counted as pending',
+      () async {
+    // The capture happened with no network. Nothing about that may cost the
+    // user their link, and they must be able to see it is not yet saved.
+    final String clientId = await db.queueSave(
+      url: 'https://example.com/offline-talk',
+      preview: 'A talk saved on a train',
+      titleHint: 'Offline talk',
+    );
+
+    final List<SearchResult> found = await db.localSearch('offline talk');
+    expect(found, hasLength(1), reason: 'the capture must be findable offline');
+    expect(found.single.id, 'local-$clientId');
+    expect(await db.pendingCount(), 1);
+    final List<SyncItem> queued = await db.pendingQueue();
+    expect(queued.single.url, 'https://example.com/offline-talk');
+    expect(queued.single.clientId, clientId);
+  });
+
+  test('saving the same link twice offline queues it once', () async {
+    // Two captures of one URL both map to the same server id on sync. Enqueuing
+    // both would leave the optimistic rows colliding on the items primary key,
+    // and the user would see the link twice.
+    final String first = await db.queueSave(url: 'https://example.com/same');
+    final String second = await db.queueSave(url: 'https://example.com/same');
+
+    expect(second, first, reason: 'the repeat must reuse the queued capture');
+    expect(await db.pendingQueue(), hasLength(1));
+    expect(await db.recentLocalItems(), hasLength(1));
+  });
+
+  test('after sync the capture appears exactly once, under the server id',
+      () async {
+    final String clientId = await db.queueSave(
+      url: 'https://example.com/dedupe',
+      titleHint: 'Dedupe me',
+    );
+    // The same link saved twice offline is still one capture.
+    await db.queueSave(url: 'https://example.com/dedupe');
+
+    await db.applyMapped(<MappedSave>[
+      MappedSave(clientId: clientId, serverId: 'server-42'),
+    ]);
+
+    final List<SearchResult> items = await db.recentLocalItems();
+    expect(items, hasLength(1), reason: 'no duplicate after sync');
+    expect(items.single.id, 'server-42');
+    expect(await db.pendingCount(), 0, reason: 'the queue is empty once synced');
+  });
+
+  test('a link that already synced can be saved offline again', () async {
+    // The dedupe guard is about *unsynced* captures. Once one has landed, a
+    // deliberate re-save is the user saving it again, and must not be swallowed.
+    final String clientId = await db.queueSave(url: 'https://example.com/twice');
+    await db.applyMapped(<MappedSave>[
+      MappedSave(clientId: clientId, serverId: 'server-1'),
+    ]);
+
+    final String again = await db.queueSave(url: 'https://example.com/twice');
+    expect(again, isNot(clientId));
+    expect(await db.pendingQueue(), hasLength(1));
+  });
+
+  test('a queued capture the server refused is revived, not duplicated',
+      () async {
+    // Parked rows count as not-yet-saved: the user still does not have this
+    // link on the server, so re-sharing it must not add a second copy.
+    final String first = await db.queueSave(url: 'https://example.com/refused');
+    for (int i = 0; i < LocalDb.maxQueueRetries; i++) {
+      await db.markQueueFailed(first);
+    }
+
+    final String again = await db.queueSave(url: 'https://example.com/refused');
+    expect(again, first, reason: 'the parked capture is revived');
+    expect(await db.recentLocalItems(), hasLength(1));
+  });
 }
