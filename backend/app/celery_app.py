@@ -3,7 +3,11 @@ from celery import Celery
 from celery.signals import worker_process_init
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-celery = Celery("findback", broker=REDIS_URL, backend=REDIS_URL)
+# `include` is what registers the task with the worker. Without it the
+# worker process imports only this module, the @celery.task decorator in
+# app/tasks.py never runs, and every published job fails NotRegistered.
+celery = Celery("findback", broker=REDIS_URL, backend=REDIS_URL,
+                include=["app.tasks"])
 celery.conf.update(task_serializer="json", accept_content=["json"], result_serializer="json", timezone="UTC")
 
 
