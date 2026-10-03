@@ -43,8 +43,23 @@ def engine():
     return eng
 
 
+@pytest.fixture(scope="module")
+def installed_function(engine):
+    """Install the helper the generated column calls.
+
+    `test_function_is_declared_immutable` reads this function out of pg_proc, so
+    it has to exist before that test runs. Installing it here, once per module,
+    is what makes this file independent of test order: it used to be created
+    only by `probe_table`, which the *later* tests in this file request, so on a
+    database the suite had never touched the first test found no row and failed.
+    """
+    with engine.begin() as conn:
+        conn.execute(text(IMMUTABLE_ARRAY_TO_STRING_SQL))
+    return IMMUTABLE_ARRAY_TO_STRING_SQL
+
+
 @pytest.fixture
-def probe_table(engine):
+def probe_table(installed_function, engine):
     """A throwaway table carrying the real Item DDL's generated column.
 
     Only the three indexed columns plus `tsv` are copied. Creating the whole
@@ -59,7 +74,6 @@ def probe_table(engine):
     )
     assert m, "compiled Item DDL must still carry the generated tsv column"
     with engine.begin() as conn:
-        conn.execute(text(IMMUTABLE_ARRAY_TO_STRING_SQL))
         conn.execute(text(f"""
             CREATE TABLE {name} (
                 title_clean TEXT,
@@ -75,7 +89,7 @@ def probe_table(engine):
     yield name
     with engine.begin() as conn:
         conn.execute(text(f"DROP TABLE IF EXISTS {name}"))
-def test_function_is_declared_immutable(engine):
+def test_function_is_declared_immutable(installed_function, engine):
     with engine.connect() as conn:
         volatile, parallel, strict = conn.execute(text("""
             SELECT p.provolatile, p.proparallel, p.proisstrict
