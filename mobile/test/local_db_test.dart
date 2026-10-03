@@ -79,8 +79,10 @@ void main() {
       await db.markQueueFailed(clientId);
     }
 
-    expect(await db.pendingQueue(), isEmpty);
-    expect(await db.pendingCount(), 0);
+    expect(await db.pendingQueue(), isEmpty,
+        reason: 'parked rows must stop riding the heartbeat');
+    expect(await db.pendingCount(), 1,
+        reason: 'a parked capture is still unsaved, so the badge must show it');
     // The user still sees the save and can delete it.
     expect((await db.localItem('local-$clientId'))!.url, 'https://example.com/bad');
     expect(await db.deleteItem('local-$clientId'), 1);
@@ -173,6 +175,24 @@ void main() {
     expect(await db.pendingQueue(), hasLength(1));
   });
 
+  test('a revived capture is uploaded on the next flush', () async {
+    // The whole point of reviving: the parked row has to become work the
+    // drainer will actually send.
+    final String clientId = await db.queueSave(url: 'https://example.com/retry');
+    for (int i = 0; i < LocalDb.maxQueueRetries; i++) {
+      await db.markQueueFailed(clientId);
+    }
+    expect(await db.pendingQueue(), isEmpty);
+
+    await db.queueSave(url: 'https://example.com/retry');
+    final List<SyncItem> due = await db.pendingQueue();
+    expect(due.single.url, 'https://example.com/retry');
+    await db.applyMapped(
+        <MappedSave>[MappedSave(clientId: due.single.clientId, serverId: 'uuid-revived')]);
+    expect(await db.pendingCount(), 0, reason: 'the queue is clear again');
+    expect(await db.localItem('uuid-revived'), isNotNull);
+  });
+
   test('a queued capture the server refused is revived, not duplicated',
       () async {
     // Parked rows count as not-yet-saved: the user still does not have this
@@ -182,8 +202,21 @@ void main() {
       await db.markQueueFailed(first);
     }
 
+    expect(await db.pendingQueue(), isEmpty, reason: 'parked, so not drained');
+
     final String again = await db.queueSave(url: 'https://example.com/refused');
     expect(again, first, reason: 'the parked capture is revived');
-    expect(await db.recentLocalItems(), hasLength(1));
+
+    // Revived means really back in the queue: the same row, status pending, a
+    // fresh set of attempts, and the drainer able to see it again. Reusing the
+    // row without resetting it left it parked forever.
+    final Map<String, Object?> row = (await db.db.query('sync_queue',
+        where: 'client_id = ?', whereArgs: <Object?>[first])).single;
+    expect(row['status'], 'pending');
+    expect(row['retries'], 0, reason: 'the attempts start over');
+    expect((await db.pendingQueue()).single.clientId, first,
+        reason: 'the sync service must be able to pick it up again');
+    expect(await db.pendingCount(), 1);
+    expect(await db.recentLocalItems(), hasLength(1), reason: 'no duplicate');
   });
 }

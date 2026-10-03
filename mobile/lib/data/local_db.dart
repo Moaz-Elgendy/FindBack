@@ -124,16 +124,33 @@ class LocalDb {
   /// `failed` rows are included on purpose: the user still has not got this
   /// saved, so a retry of the same link should revive the existing row rather
   /// than add a second one.
+  ///
+  /// Reviving is the whole point of returning a parked row, so it happens here.
+  /// Handing back the client id of a row that stays `failed` looks like a
+  /// revival and is not one: `pendingQueue` only ever selects `pending`, so the
+  /// capture would never be uploaded no matter how often the user re-saved it.
+  /// A re-save is the user asking again, so the attempts start over.
   Future<String?> _pendingForUrl(String url) async {
     final rows = await db.query(
       'sync_queue',
-      columns: const ['client_id'],
+      columns: const ['client_id', 'status'],
       where: "url = ? AND status IN ('pending', 'failed')",
       whereArgs: <Object?>[url],
       orderBy: 'captured_at ASC',
       limit: 1,
     );
-    return rows.isEmpty ? null : rows.first['client_id'] as String;
+    if (rows.isEmpty) return null;
+    final Map<String, Object?> row = rows.first;
+    final String clientId = row['client_id'] as String;
+    if (row['status'] == 'failed') {
+      await db.update(
+        'sync_queue',
+        <String, Object?>{'status': 'pending', 'retries': 0},
+        where: 'client_id = ?',
+        whereArgs: <Object?>[clientId],
+      );
+    }
+    return clientId;
   }
 
   Future<List<SyncItem>> pendingQueue({int limit = queueBatchSize}) async {
@@ -248,8 +265,15 @@ class LocalDb {
   Future<int> dropQueued(String clientId) =>
       db.delete('sync_queue', where: 'client_id = ?', whereArgs: <Object?>[clientId]);
 
+  /// Captures the user still has not got onto the server.
+  ///
+  /// Parked (`failed`) rows are counted: they are the ones the user most needs
+  /// to see, because nothing else will retry them. `pendingQueue` still drains
+  /// only `pending`, so a badge that is non-zero while sync is idle means
+  /// something is stuck rather than in flight.
   Future<int> pendingCount() async {
-    final row = await db.rawQuery("SELECT COUNT(*) AS c FROM sync_queue WHERE status = 'pending'");
+    final row = await db.rawQuery(
+        "SELECT COUNT(*) AS c FROM sync_queue WHERE status IN ('pending', 'failed')");
     return row.first['c'] as int? ?? 0;
   }
 }
