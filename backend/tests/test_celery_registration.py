@@ -53,3 +53,25 @@ def test_a_worker_startup_registers_process_item():
     assert result.stdout.strip().endswith("True"), (
         f"the worker's registry did not contain process_item: {result.stdout!r} "
         f"{result.stderr!r}")
+
+
+def test_publishing_does_not_contact_the_result_backend():
+    """A save must reach the broker without a synchronous result-backend hop.
+
+    `Celery.send_task` calls `self.backend.on_task_call(...)` before publishing
+    unless results are ignored (celery/app/base.py:797). For the Redis backend
+    that subscribes to the task's result channel, which opens a Redis connection
+    with a 20 x 1s retry policy. Measured with Redis down:
+
+        process_item.delay(...)   ->  OperationalError after 19.09 s
+        with task_ignore_result   ->  OperationalError after  0.69 s
+
+    Nothing here reads a task result -- success and failure are recorded in
+    `processing_jobs` -- so the hop is pure cost, and 19 s per save is an
+    outage-shaped bug in the path that is supposed to be instant.
+    """
+    from app.celery_app import celery
+
+    assert celery.conf.task_ignore_result is True, (
+        "task_ignore_result is off, so every publish waits on the Redis result "
+        "backend before it tries the broker")

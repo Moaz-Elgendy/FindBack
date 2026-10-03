@@ -8,7 +8,15 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # app/tasks.py never runs, and every published job fails NotRegistered.
 celery = Celery("findback", broker=REDIS_URL, backend=REDIS_URL,
                 include=["app.tasks"])
-celery.conf.update(task_serializer="json", accept_content=["json"], result_serializer="json", timezone="UTC")
+celery.conf.update(task_serializer="json", accept_content=["json"],
+                   result_serializer="json", timezone="UTC",
+                   # Nothing reads a task result: success and failure live in
+                   # `processing_jobs`. Leaving this False makes every publish
+                   # call `backend.on_task_call()` first, which subscribes to the
+                   # Redis result channel and retries a dead connection 20 times --
+                   # a ~19 s stall per save while Redis is down, before the broker
+                   # is even tried. The backend stays configured for /health.
+                   task_ignore_result=True)
 
 
 @worker_process_init.connect
