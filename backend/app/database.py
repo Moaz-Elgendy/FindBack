@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 from typing import Optional
 
@@ -10,7 +10,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://findback:findback@localho
 # Sync engine by design for the MVP (ARCHITECTURE previously overclaimed an async engine).
 SYNC_URL = DATABASE_URL.replace("postgresql://", "postgresql://")
 
-# backend/ â€” lets us resolve alembic.ini and the `app` package from any cwd
+# backend/ — lets us resolve alembic.ini and the `app` package from any cwd
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 Base = declarative_base()
@@ -90,7 +90,7 @@ def ensure_tsv_function() -> None:
 
 
 def create_all() -> None:
-    """Create schema from models. Dev convenience only â€” Alembic is the source of truth."""
+    """Create schema from models. Dev convenience only — Alembic is the source of truth."""
     ensure_extensions()
     ensure_tsv_function()
     Base.metadata.create_all(bind=get_engine())
