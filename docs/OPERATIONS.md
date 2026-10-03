@@ -92,7 +92,7 @@ Model ids are retired by providers; when one is rejected the error names it, and
 `EMBEDDING_DIMS` must match `Vector(1536)` in `app/models.py` and `alembic/versions/0001_initial.py`, and the width requested from the provider. To change it: migrate the column to the new width, set `EMBEDDING_DIMS` and a matching `EMBEDDING_MODEL`, then re-embed every row (`items.embedding` and `chunks.embedding`) and update `embedding_model`. A width mismatch is refused before insert (`_guard_dimensions` in `app/services/ai.py`), so a mis-set value degrades to keyword search rather than corrupting the column.
 
 ## Mobile native build
-Run `npx expo prebuild` after setting `IOS_APP_GROUP`. The config plugin adds Android `ACTION_SEND`; iOS signing, App Group entitlement, and Share Extension target require the Apple team/profile in EAS or Xcode. Background sync is best-effort and OS scheduled.
+`android/` and `ios/` are generated per developer machine: run `tool/setup_mobile.sh` from the repository root (it calls `flutter create` in a temp dir and copies only the platform folders in, then runs `pub get`, `analyze` and `test`). The Dart half of share intake is implemented; the native half is not, because no platform project is checked in -- see `docs/NATIVE_SHARE.md` for the intent filter and Share Extension target that have to be added once one exists.
 
 ## Quality gates
-`python -m compileall backend/app backend/alembic`, `pytest` in `backend`, `npm ci && npx tsc --noEmit` in `mobile`, `python eval/eval.py --offline`, and Postman artifact linting.
+`python -m compileall backend/app backend/alembic`; `pytest` in `backend` (set `TEST_DATABASE_URL` or the 272 live-PostgreSQL tests skip themselves); `flutter analyze` and `flutter test` in `mobile`; and `python eval/eval_offline.py` from the repository root.

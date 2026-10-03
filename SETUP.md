@@ -408,8 +408,8 @@ this guide was written.
 
 | Suite | Command | Expected result |
 | --- | --- | --- |
-| Backend unit tests | `cd backend && python -m pytest -q` | `187 passed, 222 skipped` — the skips are the live-PostgreSQL tests |
-| Backend tests **with** a database | `cd backend && TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/findback python -m pytest -q` | `409 passed` (takes ~3 minutes; point the URL at the PostgreSQL you started, and note the tests create and drop throwaway `fb_*` databases, so the role must be allowed to `CREATE DATABASE`) |
+| Backend unit tests | `cd backend && python -m pytest -q` | `272 passed, 272 skipped` — the skips are the live-PostgreSQL tests |
+| Backend tests **with** a database | `cd backend && TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/findback python -m pytest -q` | `544 passed` (takes ~3 minutes; point the URL at the PostgreSQL you started, and note the tests create and drop throwaway `fb_*` databases, so the role must be allowed to `CREATE DATABASE`) |
 | Backend syntax check | `python -m compileall backend/app backend/alembic` | compiles with no errors |
 | Flutter analysis | `cd mobile && flutter analyze` | `No issues found!` |
 | Flutter tests | `cd mobile && flutter test` | `All tests passed!` (65 tests) |
