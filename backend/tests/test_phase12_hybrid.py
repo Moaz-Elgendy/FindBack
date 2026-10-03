@@ -407,3 +407,96 @@ def test_search_never_crosses_a_user_boundary(db, sessions):
     assert results == [], "another user's memories must never appear"
 
 
+# --- the user's own note is a source of evidence (H7) ---------------------
+
+def test_a_query_that_only_matches_the_note_finds_the_memory(db, sessions):
+    """"weekend" is in exactly one place in this corpus: the note.
+
+    It appears in no title, summary, topic, highlight, structured value or
+    body, so the only way this query can answer with the memory is by searching
+    the note. Before this, the note could only explain a match that some other
+    list had already produced, and a query built from the user's own words about
+    why they saved something returned nothing.
+    """
+    uid, ids = _seed(db, sessions)
+
+    results, _took = _search(db, uid, "weekend")
+    assert results, "the note alone must make the memory a candidate"
+    assert str(results[0]["row"][0]) == ids["chicken_recipe"]
+    assert "note" in (results[0]["match_reason"] or ""), \
+        results[0]["match_reason"]
+
+
+def test_the_note_is_never_copied_onto_the_shared_content(db, sessions):
+    """It stays on user_memories: not on the asset, not in the search document.
+
+    The note is the user's own words about someone else's content. Copying it
+    onto the shared ContentAsset, or folding it into the item's indexed text or
+    embedding input, would hand it to whoever searches next.
+    """
+    uid, _ids = _seed(db, sessions)
+
+    with db.connect() as conn:
+        assets = conn.execute(text(
+            "SELECT brief, title, structured_data::text, entities::text, "
+            "topics::text FROM content_assets")).all()
+        asset_blob = " ".join(str(value) for row in assets for value in row)
+        documents = conn.execute(text(
+            "SELECT coalesce(search_text, '') FROM items")).scalars().all()
+        columns = conn.execute(text(
+            "SELECT coalesce(title_clean, '') || ' ' || coalesce(summary, '') "
+            "|| ' ' || coalesce(raw_text, '') FROM items")).scalars().all()
+
+    assert "weekend" not in asset_blob, "the note reached the shared asset"
+    assert all("weekend" not in d for d in documents), \
+        "the note reached the item's search document"
+    assert all("weekend" not in c for c in columns), \
+        "the note reached the item's own columns"
+
+
+def test_another_users_note_is_never_a_candidate(db, sessions):
+    """Two users, one shared PUBLIC asset, one note between them.
+
+    The author must find their own note; the other user must get nothing at
+    all -- the note is not merely ranked lower, it is absent.
+    """
+    from app import models
+
+    author, viewer = uuid.uuid4(), uuid.uuid4()
+    with sessions() as s:
+        s.execute(text("INSERT INTO users (id, email) VALUES (:i, :e)"),
+                  [{"i": str(author), "e": "author@example.test"},
+                   {"i": str(viewer), "e": "viewer@example.test"}])
+        s.commit()
+
+    item_ids = {}
+    with sessions() as s:
+        asset = models.ContentAsset(
+            canonical_url="https://shared.example.test/thing",
+            dedupe_key="url:https://shared.example.test/thing",
+            visibility=models.VISIBILITY_PUBLIC,
+            title="A shared thing", brief="something both users saved")
+        s.add(asset)
+        s.flush()
+        for user, note in ((author, "zanzibar packing list"), (viewer, None)):
+            # The composite FK requires the memory before the item.
+            s.add(models.UserMemory(user_id=user, content_id=asset.id,
+                                    user_note=note))
+            s.flush()
+            item = models.Item(
+                user_id=user, url=asset.canonical_url,
+                canonical_url=asset.canonical_url, title="A shared thing",
+                content_id=asset.id, status="ready",
+                search_text="a shared thing",
+                source_domain="shared.example.test")
+            s.add(item)
+            s.flush()
+            item_ids[user] = str(item.id)
+        s.commit()
+
+    mine, _took = _search(db, author, "zanzibar")
+    assert mine, "sanity: the author's own note is findable"
+    assert str(mine[0]["row"][0]) == item_ids[author]
+
+    theirs, _took = _search(db, viewer, "zanzibar")
+    assert theirs == [], "another user's note must never be a candidate"

@@ -37,6 +37,10 @@ W_BM25 = float(os.getenv("BM25_WEIGHT", "0.3"))
 # a specific moment; an item hit is the whole memory.
 W_CHUNK_VEC = float(os.getenv("CHUNK_VECTOR_WEIGHT", "0.5"))
 W_CHUNK_LEX = float(os.getenv("CHUNK_LEXICAL_WEIGHT", "0.35"))
+# Phase 12 + 13: the user's own note and intent. Above a body-word match,
+# because a note is deliberate; below the memory's own vector, because a
+# note says how the user filed the thing rather than what the content is.
+W_NOTE_LEX = float(os.getenv("NOTE_LEXICAL_WEIGHT", "0.45"))
 # How much a recent save can lift a result. This must stay far below the
 # smallest possible RRF contribution (a single last-place hit in the smallest
 # list is W_BM25/(RRF_K+limit) ~ 0.002), because recency is a tie-breaker: it
@@ -94,7 +98,8 @@ def matched_terms(terms: list[str], *texts: str | None) -> list[str]:
 
 
 def evidence_reason(terms: list[str], row, note: str | None = None,
-                    chunk: tuple | None = None, document: str | None = None) -> str:
+                    chunk: tuple | None = None, document: str | None = None,
+                    intent: str | None = None) -> str:
     """Say what matched, in the user's own words.
 
     "AWS + deployment + recovery" is a reason. "Matched: tutorial" is not: a
@@ -117,6 +122,11 @@ def evidence_reason(terms: list[str], row, note: str | None = None,
 
     if note and matched_terms(terms, note):
         return f"{' + '.join(matched_terms(terms, note))} (your note)"
+
+    # The intent is the user's own label too, so it is evidence -- but it is not
+    # the note, and saying so would be a wrong reason.
+    if intent and matched_terms(terms, intent):
+        return f"{' + '.join(matched_terms(terms, intent))} (your intent)"
 
     # No lexical evidence at all, so the reason is the semantic one: be honest
     # that it matched on meaning rather than pretend a word matched.
@@ -141,21 +151,23 @@ def _cat_filter(category: str | None, alias: str = "") -> str:
     return f"AND {alias}category = :cat" if category else ""
 
 
-def _with_notes(db: Session, user_id, ids: list[str]) -> dict[str, str]:
-    """The user's own private notes for these memories (Phase 12 user context).
+def _with_notes(db: Session, user_id, ids: list[str]) -> dict[str, dict]:
+    """The user's own private note and intent for these memories (Phase 13).
 
     A note is how the user remembers a thing: "the one I saved to try on the
-    laptop". It is searchable, and it is never shared.
+    laptop". Both it and the intent are searchable, and neither is ever shared.
+    Read from `user_memories` under the requesting user's id and nowhere else.
     """
     if not ids:
         return {}
     rows = db.execute(text("""
-        SELECT um.content_id::text, um.user_note
+        SELECT um.content_id::text, um.user_note, um.user_intent
         FROM user_memories um
-        WHERE um.user_id = :uid AND um.user_note IS NOT NULL
+        WHERE um.user_id = :uid
+          AND (um.user_note IS NOT NULL OR um.user_intent IS NOT NULL)
           AND um.content_id::text = ANY(:ids)
     """), {"uid": str(user_id), "ids": ids}).fetchall()
-    return {row[0]: row[1] for row in rows}
+    return {row[0]: {"note": row[1], "intent": row[2]} for row in rows}
 
 
 def _documents(db: Session, user_id, item_ids: list[str]) -> dict[str, str]:
@@ -246,6 +258,53 @@ def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
                "lim": limit}).fetchall()
     except Exception as e:
         log.warning("[search] chunk lexical failed: %s", e)
+        return []
+
+
+# The user's own words: the note they wrote and the intent they chose. Both
+# live on their private memory row, so they are read as one document. Neither is
+# ever copied onto the shared asset or into the embedding text.
+_NOTE_DOCUMENT = ("coalesce(um.user_note, '') || ' ' || "
+                  "coalesce(um.user_intent, '')")
+
+
+def note_search(db: Session, user_id, terms: list[str], limit: int = 50):
+    """Candidates from the user's own note and intent (Phase 12 + 13).
+
+    A note is how the user remembers a thing -- "the one I saved to try on the
+    laptop" -- so it is evidence about *their* memory, and a query that matches
+    nothing but the note has to find the item. Before this, the note could only
+    explain a match that some other candidate list had already produced, so the
+    user's own words about why they saved something answered nothing.
+
+    Two things this deliberately does not do:
+
+    * read another user's row. `um.user_id` is the requester and the item join
+      is restricted to the same user, so a note can only ever make its own
+      author's item a candidate;
+    * write the note anywhere shared. It stays on `user_memories`; it is not
+      copied onto `content_assets` and not folded into the embedding text, so it
+      cannot reach another user or another user's vector.
+    """
+    if not terms:
+        return []
+    try:
+        return db.execute(text(f"""
+            SELECT {_ITEM_COLUMNS},
+                   ts_rank(to_tsvector('english', {_NOTE_DOCUMENT}),
+                           to_tsquery('english', :q)) AS rank
+            FROM user_memories um
+            JOIN items i
+              ON i.content_id = um.content_id AND i.user_id = um.user_id
+            WHERE um.user_id = :uid
+              AND to_tsvector('english', {_NOTE_DOCUMENT})
+                  @@ to_tsquery('english', :q)
+            ORDER BY rank DESC
+            LIMIT :lim
+        """), {"uid": str(user_id), "q": or_tsquery(terms),
+               "lim": limit}).fetchall()
+    except Exception as e:
+        log.warning("[search] note search failed: %s", e)
         return []
 
 
@@ -385,13 +444,14 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
                         saved_before: datetime = None):
     """Find the user's own memories. Retrieval only: nothing is recommended.
 
-    Four candidate lists are merged with Reciprocal Rank Fusion and then nudged
-    by recency:
+    Five candidate lists are merged with Reciprocal Rank Fusion and then
+    nudged by recency:
 
         items by meaning        items by words
         chunks by meaning       chunks by words
+        the user's own note and intent
 
-    RRF is used rather than raw score sums because the four lists are on
+    RRF is used rather than raw score sums because the lists are on
     incomparable scales (cosine vs ts_rank), and because a rank is exactly what
     each list can honestly contribute.
     """
@@ -412,15 +472,18 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
         await chunk_search(db, user_id, query), meta)
     chunk_lex_rows = _filter_rows(
         chunk_lexical_search(db, user_id, query, terms), meta)
+    note_rows = _filter_rows(note_search(db, user_id, terms), meta)
 
     # The whole searchable document per item, so the reason can be checked
     # against everything that was actually indexed -- structured_data and
     # entities included, not just the title.
     documents = _documents(db, user_id,
                            list({str(r[0]) for r in
-                                 lex_rows + vec_rows + chunk_vec_rows + chunk_lex_rows}))
+                                 lex_rows + vec_rows + chunk_vec_rows
+                                 + chunk_lex_rows + note_rows}))
 
-    if not any((lex_rows, vec_rows, chunk_vec_rows, chunk_lex_rows)):
+    if not any((lex_rows, vec_rows, chunk_vec_rows, chunk_lex_rows,
+                note_rows)):
         took = int((time.time() - t0) * 1000)
         return [], took
 
@@ -428,7 +491,8 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
     # The best chunk per item, per list: several chunks of one video are one
     # memory to the user, not several results.
     chunk_by_id: dict[str, tuple] = {}
-    for rows in (lex_rows, vec_rows, chunk_vec_rows, chunk_lex_rows):
+    for rows in (lex_rows, vec_rows, chunk_vec_rows, chunk_lex_rows,
+                 note_rows):
         for row in rows:
             key = str(row[0])
             rows_by_id.setdefault(key, tuple(row[:9]))
@@ -441,11 +505,12 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
         (_ranks(vec_rows), W_VEC),
         (_ranks(chunk_vec_rows), W_CHUNK_VEC),
         (_ranks(chunk_lex_rows), W_CHUNK_LEX),
+        (_ranks(note_rows), W_NOTE_LEX),
     ]
 
-    notes = _with_notes(db, user_id,
-                        list({str(r[8]) for r in rows_by_id.values()
-                              if r[8] is not None}))
+    contexts = _with_notes(db, user_id,
+                           list({str(r[8]) for r in rows_by_id.values()
+                                 if r[8] is not None}))
 
     scored = []
     for iid, row in rows_by_id.items():
@@ -462,11 +527,13 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
             continue
         seen_content.add(key)
         chunk = chunk_by_id.get(iid)
-        note = notes.get(str(row[8])) if row[8] is not None else None
+        context = contexts.get(str(row[8])) if row[8] is not None else None
         results.append({"row": row, "score": score,
                         "match_reason": evidence_reason(
-                            terms, row, note, chunk,
-                            document=documents.get(iid)),
+                            terms, row,
+                            (context or {}).get("note"), chunk,
+                            document=documents.get(iid),
+                            intent=(context or {}).get("intent")),
                         "matched_chunk": chunk[10] if chunk else None,
                         "matched_at": chunk[12] if chunk else None})
         if len(results) >= limit:
