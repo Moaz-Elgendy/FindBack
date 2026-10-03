@@ -40,6 +40,10 @@ jobs:
           DATABASE_URL: postgresql://findback:findback@localhost:5432/findback
           REDIS_URL: redis://localhost:6379/0
           DEV_AUTH_ENABLED: "true"
+          # Every live-DB test module gates on TEST_DATABASE_URL (not
+          # DATABASE_URL), so without this line they all skip and the job
+          # passes on a little over half the suite.
+          TEST_DATABASE_URL: postgresql://findback:findback@localhost:5432/findback
   mobile:
     runs-on: ubuntu-latest
     defaults:
