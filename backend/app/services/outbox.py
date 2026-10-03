@@ -150,11 +150,21 @@ def find_job_for_content(db, content_id, job_type: str):
     """), {"cid": str(content_id), "jt": job_type}).mappings().first()
 
 
-def complete_job(db, job_id, success: bool, error: str | None = None) -> None:
+def complete_job(db, job_id, success: bool, error: str | None = None,
+                 reused: bool = False) -> None:
     """Move a job to READY or FAILED, recording the attempt.
 
     `attempt_count` increments on every terminal attempt so a retried job shows
     how hard it was to get through; `last_error` keeps the most recent reason.
+
+    `reused` means the worker satisfied the job from content that was already
+    processed, without running a single stage. Phase 18's `processing_duration`
+    and `queue_wait_time` are both derived from `claimed_at`, so a reuse clears
+    it: there was no processing run to measure, and a few-millisecond sample in
+    a histogram of multi-second runs is not a measurement of anything. This is
+    also why the histograms need no new column to tell the two apart. The
+    trade-off, recorded here because it is a real one, is that a reused job also
+    stops contributing its genuine queue wait.
     """
     db.execute(text("""
         UPDATE processing_jobs
@@ -162,11 +172,13 @@ def complete_job(db, job_id, success: bool, error: str | None = None) -> None:
             attempt_count = attempt_count + 1,
             last_error = :error,
             locked_at = NULL,
+            claimed_at = CASE WHEN :reused THEN NULL ELSE claimed_at END,
             updated_at = now()
         WHERE id = :id
     """), {"id": str(job_id),
            "status": JOB_STATUS_READY if success else JOB_STATUS_FAILED,
-           "error": None if success else (error or "")[:1000]})
+           "error": None if success else (error or "")[:1000],
+           "reused": bool(reused)})
     db.commit()
 
 

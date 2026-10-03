@@ -1,34 +1,30 @@
-"""H3: is one PUBLIC piece of content processed once, or once per user?
+"""H3 step 1: processed PUBLIC content is reused, not reprocessed.
 
-MEASUREMENT, NOT A REQUIREMENT.
+The measurement that opened this file (two users, one PUBLIC asset, the
+expensive stages counted) said the second save re-fetched the page, re-called
+the model and re-embedded the content. These tests now pin the behaviour that
+replaced it, and the conditions under which reuse must NOT happen.
 
-This file pins the behaviour H3 describes so the claim can be checked rather
-than argued about: two users save the same PUBLIC URL, the expensive stages are
-counted, and the counts are printed. It asserts the *current* behaviour, so when
-content-level reuse is implemented these assertions must flip -- the docstring on
-each one says what it should become.
-
-Why it matters: fetch, the model call and the embeddings are the only parts of a
-save that cost money, and this measures how often they run for content that is
-already processed.
-
-    TEST_DATABASE_URL=... python -m pytest tests/test_h3_content_reuse.py -q -s
+    TEST_DATABASE_URL=... python -m pytest tests/test_h3_content_reuse.py -q
 """
+import asyncio
 import os
 import uuid
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "").strip()
 
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
-    reason="TEST_DATABASE_URL not set; skipping the H3 measurement",
+    reason="TEST_DATABASE_URL not set; skipping the H3 reuse tests",
 )
 
 SHARED_URL = "https://public.example.test/shared-article"
+MODEL = "spy-model"
+OTHER_MODEL = "some-other-model"
 
 
 @pytest.fixture(scope="module")
@@ -82,13 +78,23 @@ def users(sessions):
     return ids
 
 
+def _add_user(sessions, label):
+    uid = uuid.uuid4()
+    with sessions() as s:
+        s.execute(text("INSERT INTO users (id, email) VALUES (:i, :e)"),
+                  {"i": str(uid), "e": f"h3-{label}@example.test"})
+        s.commit()
+    return uid
+
+
 @pytest.fixture
 def spies(monkeypatch):
     """Count the three stages that cost money, and fake the outside world."""
     from app.schemas import Brief
     from app.services import embedder, extractor, fetcher, storage
 
-    calls = {"fetch": 0, "understand": 0, "embed": 0, "embedded_texts": 0}
+    calls = {"fetch": 0, "understand": 0, "embed": 0}
+    vector = [0.001] * 1536
 
     async def fetch(url, preview=""):
         calls["fetch"] += 1
@@ -106,15 +112,17 @@ def spies(monkeypatch):
 
     async def embed_many(texts, task="document"):
         calls["embed"] += 1
-        calls["embedded_texts"] += len(texts)
-        return [[0.0] * 1536 for _ in texts]
+        return [list(vector) for _ in texts]
+
+    async def embed_text(text, task="document"):
+        # hybrid_search awaits this, so it has to be a coroutine.
+        return list(vector)
 
     monkeypatch.setattr(fetcher, "fetch_content", fetch)
     monkeypatch.setattr(extractor, "extract_brief", extract)
     monkeypatch.setattr(embedder, "embed_many", embed_many)
-    monkeypatch.setattr(embedder, "embed_text",
-                        lambda text, task="document": [0.0] * 1536)
-    monkeypatch.setattr(embedder, "embedding_model_name", lambda: "spy-model")
+    monkeypatch.setattr(embedder, "embed_text", embed_text)
+    monkeypatch.setattr(embedder, "embedding_model_name", lambda: MODEL)
     monkeypatch.setattr(embedder, "chunk_text_with_timestamps",
                         lambda text, size=800, overlap=160: [
                             {"chunk_idx": 0, "chunk_text": text,
@@ -151,151 +159,361 @@ def _run_worker(sessions, item_id):
     db_module._engine = sessions.kw["bind"]
     db_module._sessionmaker = None
     try:
-        app_tasks.process_item.apply(args=(str(item_id),), throw=True)
+        return app_tasks.process_item.apply(args=(str(item_id),),
+                                            throw=True).get()
     finally:
         db_module._engine = previous_engine
         db_module._sessionmaker = previous_sessionmaker
 
 
-def test_h3_public_content_is_reprocessed_for_every_user(
-        db, sessions, users, spies, monkeypatch):
+def _search(db, uid, query, limit=10):
+    from app.services import search
+
+    with Session(bind=db) as s:
+        return asyncio.run(search.hybrid_search(s, uid, query, limit=limit))
+
+
+def _publish_public(sessions, content_id):
+    with sessions() as s:
+        s.execute(text("UPDATE content_assets SET visibility = 'PUBLIC', "
+                       "owner_user_id = NULL WHERE id = :c"),
+                  {"c": content_id})
+        s.commit()
+
+
+def _content_id_of(sessions, item_id):
+    with sessions() as s:
+        return s.execute(text("SELECT content_id FROM items WHERE id = :i"),
+                         {"i": str(item_id)}).scalar()
+
+
+def _asset(sessions, content_id):
+    with sessions() as s:
+        return s.execute(text(
+            "SELECT processing_status, pipeline_version, title, brief, "
+            "structured_data::text AS structured, entities::text AS entities, "
+            "topics::text AS topics, processed_at "
+            "FROM content_assets WHERE id = :c"),
+            {"c": content_id}).mappings().one()
+
+
+def _item_state(sessions, item_id):
+    with sessions() as s:
+        return s.execute(text(
+            "SELECT status, embedding IS NOT NULL AS has_vector, "
+            "embedding_model, coalesce(search_text, '') AS search_text, "
+            "(SELECT count(*) FROM chunks WHERE item_id = :i) AS chunks "
+            "FROM items WHERE id = :i"),
+            {"i": str(item_id)}).mappings().one()
+
+
+def _prepared_public_content(sessions, users, monkeypatch):
+    """User A saves, the worker processes it, and the content becomes PUBLIC."""
     from app.tasks import process_item
 
     monkeypatch.setattr(process_item, "delay", lambda item_id: None)
     author, second = users
-
-    # 1. The first saver's save runs the whole pipeline.
     with sessions() as s:
         first_item = _save(s, author)
     _run_worker(sessions, first_item)
-    first_pass = dict(spies)
-    assert first_pass["fetch"] == 1
-    assert first_pass["understand"] == 1
-    assert first_pass["embed"] == 1, "one call for the memory, one for the chunk"
+    content_id = _content_id_of(sessions, first_item)
+    _publish_public(sessions, content_id)
+    return author, second, first_item, content_id
 
-    with sessions() as s:
-        content_id = s.execute(
-            text("SELECT content_id FROM items WHERE id = :i"),
-            {"i": str(first_item)}).scalar()
-        chunks_after_first = s.execute(text(
-            "SELECT count(*) FROM chunks")).scalar()
 
-    # 2. The content is classified PUBLIC, which is what makes it reusable.
-    with sessions() as s:
-        s.execute(text("UPDATE content_assets SET visibility = 'PUBLIC', "
-                       "owner_user_id = NULL"))
-        s.commit()
-        asset = s.execute(text(
-            "SELECT processing_status, title, brief, structured_data::text "
-            "FROM content_assets WHERE id = :c"),
-            {"c": content_id}).mappings().one()
+# --- the fix itself ---------------------------------------------------------
 
-    assert asset["processing_status"] == "READY", (
-        "the asset is finished at the current pipeline version before the "
-        "second save, which is what a reuse check would look at")
-    assert asset["title"] and asset["brief"]
+def test_a_second_user_reuses_processed_public_content(
+        db, sessions, users, spies, monkeypatch):
+    """The second save costs nothing: no fetch, no model call, no embedding.
 
-    # 3. A second user saves the same link. Nothing about the content changed.
+    This is the measurement that opened this file, inverted. The counts that
+    used to read fetch=1 understand=1 embed=1 for the second user now read 0,
+    and the second user still ends up with a finished, searchable memory.
+    """
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
+
+    asset_before = _asset(sessions, content_id)
+    assert asset_before["processing_status"] == "READY"
+    assert asset_before["pipeline_version"] == "process_item:v1", \
+        "a finished run must stamp the asset, or nothing can be reused"
+
     for key in spies:
         spies[key] = 0
 
     with sessions() as s:
         second_item = _save(s, second)
     assert str(second_item) != str(first_item), "two users, two items"
-    with sessions() as s:
-        same_asset = s.execute(
-            text("SELECT content_id FROM items WHERE id = :i"),
-            {"i": str(second_item)}).scalar()
-    assert str(same_asset) == str(content_id), "and one shared asset"
+    result = _run_worker(sessions, second_item)
 
+    print()
+    print("  === reuse: the second user's save ===")
+    print(f"  stage calls : fetch={spies['fetch']} "
+          f"understand={spies['understand']} embed={spies['embed']}")
+    print(f"  worker      : {result}")
+    print()
+
+    assert spies["fetch"] == 0, "the page must not be fetched again"
+    assert spies["understand"] == 0, "the model must not be called again"
+    assert spies["embed"] == 0, "the content must not be embedded again"
+    assert result["reused"] is True
+
+    state = _item_state(sessions, second_item)
+    assert state["status"] == "ready", "search only sees ready items"
+    assert state["has_vector"] is True, "the memory vector was handed over"
+    assert state["embedding_model"] == MODEL
+    assert state["chunks"] >= 1, "search reaches content through chunks"
+    assert state["search_text"], "the lexical document was recomputed"
+
+    # ... and the second user can actually find it, through their own row only.
+    results, _took = _search(db, second, "kubernetes rollbacks")
+    ranked = [str(r["row"][0]) for r in results]
+    assert ranked, "the reused memory is not searchable"
+    assert str(second_item) in ranked
+    assert str(first_item) not in ranked, "the first user's item is not theirs"
+
+    # The asset is untouched by the reuse: it was already finished.
+    assert _asset(sessions, content_id)["processing_status"] == "READY"
+
+
+def test_a_reused_job_still_goes_through_the_state_machine(
+        db, sessions, users, spies, monkeypatch):
+    """Reuse is not a shortcut around Phase 5/6 -- only around the stages.
+
+    The job is recorded, claimed, and completed READY like any other, so the
+    outbox, the partial unique index and the state machine see nothing new. The
+    one difference is deliberate: a reuse ran no pipeline, so it carries no
+    claim time and does not land in the Phase 18 duration histograms as a
+    multi-second processing run.
+    """
+    from app.services import metrics
+
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
+
+    for key in spies:
+        spies[key] = 0
+    with sessions() as s:
+        second_item = _save(s, second)
     _run_worker(sessions, second_item)
 
     with sessions() as s:
-        chunks_total = s.execute(text("SELECT count(*) FROM chunks")).scalar()
-        chunks_by_item = s.execute(text(
-            "SELECT count(DISTINCT item_id) FROM chunks")).scalar()
         jobs = s.execute(text(
-            "SELECT status, count(*) FROM processing_jobs GROUP BY status"
-        )).all()
+            "SELECT status, attempt_count, claimed_at, last_stage "
+            "FROM processing_jobs WHERE content_id = :c ORDER BY created_at"),
+            {"c": content_id}).mappings().all()
+    assert len(jobs) == 2, "one job per save, no extra jobs invented"
+    assert all(j["status"] == "READY" for j in jobs)
+    assert all(j["attempt_count"] == 1 for j in jobs)
 
-    print()
-    print("  === H3 measurement: two users, one PUBLIC asset ===")
-    print(f"  first save   : fetch={first_pass['fetch']} "
-          f"understand={first_pass['understand']} embed={first_pass['embed']}")
-    print(f"  second save  : fetch={spies['fetch']} "
-          f"understand={spies['understand']} embed={spies['embed']} "
-          f"(texts embedded: {spies['embedded_texts']})")
-    print(f"  chunks       : {chunks_after_first} after the first save, "
-          f"{chunks_total} after the second, "
-          f"across {chunks_by_item} distinct item(s)")
-    print(f"  jobs         : {jobs}")
-    print()
+    first, reused = jobs
+    assert first["last_stage"] == "EMBED", "a real run records its stages"
+    assert reused["last_stage"] is None, "a reuse completed no stage"
+    assert first["claimed_at"] is not None, "a real run keeps its claim time"
+    assert reused["claimed_at"] is None, (
+        "a reuse has no processing duration to report, so it is excluded from "
+        "the Phase 18 histograms rather than logged as a very fast pipeline")
 
-    # The assertions below pin CURRENT behaviour (H3 present). After a
-    # content-level reuse fix they must become 0/0/0 and chunks_by_item == 1.
-    assert spies["fetch"] == 1, "H3: the page is fetched again for the second user"
-    assert spies["understand"] == 1, "H3: the model is called again"
-    assert spies["embed"] == 1, "H3: the content is embedded again"
-    assert chunks_by_item == 2, (
-        "H3: chunk rows are keyed per item, so one shared piece of content now "
-        "has a set of chunks for each user who saved it")
+    # Proven through the metrics the scraper reads, not just through the row.
+    with sessions() as s:
+        metrics.reset()
+        summary = metrics.collect_queue_metrics(s)
+    assert summary["ok"] is True
+    assert summary["counts"]["total"] == 2
+    assert summary["counts"]["ready"] == 2, "both jobs are successes"
+    assert metrics.processing_duration.count() == 1, (
+        "only the run that actually processed should be a duration sample")
+    assert metrics.queue_wait_time.count() == 1
 
 
-def test_h3_the_asset_already_holds_everything_a_reuse_would_need(
+def test_a_model_mismatch_falls_back_to_the_full_pipeline(
         db, sessions, users, spies, monkeypatch):
-    """What is already available to reuse, measured rather than assumed.
+    """Vectors from another model are not comparable with this one's query.
 
-    If the asset's own columns and its chunks are complete, the second user's
-    item needs no pipeline at all -- only the item row that points at it. This
-    test reports exactly which pieces those are, so the proposal is grounded in
-    what the current schema already stores.
+    Reusing them would give the second user a memory that scores nonsense
+    against every search, so a mismatch means paying for the pipeline.
     """
-    from app.tasks import process_item
+    from app.services import embedder
 
-    monkeypatch.setattr(process_item, "delay", lambda item_id: None)
-    author, second = users
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
+
+    monkeypatch.setattr(embedder, "embedding_model_name", lambda: OTHER_MODEL)
+    for key in spies:
+        spies[key] = 0
 
     with sessions() as s:
-        first_item = _save(s, author)
-    _run_worker(sessions, first_item)
+        second_item = _save(s, second)
+    result = _run_worker(sessions, second_item)
+
+    assert spies["fetch"] == 1, "the page is fetched again for a new model"
+    assert spies["understand"] == 1
+    assert spies["embed"] == 1
+    assert result.get("reused") is not True
+    assert _item_state(sessions, second_item)["embedding_model"] == OTHER_MODEL
+
+
+def test_a_private_or_unknown_asset_is_never_reused_across_users(
+        sessions, users, spies, monkeypatch):
+    """The worker re-checks Phase 4's rule; it does not trust the save.
+
+    `_find_reusable_asset` decides at save time whether a second user may attach
+    to an asset, and this asset was PUBLIC then. Visibility is not frozen
+    afterwards, so the worker has to apply the rule again rather than copy
+    whatever the save was once allowed to do.
+    """
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
+
+    # The second user saves while the content is PUBLIC, so the save is allowed
+    # and records its job...
     with sessions() as s:
-        s.execute(text("UPDATE content_assets SET visibility = 'PUBLIC', "
-                       "owner_user_id = NULL"))
+        second_item = _save(s, second)
+
+    # ...and the content is private again before the worker gets to it. This is
+    # a real window: the save records the intent, the worker decides later.
+    with sessions() as s:
+        s.execute(text("UPDATE content_assets SET visibility = 'UNKNOWN', "
+                       "owner_user_id = :a WHERE id = :c"),
+                  {"a": str(author), "c": content_id})
         s.commit()
-        content_id = s.execute(
-            text("SELECT content_id FROM items WHERE id = :i"),
-            {"i": str(first_item)}).scalar()
+
+    for key in spies:
+        spies[key] = 0
+    result = _run_worker(sessions, second_item)
+
+    assert spies["fetch"] == 1, "private content must be processed, not copied"
+    assert spies["understand"] == 1
+    assert spies["embed"] == 1
+    assert result.get("reused") is not True
+    assert _item_state(sessions, second_item)["chunks"] >= 1
+
+
+def test_an_unstamped_asset_runs_once_more_and_is_then_reusable(
+        db, sessions, users, spies, monkeypatch):
+    """NULL means "processed before the stamp existed": run once, then stamp.
+
+    Nothing is backfilled, so this is the path every existing asset takes the
+    first time it is saved again -- and it must end reusable, not stuck.
+    """
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
+    with sessions() as s:
+        s.execute(text("UPDATE content_assets SET pipeline_version = NULL "
+                       "WHERE id = :c"), {"c": content_id})
+        s.commit()
+
+    for key in spies:
+        spies[key] = 0
+    with sessions() as s:
+        second_item = _save(s, second)
+    result = _run_worker(sessions, second_item)
+
+    assert spies["fetch"] == 1, "an unstamped asset is processed, not reused"
+    assert result.get("reused") is not True
+    assert _asset(sessions, content_id)["pipeline_version"] == "process_item:v1"
+
+    # Re-stamped, so the next user's save is free again.
+    third = _add_user(sessions, "third")
+    for key in spies:
+        spies[key] = 0
+    with sessions() as s:
+        third_item = _save(s, third)
+    result = _run_worker(sessions, third_item)
+
+    assert spies["fetch"] == 0 and spies["understand"] == 0
+    assert spies["embed"] == 0
+    assert result["reused"] is True
+
+
+def test_a_users_note_never_travels_with_the_content(
+        db, sessions, users, spies, monkeypatch):
+    """The reuse moves shared content only.
+
+    The author's note is written before the second save, so if the copy reached
+    into `user_memories` the second user would be holding it. Afterwards the
+    second user writes a note of their own, and the author must not be able to
+    find it -- neither through search nor in any stored column.
+    """
+    from app.services import user_context
+
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
 
     with sessions() as s:
-        asset = s.execute(text(
-            "SELECT processing_status, pipeline_version, title, brief, "
-            "structured_data::text AS structured, entities::text AS entities, "
-            "topics::text AS topics, intent, processed_at "
-            "FROM content_assets WHERE id = :c"),
-            {"c": content_id}).mappings().one()
-        chunks = s.execute(text(
-            "SELECT count(*), count(embedding) FROM chunks "
-            "WHERE item_id = :i"), {"i": str(first_item)}).one()
-        item_columns = s.execute(text(
-            "SELECT search_text IS NOT NULL, embedding IS NOT NULL "
-            "FROM items WHERE id = :i"), {"i": str(first_item)}).one()
+        user_context.set_context(s, author, content_id,
+                                 note="alice private thought zanzibar")
 
-    print()
-    print("  === what the asset already holds ===")
-    print(f"  processing_status : {asset['processing_status']}")
-    print(f"  pipeline_version  : {asset['pipeline_version']!r}")
-    print(f"  title/brief       : {bool(asset['title'])}/{bool(asset['brief'])}")
-    print(f"  structured_data   : {bool(asset['structured'])}")
-    print(f"  entities/topics   : {bool(asset['entities'])}/{bool(asset['topics'])}")
-    print(f"  processed_at      : {asset['processed_at'] is not None}")
-    print(f"  chunks on the item: {chunks[0]} ({chunks[1]} with a vector)")
-    print(f"  item search_text/embedding present: {item_columns}")
-    print()
+    for key in spies:
+        spies[key] = 0
+    with sessions() as s:
+        second_item = _save(s, second)
+    _run_worker(sessions, second_item)
+
+    with sessions() as s:
+        notes = dict(s.execute(text(
+            "SELECT user_id::text, coalesce(user_note, '') FROM user_memories "
+            "WHERE content_id = :c"), {"c": content_id}).all())
+    assert "zanzibar" in notes[str(author)]
+    assert notes[str(second)] == "", (
+        "the author's note was copied onto the second user's memory")
+
+    # The second user writes their own note.
+    with sessions() as s:
+        user_context.set_context(s, second, content_id,
+                                 note="bob secret recipe karakul")
+
+    # Nothing of it is visible to the author. Asserted on the note candidate
+    # list itself, because the spy's constant vectors make every item a vector
+    # hit for every query -- "no results at all" is not what is being tested.
+    from app.services import search
+
+    with Session(bind=db) as s:
+        assert search.note_search(s, author, ["karakul"]) == [], \
+            "another user's note must never be a candidate for the author"
+        assert len(search.note_search(s, second, ["karakul"])) == 1, \
+            "the note's own author must still find it"
+
+    author_hits, _took = _search(db, author, "karakul")
+    assert all("karakul" not in (r["match_reason"] or "")
+               for r in author_hits), "the note was used as the author's reason"
+    assert all(str(r["row"][0]) != str(second_item) for r in author_hits), \
+        "the noted item belongs to the other user"
+
+    with sessions() as s:
+        asset_blob = " ".join(str(v) for row in s.execute(text(
+            "SELECT brief, title, structured_data::text, entities::text, "
+            "topics::text FROM content_assets")).all() for v in row)
+        item_blob = " ".join(str(v) for row in s.execute(text(
+            "SELECT coalesce(title, '') || ' ' || coalesce(title_clean, '') "
+            "|| ' ' || coalesce(summary, '') || ' ' || coalesce(search_text, '') "
+            "FROM items")).all() for v in row)
+    assert "karakul" not in asset_blob, "the note reached the shared asset"
+    assert "karakul" not in item_blob, "the note reached an item"
+
+    # The second user still finds their own note.
+    second_hits, _took = _search(db, second, "karakul")
+    assert [str(r["row"][0]) for r in second_hits] == [str(second_item)]
+
+
+def test_the_asset_holds_everything_a_reuse_needs(
+        db, sessions, users, spies, monkeypatch):
+    """What the asset carries once a real run has finished.
+
+    The same inventory the pre-fix measurement printed, now with the pipeline
+    version present: it is what makes the reuse gate decidable.
+    """
+    author, second, first_item, content_id = _prepared_public_content(
+        sessions, users, monkeypatch)
+    asset = _asset(sessions, content_id)
 
     assert asset["processing_status"] == "READY"
+    assert asset["pipeline_version"] == "process_item:v1"
     assert asset["title"] and asset["brief"] and asset["processed_at"]
-    assert chunks[0] >= 1 and chunks[1] >= 1, "the asset has vectors already"
-    # The gap: those chunks hang off the FIRST user's item, and the asset names
-    # no pipeline version, so nothing records which pipeline produced it.
-    assert asset["pipeline_version"] is None, (
-        "the asset carries no pipeline_version even though the job row does")
+    assert asset["structured"] and asset["entities"] and asset["topics"]
+
+    source = _item_state(sessions, first_item)
+    assert source["has_vector"] is True
+    assert source["chunks"] >= 1
+    assert source["search_text"]

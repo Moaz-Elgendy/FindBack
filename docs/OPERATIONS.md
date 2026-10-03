@@ -28,6 +28,26 @@ belongs to them — **and not the asset**, which another user may still hold.
 This is the only place in the system where "delete" does not mean "remove every
 trace", and it is deliberate.
 
+### Shared content is processed once, and then frozen
+
+When a second user saves content that is already `READY`, the worker does not
+fetch it, call the model or embed it again. The shared understanding is copied
+onto the new user's item and the chunk vectors are copied alongside it, so the
+second save costs nothing and is findable immediately. This is what makes
+`README.md`'s "public content is processed once and reused" true.
+
+The consequence, accepted for now: **a PUBLIC asset keeps the understanding
+produced when it was first processed.** If the page changes, no later save
+refreshes it. Refreshing shared content on a schedule is a separate feature and
+does not exist yet. Two things limit the staleness in practice: reuse requires
+the same pipeline version and the same embedding model, so a deploy of either
+re-processes on the next save; and the content of a link that has genuinely
+changed usually arrives at a new canonical URL, which is a new asset.
+
+A save is never left without a memory by this: every condition for reuse is
+checked (visibility, pipeline version, embedding model, a complete brief, and
+chunk rows), and anything missing falls back to the full pipeline.
+
 ## Removing things
 
 ```python
