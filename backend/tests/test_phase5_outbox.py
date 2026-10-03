@@ -333,3 +333,54 @@ def test_dispatcher_publishes_every_item_of_shared_content(
     assert stats["published"] == 1
     assert str(first.id) in published and str(second.id) in published, \
         "both pending items must be published"
+
+
+def test_the_dispatcher_loop_publishes_once_the_queue_returns(
+        db, sessions, user, dead_queue):
+    """The loop, not just one tick, is what the deployment runs.
+
+    This is `python -m scripts.dispatch_outbox`, the process the `outbox`
+    service in docker-compose starts. It has to survive a failed publish and
+    get the job out on a later tick: a stranded job is republished once the
+    queue is back, without anything being restarted.
+    """
+    from app.services.outbox import run_forever
+
+    with sessions() as s:
+        result = _save(s, user)
+        assert _jobs(s)[0]["status"] == "PENDING", "the stranded job"
+
+    published = []
+    failures = {"n": 0}
+
+    def publisher(item_id):
+        if failures["n"] == 0:
+            failures["n"] += 1
+            raise QueueDown("redis is down")
+        published.append(item_id)
+
+    class _Stop(Exception):
+        """Ends the otherwise infinite loop."""
+
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        # Time passes: the backoff window the failed tick set has now elapsed.
+        with sessions() as s:
+            s.execute(text("UPDATE processing_jobs SET available_at = now()"))
+            s.commit()
+        if len(slept) >= 3:
+            raise _Stop
+
+    with pytest.raises(_Stop):
+        run_forever(sessions, publisher=publisher, interval=7, sleep=fake_sleep)
+
+    with sessions() as s:
+        job = _jobs(s)[0]
+    assert failures["n"] == 1, "the first tick hit the dead queue"
+    assert str(result.id) in published, \
+        "the loop published the stranded item once the queue returned"
+    assert job["status"] == "PROCESSING", "the job left PENDING"
+    assert job["attempt_count"] == 1, "the failed attempt was recorded"
+    assert slept and slept[0] == 7, "the loop used the interval it was given"

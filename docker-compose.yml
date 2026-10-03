@@ -60,5 +60,27 @@ services:
     volumes:
       - ./backend:/app
 
+  # Phase 5: republish processing jobs that a queue outage stranded. The worker
+  # cannot recover them on its own -- a publish that failed at save time leaves
+  # no Celery message anywhere -- so without this service a save taken while
+  # Redis was down stays `pending` forever. Ticks every
+  # OUTBOX_DISPATCH_INTERVAL_SECONDS (default 5).
+  outbox:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m scripts.dispatch_outbox
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://findback:findback@postgres:5432/findback
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+
 volumes:
   pgdata:

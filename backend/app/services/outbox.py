@@ -179,6 +179,25 @@ def max_attempts() -> int:
     return _env_int("JOB_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS)
 
 
+# How often the dispatcher looks for stranded work. Five seconds is short
+# enough that a save recovers promptly after a queue outage and long enough that
+# an idle deployment is not querying the database twice a second.
+DEFAULT_DISPATCH_INTERVAL_SECONDS = 5
+
+
+def dispatch_interval() -> int:
+    """Seconds between dispatcher ticks.
+
+    The dispatcher is the only thing that republishes a job a queue outage
+    stranded, so how often it looks is an operational knob: a quiet deployment
+    can tick every few minutes, a busy one every second. `_env_int` floors it at
+    1, because a zero interval would spin the loop against the database as fast
+    as it can connect.
+    """
+    return _env_int("OUTBOX_DISPATCH_INTERVAL_SECONDS",
+                    DEFAULT_DISPATCH_INTERVAL_SECONDS)
+
+
 def record_failure(db, job_id, error: str, attempt_count: int | None = None) -> str:
     """Record a failed attempt. Returns the job's new status.
 

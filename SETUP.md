@@ -13,6 +13,7 @@ When you are finished you will have:
 | PostgreSQL 16 + pgvector | `localhost:5432` | `docker compose` or your own server |
 | Redis 7 (job queue) | `localhost:6379` | `docker compose` or `redis-server` |
 | Celery worker | — | `docker compose` or `celery worker` |
+| Outbox dispatcher | — | `docker compose` or `python -m scripts.dispatch_outbox` |
 | Flutter app | emulator / device | `flutter run` |
 
 ---
@@ -175,7 +176,7 @@ docker compose exec api alembic upgrade head
 **Everyday commands**
 
 ```bash
-docker compose logs -f api worker   # follow the API and worker
+docker compose logs -f api worker outbox   # API, worker and dispatcher
 docker compose ps                    # service state
 docker compose down                  # stop (data stays in the pgdata volume)
 docker compose down -v               # stop and delete the database volume
@@ -233,13 +234,25 @@ uvicorn app.main:app --reload --port 8000
 celery -A app.celery_app.celery worker --loglevel=info
 ```
 
-**6. Optional — outbox dispatcher.** If Redis was down when a save arrived, the
-publish failed but the intent was written to the database; this retries it:
+**6. Outbox dispatcher.** If Redis was down when a save arrived, the publish
+failed but the intent was written to the database. Nothing else can recover it:
+a failed publish leaves no Celery message anywhere, so the job would sit
+`PENDING` forever. The dispatcher republishes it.
+
+`docker compose up` starts it as the `outbox` service, so there is nothing to
+run by hand. Its tick length is `OUTBOX_DISPATCH_INTERVAL_SECONDS` (default 5):
+
+```bash
+OUTBOX_DISPATCH_INTERVAL_SECONDS=30 docker compose up outbox
+```
+
+Without Docker, run it yourself — it should stay up alongside the worker:
 
 ```bash
 cd backend
-python -m scripts.dispatch_outbox --once     # single tick
-python -m scripts.dispatch_outbox            # loop every 5 s
+python -m scripts.dispatch_outbox --once            # single tick
+python -m scripts.dispatch_outbox                   # loop, interval from .env
+python -m scripts.dispatch_outbox --interval 30     # override the interval
 ```
 
 The API is usable on its own: with Redis or the worker missing, `/health`
@@ -474,7 +487,7 @@ Add `-H "Authorization: Bearer $TOKEN"` to steps 2–4 when
 | `env file .env not found` from `docker compose` | Create it first: `cp .env.example .env` |
 | `port is already allocated` for 5432 / 6379 / 8000 | Another Postgres, Redis or API is running — stop it or change the published port and the matching `DATABASE_URL` / `REDIS_URL` |
 | `401 Unauthorized` on `/api/v1/...` | The backend runs with `DEV_AUTH_ENABLED=false`; send a Bearer token or start it with dev auth |
-| `/health` shows `"redis":"down"` and items stay `pending` | Redis or the worker is not running; start them, then optionally `python -m scripts.dispatch_outbox --once` |
+| `/health` shows `"redis":"down"` and items stay `pending` | Redis or the worker is not running; start them. If `docker compose ps` does not show `outbox` running, start it — until it ticks, a save stranded by the outage stays `pending` |
 | Ingest works but search returns `[]` although items are `ready` | No embedding provider is configured; set `GEMINI_API_KEY` (or another embedding-capable key), or accept keyword-only results |
 | `Unable to locate asset ... android/` or "no application found" | `mobile/android/` has not been generated — run `tool/setup_mobile.sh` |
 | Emulator cannot reach the API | Use `http://10.0.2.2:8000` (Android) or `http://localhost:8000` (iOS simulator), not `localhost` on Android |

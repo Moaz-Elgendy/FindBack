@@ -13,18 +13,28 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import SessionLocal  # noqa: E402
-from app.services.outbox import dispatch_once, run_forever  # noqa: E402
+from app.services.outbox import (  # noqa: E402
+    dispatch_interval, dispatch_once, run_forever,
+)
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI. `--interval` overrides the environment, which sets the default."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true",
                         help="run a single tick and exit")
-    parser.add_argument("--interval", type=int, default=5,
-                        help="seconds between ticks when looping")
+    interval = dispatch_interval()
+    parser.add_argument(
+        "--interval", type=int, default=interval,
+        help="seconds between ticks when looping "
+             f"(default: $OUTBOX_DISPATCH_INTERVAL_SECONDS, else {interval})")
     parser.add_argument("--limit", type=int, default=50,
                         help="max jobs per tick")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     if args.once:
         db = SessionLocal()
