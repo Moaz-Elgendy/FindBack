@@ -1,0 +1,33 @@
+name: findback
+description: "FindBack - AI-powered memory for the internet. Save, then find by vague memory."
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Network. Dio gives us connect/read timeouts and typed errors; the sync
+  # queue depends on distinguishing "no network" from "server rejected it".
+  connectivity_plus: ^7.3.2
+  dio: ^5.4.0
+  flutter_secure_storage: ^11.2.0
+  path: ^1.8.0
+  path_provider: ^2.1.0
+  # Local-first cache + offline write queue (was expo-sqlite in the RN client).
+  sqflite: ^2.3.0
+  url_launcher: ^6.2.0
+  # Cook Mode keeps the screen awake while following a recipe.
+  wakelock_plus: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  # Runs the real SQLite statements in `dart test` without an emulator.
+  sqflite_common_ffi: ^2.3.0
+
+flutter:
+  uses-material-design: true

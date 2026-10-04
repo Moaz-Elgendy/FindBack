@@ -1,0 +1,16 @@
+{
+  "_comment": "Golden eval set for Recall@5. Add 50 items then 100 vague queries. Run python eval/eval.py",
+  "items": [
+    {"id": "demo-1", "title": "Fixing Crashed AWS ECS Applications: 3 Steps", "summary": "Restart ECS task, check CloudWatch logs, rollback last deployment.", "category": "tutorial", "tags": ["aws","ecs","crash"]},
+    {"id": "demo-2", "title": "One-Pan Tuscan Chicken with Creamy Mushroom Sauce", "summary": "Chicken breast simmered with cream, mushrooms, spinach and parmesan.", "category": "recipe", "tags": ["chicken","mushroom","cream"]},
+    {"id": "demo-3", "title": "Gamma AI — Create presentations with AI in seconds", "summary": "AI tool that generates slide decks from a prompt; exports to PPTX.", "category": "tool", "tags": ["ai","presentation","slides"]}
+  ],
+  "queries": [
+    {"q": "That video about an AI tool for making presentations", "expect": "demo-3"},
+    {"q": "The chicken recipe with cream and mushrooms", "expect": "demo-2"},
+    {"q": "That AWS tutorial about fixing crashed applications", "expect": "demo-1"},
+    {"q": "creamy tuscan chicken", "expect": "demo-2"},
+    {"q": "ecs crash recovery", "expect": "demo-1"}
+  ],
+  "metric": "Recall@5 and MRR — target Recall@5 >0.85"
+}

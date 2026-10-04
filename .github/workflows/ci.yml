@@ -1,0 +1,70 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: findback
+          POSTGRES_PASSWORD: findback
+          POSTGRES_DB: findback
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U findback"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r backend/requirements.txt
+      - run: python -m compileall backend/app backend/alembic
+      - run: pytest
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://findback:findback@localhost:5432/findback
+          REDIS_URL: redis://localhost:6379/0
+          DEV_AUTH_ENABLED: "true"
+          # Every live-DB test module gates on TEST_DATABASE_URL (not
+          # DATABASE_URL), so without this line they all skip and the job
+          # passes on a little over half the suite.
+          TEST_DATABASE_URL: postgresql://findback:findback@localhost:5432/findback
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      # test/local_db_test.dart exercises the real SQLite statements through
+      # sqflite_common_ffi, which loads the system SQLite on Linux.
+      - name: Install SQLite (needed by the FFI database test)
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      # android/ and ios/ are generated per developer machine by
+      # tool/setup_mobile.sh; the Dart side neither needs nor imports them, so CI
+      # stays fast by leaving them out.
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test --reporter expanded
