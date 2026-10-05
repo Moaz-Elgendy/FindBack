@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import time
+from difflib import get_close_matches
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -59,7 +60,7 @@ if then than so such into over under again very just do does did doing
 have has had having save saved saving want wanted need needed look looking
 """.split())
 
-_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_.+]*")
+_WORD = re.compile(r"[^\W_][\w\-_.+]*", re.UNICODE)
 
 # Column order shared by every candidate query below. `content_id` sits before
 # the score so the score stays the LAST element: the keyword fallback below reads
@@ -93,7 +94,7 @@ def matched_terms(terms: list[str], *texts: str | None) -> list[str]:
     haystack = " ".join(t for t in texts if t).lower()
     hits = []
     for term in terms:
-        if re.search(r"(?<![a-z0-9])" + re.escape(term), haystack):
+        if re.search(r"(?<!\w)" + re.escape(term), haystack):
             hits.append(term)
     return hits
 
@@ -194,7 +195,7 @@ def or_tsquery(terms: list[str]) -> str:
     """
     safe = []
     for term in terms:
-        cleaned = re.sub(r"[^a-z0-9]+", "", term.lower())
+        cleaned = re.sub(r"[\W_]+", "", term.lower(), flags=re.UNICODE)
         if cleaned:
             safe.append(cleaned)
     # `|` is the tsquery OR operator. The word form ("OR") is rejected by
@@ -468,7 +469,7 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
     each list can honestly contribute.
     """
     t0 = time.time()
-    terms = query_terms(query)
+    terms = correct_tag_terms(db, user_id, query_terms(query))
     # Embed once. task="query" matters for Gemini, which trains separate
     # document and query vector spaces.
     # Called through the module rather than imported by name, so a test (or a
@@ -552,3 +553,21 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
     took = int((time.time() - t0) * 1000)
     return results, took
 
+
+
+def correct_tag_terms(db, user_id, terms: list[str]) -> list[str]:
+    """Expand misspellings against this user's tags with stdlib matching."""
+    if not terms or not any(len(t) >= 4 for t in terms): return terms
+    try:
+        rows = db.execute(text("SELECT DISTINCT unnest(tags) FROM items "
+                               "WHERE user_id = :uid AND status = 'ready' LIMIT 1000"),
+                          {'uid': str(user_id)}).fetchall()
+        vocabulary = sorted({word for row in rows for word in query_terms(row[0])})
+        expanded = list(terms)
+        for term in terms:
+            if len(term) >= 4 and term not in vocabulary:
+                matches = get_close_matches(term, vocabulary, n=1, cutoff=0.8)
+                if matches and matches[0] not in expanded: expanded.append(matches[0])
+        return expanded
+    except Exception:
+        return terms

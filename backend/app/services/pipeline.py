@@ -227,8 +227,9 @@ async def stage_chunk(item) -> None:
     Timestamps are read from the transcript where it has them, so EMBED can
     write a chunk that knows when it starts.
     """
-    chunks = embedder.chunk_text_with_timestamps(
-        item.normalized_text or "")
+    transcript = (getattr(item, "evidence_bundle", None) or {}).get("transcript", [])
+    text = "\n".join(f"[{brief_v2.timestamp(s['start'])}] {s['text']}" for s in transcript) if transcript else item.normalized_text or ""
+    chunks = embedder.chunk_text_with_timestamps(text)
     item.chunk_texts = [c["chunk_text"] for c in chunks]
     item.chunk_timestamps = [{"timestamp": c["start_timestamp"],
                               "seconds": c["start_seconds"]} for c in chunks]
@@ -240,7 +241,8 @@ async def stage_embed(item, db) -> None:
 
     mem_str = embedder.memory_string(
         item.title_clean or "", item.summary or "", item.key_points or [],
-        item.entities or {})
+        item.entities or {}, tags=item.tags or [],
+        search_phrases=(getattr(item, "brief_v2", None) or {}).get("search_phrases", []))
     chunks = list(item.chunk_texts or [])
     stamps = list(item.chunk_timestamps or [])
     with EMBEDDING_LIMIT:

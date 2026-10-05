@@ -31,11 +31,14 @@ log = logging.getLogger("findback.embedder")
 MAX_EMBED_CHARS = env.get_int("EMBED_MAX_CHARS", 8000)
 
 
-def memory_string(title_clean: str, summary: str, key_points: list, entities: dict) -> str:
+def memory_string(title_clean: str, summary: str, key_points: list, entities: dict,
+                  *, tags: list[str] | None = None, search_phrases: list[str] | None = None) -> str:
     parts = []
     if title_clean: parts.append(title_clean)
     if summary: parts.append(summary)
-    if key_points: parts.extend(key_points)
+    if key_points: parts.extend(p.get("point", "") if isinstance(p, dict) else p for p in key_points)
+    parts.extend(tags or [])
+    parts.extend(search_phrases or [])
     for vals in (entities or {}).values():
         if isinstance(vals, list): parts.extend([str(v) for v in vals])
     text = " ".join(parts).strip()
