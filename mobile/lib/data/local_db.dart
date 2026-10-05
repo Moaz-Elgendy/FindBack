@@ -14,7 +14,7 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 1;
+  static const int schemaVersion = 2;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
@@ -32,6 +32,9 @@ class LocalDb {
           onConfigure: (Database database) =>
               database.rawQuery('PRAGMA journal_mode = WAL'),
           onCreate: (Database database, int version) async => _onCreate(database),
+          onUpgrade: (Database database, int oldVersion, int newVersion) async {
+            if (oldVersion < 2) await database.execute("ALTER TABLE items ADD COLUMN brief_payload TEXT DEFAULT '{}'");
+          },
         ),
       );
 
@@ -54,7 +57,8 @@ class LocalDb {
         thumbnail_url TEXT,
         status TEXT DEFAULT 'pending',
         created_at TEXT,
-        match_reason TEXT
+        match_reason TEXT,
+        brief_payload TEXT DEFAULT '{}'
       )
     ''');
     await db.execute('''

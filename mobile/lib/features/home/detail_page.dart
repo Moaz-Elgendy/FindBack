@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -27,6 +29,7 @@ class _DetailPageState extends State<DetailPage> {
   bool _loading = true;
   String? _error;
   bool _cookMode = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -36,14 +39,16 @@ class _DetailPageState extends State<DetailPage> {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     // Never leave the screen forcing the display on.
     if (_cookMode) WakelockPlus.disable();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool refresh = false}) async {
+    _refreshTimer?.cancel();
     setState(() {
-      _loading = true;
+      if (!refresh) _loading = true;
       _error = null;
     });
     try {
@@ -53,6 +58,9 @@ class _DetailPageState extends State<DetailPage> {
         _item = item;
         _loading = false;
       });
+      if (item != null && ((!item.isReady && !item.isFailed) || item.needsRetry)) {
+        _refreshTimer = Timer(const Duration(seconds: 5), () => _load(refresh: true));
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -84,7 +92,7 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _copySummary(ItemDetail item) async {
-    await Clipboard.setData(ClipboardData(text: item.summary ?? ''));
+    await Clipboard.setData(ClipboardData(text: item.briefText));
     if (!mounted) return;
     _showSnack('Summary copied.');
   }
@@ -172,18 +180,37 @@ class _DetailPageState extends State<DetailPage> {
             padding: const EdgeInsets.only(top: 12),
             child: _Banner(
               text: item.summary == null || item.summary!.isEmpty
-                  ? 'Still being processed. Open the original meanwhile.'
-                  : 'Still being processed — this is the text we captured, not the summary yet.',
+                  ? 'Processing...'
+                  : 'Processing...',
             ),
           ),
+        if (item.needsRetry)
+          const Padding(padding: EdgeInsets.only(top: 8), child: Text('Improving brief...')),
+        if (item.missingInfo != null && item.missingInfo!.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(top: 8), child: Chip(
+            avatar: const Icon(Icons.info_outline, size: 16), label: Text(item.missingInfo!),
+          )),
         const SizedBox(height: 16),
         Text(
-          item.summary == null || item.summary!.isEmpty
-              ? 'Open the original to view this memory.'
-              : item.summary!,
+          item.briefText.isEmpty ? 'Open the original to view this memory.' : item.briefText,
           style: theme.textTheme.bodyLarge,
         ),
-        if (item.keyPoints.isNotEmpty) ...<Widget>[
+        if (item.bestTakeaway != null && item.bestTakeaway!.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(top: 10), child: Text(item.bestTakeaway!, style: theme.textTheme.titleSmall)),
+        if (item.pointsWithRefs.isNotEmpty)
+          ExpansionTile(
+            title: const Text('Full Brief'),
+            children: <Widget>[
+              for (final BriefKeyPoint point in item.pointsWithRefs)
+                ListTile(
+                  title: Text(point.point),
+                  trailing: point.sourceRef == null ? null : point.timestampUrl(item.url) == null
+                      ? Text(point.sourceRef!, style: theme.textTheme.bodySmall)
+                      : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text(point.sourceRef!)),
+                ),
+            ],
+          ),
+        if (item.pointsWithRefs.isEmpty && item.keyPoints.isNotEmpty) ...<Widget>[
           const SizedBox(height: 20),
           Text('Key points', style: theme.textTheme.titleMedium),
           const SizedBox(height: 6),

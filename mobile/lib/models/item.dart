@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'json_utils.dart';
 
 /// `GET /api/v1/items` and `GET /api/v1/items/{id}` (backend `ItemDetail`).
@@ -19,6 +21,11 @@ class ItemDetail {
     this.status = 'pending',
     this.createdAt,
     this.processedAt,
+    this.instantBrief,
+    this.bestTakeaway,
+    this.missingInfo,
+    this.needsRetry = false,
+    this.pointsWithRefs = const <BriefKeyPoint>[],
   });
 
   factory ItemDetail.fromJson(Map<String, dynamic> json) {
@@ -40,6 +47,11 @@ class ItemDetail {
       status: json['status'] as String? ?? 'pending',
       createdAt: parseDate(json['created_at']),
       processedAt: parseDate(json['processed_at']),
+      instantBrief: json['instant_brief'] as String?,
+      bestTakeaway: json['best_takeaway'] as String?,
+      missingInfo: json['missing_info'] as String?,
+      needsRetry: json['needs_retry'] == true,
+      pointsWithRefs: asObjectList(json['key_points_with_refs']).map(BriefKeyPoint.fromJson).toList(growable: false),
     );
   }
 
@@ -59,6 +71,13 @@ class ItemDetail {
   final String status;
   final DateTime? createdAt;
   final DateTime? processedAt;
+  final String? instantBrief;
+  final String? bestTakeaway;
+  final String? missingInfo;
+  final bool needsRetry;
+  final List<BriefKeyPoint> pointsWithRefs;
+
+  String get briefText => instantBrief ?? summary ?? '';
 
   bool get isReady => status == 'ready';
 
@@ -91,19 +110,35 @@ class ItemDetail {
         'thumbnail_url': thumbnailUrl,
         'status': status,
         'created_at': createdAt?.toIso8601String(),
+        'brief_payload': jsonEncode(<String, Object?>{
+          'instant_brief': instantBrief, 'best_takeaway': bestTakeaway,
+          'missing_info': missingInfo, 'needs_retry': needsRetry,
+          'key_points': keyPoints, 'entities': entities,
+          'key_points_with_refs': pointsWithRefs.map((BriefKeyPoint p) => p.toJson()).toList(),
+        }),
       };
 
   /// Reverse of [toLocalRow] — the offline copy of an item we already cached.
   factory ItemDetail.fromLocalRow(Map<String, Object?> row) {
     final url = row['url'] as String? ?? '';
+    Map<String, dynamic> brief = <String, dynamic>{};
+    try {
+      final Object? decoded = jsonDecode(row['brief_payload'] as String? ?? '{}');
+      if (decoded is Map<String, dynamic>) brief = decoded;
+    } on FormatException catch (_) {
+      // An old or damaged offline blob keeps the legacy preview readable.
+    }
     return ItemDetail(
       id: row['id']?.toString() ?? '',
       url: url,
       canonicalUrl: row['canonical_url'] as String? ?? url,
-      // The mirror keeps no enrichment, so an offline detail view shows the
-      // preview text as the summary and no key points.
-      keyPoints: const <String>[],
-      entities: const <String, Object?>{},
+      keyPoints: stringList(brief['key_points']),
+      entities: objectMap(brief['entities']),
+      instantBrief: brief['instant_brief'] as String?,
+      bestTakeaway: brief['best_takeaway'] as String?,
+      missingInfo: brief['missing_info'] as String?,
+      needsRetry: brief['needs_retry'] == true,
+      pointsWithRefs: asObjectList(brief['key_points_with_refs']).map(BriefKeyPoint.fromJson).toList(growable: false),
       tags: decodeTags(row['tags']),
       title: row['title'] as String?,
       titleClean: row['title_clean'] as String?,
@@ -211,4 +246,27 @@ class SyncBatchResult {
   final List<String> failedClientIds;
 
   bool get isEmpty => mapped.isEmpty && failedClientIds.isEmpty;
+}
+
+
+class BriefKeyPoint {
+  const BriefKeyPoint({required this.point, this.sourceRef});
+
+  factory BriefKeyPoint.fromJson(Map<String, dynamic> json) => BriefKeyPoint(
+        point: json['point'] as String? ?? '', sourceRef: json['source_ref'] as String?,
+      );
+
+  final String point;
+  final String? sourceRef;
+
+  Map<String, Object?> toJson() => <String, Object?>{'point': point, 'source_ref': sourceRef};
+
+  String? timestampUrl(String originalUrl) {
+    final Uri? uri = Uri.tryParse(originalUrl);
+    if (uri == null || !(uri.host == 'youtube.com' || uri.host.endsWith('.youtube.com') || uri.host == 'youtu.be')) return null;
+    final RegExpMatch? match = RegExp(r'^(\d+):([0-5]\d)$').firstMatch(sourceRef ?? '');
+    if (match == null) return null;
+    final int seconds = int.parse(match.group(1)!) * 60 + int.parse(match.group(2)!);
+    return uri.replace(queryParameters: <String, String>{...uri.queryParameters, 't': '${seconds}s'}).toString();
+  }
 }
