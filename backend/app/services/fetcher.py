@@ -16,6 +16,8 @@ def video_source(url: str) -> str | None:
     host = (parsed.hostname or '').lower()
     if host == 'youtu.be' or host == 'youtube.com' or host.endswith('.youtube.com'):
         return 'youtube'
+    if host == 'instagram.com' or host.endswith('.instagram.com') or host == 'fb.watch':
+        return 'video'
     if host == 'tiktok.com' or host.endswith('.tiktok.com'):
         return 'video'
     if (host == 'facebook.com' or host.endswith('.facebook.com')) and re.search(r'/(?:reel|reels|watch|videos|share/r)(?:/|$)', parsed.path):
@@ -115,7 +117,7 @@ async def _try_youtube(url: str) -> dict | None:
         return None
     transient = False
     try:
-        transcript = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, vid)
+        transcript = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, vid, languages=['ar', 'en'])
     except Exception as exc:
         transcript = None
         transient = (isinstance(exc, (httpx.TimeoutException, TimeoutError, RequestsTimeout, RequestsConnectionError))
@@ -133,9 +135,10 @@ async def _try_youtube(url: str) -> dict | None:
         transient = True
     except (ValueError, TypeError):
         pass
-    text = ' '.join(segment['text'] for segment in transcript) if transcript else '\n'.join(value for value in (title, f'Author: {author}' if author else '') if value)
+    segments = [{'start': s['start'], 'end': s['start'] + s.get('duration', 0), 'text': s['text']} for s in (transcript or [])]
+    text = ' '.join(f"[{int(s['start']) // 60:02d}:{int(s['start']) % 60:02d}] {s['text']}" for s in segments) if transcript else '\n'.join(value for value in (title, f'Author: {author}' if author else '') if value)
     if not text:
         if transient:
             raise TransientFetchError('YouTube temporarily unavailable')
         return None
-    return {'text': text[:12000], 'title': title, 'thumbnail': f'https://img.youtube.com/vi/{vid}/hqdefault.jpg', 'source_type': 'youtube', 'input_provenance': 'transcript' if transcript else 'caption'}
+    return {'text': text[:12000], 'title': title, 'thumbnail': f'https://img.youtube.com/vi/{vid}/hqdefault.jpg', 'source_type': 'youtube', 'input_provenance': 'transcript' if transcript else 'caption', 'transcript': segments, 'author': author, 'source_id': vid}
