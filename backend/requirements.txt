@@ -19,5 +19,6 @@ lxml==5.1.0
 youtube-transcript-api==0.6.1
 # Platform extractors change frequently; update this single pin when needed.
 yt-dlp==2026.8.19
+faster-whisper==1.2.1
 pytest==8.0.0
 httpx-sse==0.4.0

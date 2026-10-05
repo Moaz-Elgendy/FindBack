@@ -176,6 +176,15 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
             audio = directory / 'audio.wav'
             try:
                 await asyncio.to_thread(extract_audio, path, audio)
+                from app.services.transcription import provider_for
+                provider = provider_for(bundle.duration)
+                metadata.update(stt_provider=provider.name, stt_model=provider.model)
+                stt_started = time.monotonic()
+                result = await provider.transcribe(audio)
+                bundle.transcript = [TranscriptSegment(**s) for s in result.segments]
+                bundle.language = result.language
+                metadata.update(stt_seconds=time.monotonic() - stt_started, cost=result.cost,
+                                cost_known=result.cost is not None)
             except Exception as exc:
                 failure(bundle, 'audio', exc)
     bundle.classify()
