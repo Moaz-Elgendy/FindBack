@@ -298,3 +298,13 @@ token path. See `docs/NATIVE_SHARE.md` and `mobile/README.md`.
 ## License
 
 Private — all rights reserved.
+
+
+## Brief v2
+
+Worker-only media acquisition, bilingual STT/OCR, timestamped evidence, structured
+Briefs, richer search handles, and bounded evidence-improvement retries are described
+in [Brief v2 operations](docs/BRIEF_V2.md). Install ffmpeg and Tesseract English/Arabic
+data outside Docker; the Dockerfile installs them. Apply migration `0012_brief_v2`
+before starting the updated backend. Run `python scripts/eval_brief.py` for offline
+fixture evaluation.

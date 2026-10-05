@@ -1,0 +1,521 @@
+[
+  {
+    "name": "caption_only",
+    "evidence": {
+      "source_platform": "facebook",
+      "url": "https://facebook.com/reel/fixture",
+      "source_id": "caption_only",
+      "title": "Claude Code skills for developers",
+      "author": "Dev Lab",
+      "duration": null,
+      "caption": "Test Writer creates unit tests. Trace Reader explains stack traces. Developers use these Claude Code agent skills for coding and debugging.",
+      "transcript": [],
+      "ocr_text": "",
+      "frame_notes": [],
+      "comments": [],
+      "evidence_level": "partial",
+      "fetch_errors": []
+    },
+    "output": {
+      "title": "Claude Code skills for developers",
+      "content_type": "list",
+      "instant_brief": "Test Writer creates unit tests. Trace Reader explains stack traces. Developers use these Claude Code agent skills for coding and debugging.",
+      "key_points": [
+        {
+          "point": "Test Writer creates unit tests.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "Trace Reader explains stack traces.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "Developers use these Claude Code agent skills for coding and debugging.",
+          "source_ref": "caption"
+        }
+      ],
+      "best_takeaway": null,
+      "entities": {
+        "tools_products": [
+          "Claude Code"
+        ],
+        "people_orgs": [],
+        "numbers": []
+      },
+      "topics": [
+        "claude code",
+        "claude",
+        "agent skills"
+      ],
+      "tags": [
+        "claude code",
+        "claude",
+        "agent skills",
+        "test writer",
+        "trace reader",
+        "unit tests",
+        "stack traces",
+        "coding",
+        "debugging",
+        "developers",
+        "developer tools",
+        "code testing",
+        "ai workflow",
+        "facebook",
+        "dev lab"
+      ],
+      "search_phrases": [
+        "Find Claude Code skills for developers.",
+        "I saved Claude Code skills for developers.",
+        "Return to Claude Code skills for developers.",
+        "Show Claude Code skills for developers.",
+        "Where is Claude Code skills for developers?"
+      ],
+      "likely_intent": null,
+      "suggested_action": null,
+      "confidence": "medium",
+      "evidence_used": [
+        "caption",
+        "metadata"
+      ],
+      "missing_info": "Open original for remaining details."
+    }
+  },
+  {
+    "name": "transcript",
+    "evidence": {
+      "source_platform": "facebook",
+      "url": "https://facebook.com/reel/fixture",
+      "source_id": "transcript",
+      "title": "Claude Code skills for developers",
+      "author": "Dev Lab",
+      "duration": 60,
+      "caption": "Five Claude Code skills for developers: Test Writer, Trace Reader, Changelog Writer, Flake Finder, Migration Writer.",
+      "transcript": [
+        {
+          "start": 5,
+          "end": 15,
+          "text": "Test Writer creates unit tests from code changes."
+        },
+        {
+          "start": 16,
+          "end": 25,
+          "text": "Trace Reader explains stack traces to developers."
+        },
+        {
+          "start": 26,
+          "end": 35,
+          "text": "Changelog Writer drafts release notes from commits."
+        },
+        {
+          "start": 36,
+          "end": 45,
+          "text": "Flake Finder identifies unstable tests."
+        },
+        {
+          "start": 46,
+          "end": 55,
+          "text": "Migration Writer prepares database migrations."
+        }
+      ],
+      "ocr_text": "",
+      "frame_notes": [],
+      "comments": [],
+      "evidence_level": "full_transcript",
+      "fetch_errors": []
+    },
+    "output": {
+      "title": "Claude Code skills for developers",
+      "content_type": "list",
+      "instant_brief": "Test Writer creates unit tests from code changes. Trace Reader explains stack traces to developers. Changelog Writer drafts release notes from commits.",
+      "key_points": [
+        {
+          "point": "Test Writer creates unit tests from code changes.",
+          "source_ref": "00:05"
+        },
+        {
+          "point": "Trace Reader explains stack traces to developers.",
+          "source_ref": "00:16"
+        },
+        {
+          "point": "Changelog Writer drafts release notes from commits.",
+          "source_ref": "00:26"
+        },
+        {
+          "point": "Flake Finder identifies unstable tests.",
+          "source_ref": "00:36"
+        },
+        {
+          "point": "Migration Writer prepares database migrations.",
+          "source_ref": "00:46"
+        }
+      ],
+      "best_takeaway": null,
+      "entities": {
+        "tools_products": [
+          "Claude Code"
+        ],
+        "people_orgs": [],
+        "numbers": []
+      },
+      "topics": [
+        "claude code",
+        "claude",
+        "agent skills"
+      ],
+      "tags": [
+        "claude code",
+        "claude",
+        "agent skills",
+        "test writer",
+        "trace reader",
+        "changelog writer",
+        "flake finder",
+        "migration writer",
+        "unit tests",
+        "release notes",
+        "database migrations",
+        "developers",
+        "coding",
+        "facebook",
+        "dev lab"
+      ],
+      "search_phrases": [
+        "Find Claude Code skills for developers.",
+        "I saved Claude Code skills for developers.",
+        "Return to Claude Code skills for developers.",
+        "Show Claude Code skills for developers.",
+        "Where is Claude Code skills for developers?"
+      ],
+      "likely_intent": null,
+      "suggested_action": null,
+      "confidence": "high",
+      "evidence_used": [
+        "transcript",
+        "caption",
+        "metadata"
+      ],
+      "missing_info": null
+    }
+  },
+  {
+    "name": "caption_ocr",
+    "evidence": {
+      "source_platform": "facebook",
+      "url": "https://facebook.com/reel/fixture",
+      "source_id": "caption_ocr",
+      "title": "Planning tool comparison",
+      "author": "Dev Lab",
+      "duration": null,
+      "caption": "Tool Alpha handles project planning for developers. This reel compares AI tools.",
+      "transcript": [],
+      "ocr_text": "Tool Beta handles project planning. Create ordered implementation steps.",
+      "frame_notes": [],
+      "comments": [],
+      "evidence_level": "partial",
+      "fetch_errors": []
+    },
+    "output": {
+      "title": "Planning tool comparison",
+      "content_type": "ai_tool",
+      "instant_brief": "Tool Beta handles project planning. Create ordered implementation steps.",
+      "key_points": [
+        {
+          "point": "Tool Beta handles project planning.",
+          "source_ref": "ocr"
+        },
+        {
+          "point": "Create ordered implementation steps.",
+          "source_ref": "ocr"
+        }
+      ],
+      "best_takeaway": null,
+      "entities": {
+        "tools_products": [
+          "Tool Beta"
+        ],
+        "people_orgs": [],
+        "numbers": []
+      },
+      "topics": [
+        "tool beta",
+        "project planning",
+        "planning"
+      ],
+      "tags": [
+        "tool beta",
+        "project planning",
+        "planning",
+        "implementation steps",
+        "ordered steps",
+        "ai tools",
+        "developers",
+        "developer tools",
+        "tool comparison",
+        "ai workflow",
+        "reel",
+        "facebook",
+        "dev lab",
+        "implementation planning",
+        "planning tools"
+      ],
+      "search_phrases": [
+        "Find Planning tool comparison.",
+        "I saved Planning tool comparison.",
+        "Return to Planning tool comparison.",
+        "Show Planning tool comparison.",
+        "Where is Planning tool comparison?"
+      ],
+      "likely_intent": null,
+      "suggested_action": null,
+      "confidence": "medium",
+      "evidence_used": [
+        "ocr",
+        "metadata"
+      ],
+      "missing_info": "Open original for remaining details."
+    }
+  },
+  {
+    "name": "arabic",
+    "evidence": {
+      "source_platform": "facebook",
+      "url": "https://facebook.com/reel/fixture",
+      "source_id": "arabic",
+      "title": "مهارات Claude Code للمطورين",
+      "author": "Dev Lab",
+      "duration": null,
+      "caption": "مهارة كتابة الاختبارات تنشئ اختبارات الوحدة. مهارة قراءة الأخطاء تشرح سجل الأخطاء. يستخدم المطورون Claude Code للبرمجة وتصحيح الأخطاء.",
+      "transcript": [],
+      "ocr_text": "",
+      "frame_notes": [],
+      "comments": [],
+      "evidence_level": "partial",
+      "fetch_errors": []
+    },
+    "output": {
+      "title": "مهارات Claude Code للمطورين",
+      "content_type": "tutorial",
+      "instant_brief": "مهارة كتابة الاختبارات تنشئ اختبارات الوحدة. مهارة قراءة الأخطاء تشرح سجل الأخطاء. يستخدم المطورون Claude Code للبرمجة وتصحيح الأخطاء.",
+      "key_points": [
+        {
+          "point": "مهارة كتابة الاختبارات تنشئ اختبارات الوحدة.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "مهارة قراءة الأخطاء تشرح سجل الأخطاء.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "يستخدم المطورون Claude Code للبرمجة وتصحيح الأخطاء.",
+          "source_ref": "caption"
+        }
+      ],
+      "best_takeaway": null,
+      "entities": {
+        "tools_products": [
+          "Claude Code"
+        ],
+        "people_orgs": [],
+        "numbers": []
+      },
+      "topics": [
+        "claude code",
+        "claude",
+        "مهارات"
+      ],
+      "tags": [
+        "claude code",
+        "claude",
+        "مهارات",
+        "المطورون",
+        "برمجة",
+        "تصحيح الأخطاء",
+        "اختبارات الوحدة",
+        "كتابة الاختبارات",
+        "قراءة الأخطاء",
+        "سجل الأخطاء",
+        "unit tests",
+        "debugging",
+        "agent skills",
+        "facebook",
+        "dev lab"
+      ],
+      "search_phrases": [
+        "Find مهارات Claude Code للمطورين.",
+        "I saved مهارات Claude Code للمطورين.",
+        "Return to مهارات Claude Code للمطورين.",
+        "Show مهارات Claude Code للمطورين.",
+        "Where is مهارات Claude Code للمطورين?"
+      ],
+      "likely_intent": null,
+      "suggested_action": null,
+      "confidence": "medium",
+      "evidence_used": [
+        "caption",
+        "metadata"
+      ],
+      "missing_info": "افتح المصدر الأصلي للتفاصيل."
+    }
+  },
+  {
+    "name": "recipe",
+    "evidence": {
+      "source_platform": "example.test",
+      "url": "https://example.test/recipe",
+      "source_id": "recipe",
+      "title": "Mushroom risotto recipe",
+      "author": "",
+      "duration": null,
+      "caption": "Mushroom risotto for four people: 300g arborio rice, 200g mushrooms, 1 litre stock, 30g butter. Saute mushrooms, toast rice, add stock gradually, finish with butter. Cook for 40 minutes.",
+      "transcript": [],
+      "ocr_text": "",
+      "frame_notes": [],
+      "comments": [],
+      "evidence_level": "partial",
+      "fetch_errors": []
+    },
+    "output": {
+      "title": "Mushroom risotto recipe",
+      "content_type": "recipe",
+      "instant_brief": "Mushroom risotto for four people: 300g arborio rice, 200g mushrooms, 1 litre stock, 30g butter. Saute mushrooms, toast rice, add stock gradually, finish with butter. Cook for 40 minutes.",
+      "key_points": [
+        {
+          "point": "Mushroom risotto for four people: 300g arborio rice, 200g mushrooms, 1 litre stock, 30g butter.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "Saute mushrooms, toast rice, add stock gradually, finish with butter.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "Cook for 40 minutes.",
+          "source_ref": "caption"
+        }
+      ],
+      "best_takeaway": null,
+      "entities": {
+        "tools_products": [],
+        "people_orgs": [],
+        "numbers": []
+      },
+      "topics": [
+        "mushroom risotto",
+        "risotto",
+        "mushrooms"
+      ],
+      "tags": [
+        "mushroom risotto",
+        "risotto",
+        "mushrooms",
+        "arborio rice",
+        "rice",
+        "stock",
+        "butter",
+        "recipe",
+        "cooking",
+        "four servings",
+        "40 minutes",
+        "saute mushrooms",
+        "toast rice",
+        "add stock",
+        "finish butter"
+      ],
+      "search_phrases": [
+        "Find Mushroom risotto recipe.",
+        "I saved Mushroom risotto recipe.",
+        "Return to Mushroom risotto recipe.",
+        "Show Mushroom risotto recipe.",
+        "Where is Mushroom risotto recipe?"
+      ],
+      "likely_intent": null,
+      "suggested_action": null,
+      "confidence": "medium",
+      "evidence_used": [
+        "caption",
+        "metadata"
+      ],
+      "missing_info": "Open original for remaining details."
+    }
+  },
+  {
+    "name": "article",
+    "evidence": {
+      "source_platform": "example.test",
+      "url": "https://example.test/article",
+      "source_id": "article",
+      "title": "Hybrid search with keyword and semantic retrieval",
+      "author": "",
+      "duration": null,
+      "caption": "Hybrid search combines keyword matching with semantic similarity. Reciprocal rank fusion merges retrieval rankings. This engineering article explains how paraphrases become findable without losing exact keyword matches.",
+      "transcript": [],
+      "ocr_text": "",
+      "frame_notes": [],
+      "comments": [],
+      "evidence_level": "partial",
+      "fetch_errors": []
+    },
+    "output": {
+      "title": "Hybrid search with keyword and semantic retrieval",
+      "content_type": "article",
+      "instant_brief": "Hybrid search combines keyword matching with semantic similarity. Reciprocal rank fusion merges retrieval rankings. This engineering article explains how paraphrases become findable without losing exact keyword matches.",
+      "key_points": [
+        {
+          "point": "Hybrid search combines keyword matching with semantic similarity.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "Reciprocal rank fusion merges retrieval rankings.",
+          "source_ref": "caption"
+        },
+        {
+          "point": "This engineering article explains how paraphrases become findable without losing exact keyword matches.",
+          "source_ref": "caption"
+        }
+      ],
+      "best_takeaway": null,
+      "entities": {
+        "tools_products": [],
+        "people_orgs": [],
+        "numbers": []
+      },
+      "topics": [
+        "hybrid search",
+        "keyword search",
+        "semantic search"
+      ],
+      "tags": [
+        "hybrid search",
+        "keyword search",
+        "semantic search",
+        "semantic similarity",
+        "retrieval",
+        "rank fusion",
+        "reciprocal ranking",
+        "paraphrases",
+        "keyword matching",
+        "engineering",
+        "article",
+        "search ranking",
+        "exact matches",
+        "semantic retrieval",
+        "keyword retrieval"
+      ],
+      "search_phrases": [
+        "Find Hybrid search with keyword and semantic retrieval.",
+        "I saved Hybrid search with keyword and semantic retrieval.",
+        "Return to Hybrid search with keyword and semantic retrieval.",
+        "Show Hybrid search with keyword and semantic retrieval.",
+        "Where is Hybrid search with keyword and semantic retrieval?"
+      ],
+      "likely_intent": null,
+      "suggested_action": null,
+      "confidence": "medium",
+      "evidence_used": [
+        "caption",
+        "metadata"
+      ],
+      "missing_info": "Open original for remaining details."
+    }
+  }
+]

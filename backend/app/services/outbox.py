@@ -147,7 +147,6 @@ def claim_job(db, job_id, lock_timeout_seconds: float = 300.0):
             updated_at = now()
         WHERE id = :id
           AND status IN ('PENDING', 'PROCESSING')
-          AND available_at <= now()
           AND (locked_at IS NULL
                OR locked_at < now() - make_interval(secs => :lock_secs))
     """), {"id": str(job_id), "lock_secs": lock_timeout_seconds})

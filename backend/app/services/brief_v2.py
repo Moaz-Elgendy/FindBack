@@ -19,11 +19,13 @@ log = logging.getLogger('findback.brief')
 
 
 def clean_tags(values: list[str]) -> list[str]:
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise ValueError('Tags must be a list of strings')
     out = []
     for value in values:
         tag = re.sub(r'\s+', ' ', value.strip().lower())
         tag = re.sub(r'\bcalude\b', 'claude', tag)
-        if tag and tag not in BANNED_TAGS and 1 <= len(tag.split()) <= 3 and tag not in out:
+        if tag and len(tag) <= 80 and tag not in BANNED_TAGS and 1 <= len(tag.split()) <= 3 and tag not in out:
             out.append(tag)
     return out[:30]
 
@@ -71,8 +73,12 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
     if reduced is not None:
         supplied.pop('transcript', None)
         supplied['extracted_chunks'] = reduced
-        supplied['allowed_timestamps'] = [timestamp(s['start']) for s in evidence.get('transcript', [])]
+        supplied['allowed_timestamps'] = list(dict.fromkeys(
+            p['source_ref'] for chunk in reduced for p in chunk['key_points'] if p['source_ref']))
     user = json.dumps(supplied, ensure_ascii=False)
+    # Bound metadata and reduction overhead too; oversized input uses the grounded fallback.
+    if len(user) > max(1000, env.get_int('BRIEF_CHUNK_CHARS', 12000)) + 12000:
+        raise ValueError('Brief input exceeds bounded request budget')
     error = ''
     for attempt in range(2):
         instruction = user if not attempt else user + '\nRepair the previous response to match the schema. ' + error
@@ -80,7 +86,11 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
         options = {"model_role": "complex" if reduced is not None else "normal"} if isinstance(gateway, Gateway) else {}
         data = await gateway.generate_json(SYSTEM_PROMPT, instruction, temperature=0.0, **options)
         try:
-            return validate(data, evidence)
+            result = validate(data, evidence)
+            if reduced is not None and evidence.get('evidence_level') == 'full_transcript':
+                if any(p.source_ref not in supplied['allowed_timestamps'] for p in result.key_points):
+                    raise ValueError('Merge introduced an unavailable timestamp')
+            return result
         except (ValueError, TypeError) as exc:
             # Do not repeat invalid model text or fetch errors as model content.
             error = 'Validation failed; check required fields, counts, confidence, hedging and source timestamps.'
@@ -93,24 +103,45 @@ async def extract(evidence: dict, gateway=None) -> BriefV2:
     gateway = gateway or get_gateway()
     segments = evidence.get('transcript') or []
     cap = max(1000, env.get_int('BRIEF_CHUNK_CHARS', 12000))
-    groups, current, size = [], [], 0
+    groups, current, size = [], [], 2
+    split_segments = []
     for segment in segments:
+        if len(json.dumps(segment, ensure_ascii=False)) + 4 <= cap:
+            split_segments.append(segment)
+            continue
+        text = segment['text']
+        # Keep original timestamps; splitting text must not invent finer timing.
+        width = max(1, cap // 2 - 128)
+        split_segments.extend(dict(segment, text=text[i:i+width]) for i in range(0, len(text), width))
+    for segment in split_segments:
         length = len(json.dumps(segment, ensure_ascii=False))
         if current and size + length > cap:
             groups.append(current)
-            current, size = [], 0
+            current, size = [], 2
         current.append(segment)
-        size += length
+        size += length + 2
     if current: groups.append(current)
     if len(groups) <= 1:
-        return await _generate(evidence, gateway)
+        return await _generate(dict(evidence, transcript=groups[0]) if groups else evidence, gateway)
     reduced = []
     for group in groups:
         part = dict(evidence, transcript=group)
         result = await _generate(part, gateway)
         reduced.append(result.model_dump())
-    # Timestamp references are checked against original segments after merging.
-    return await _generate(evidence, gateway, reduced=reduced)
+    # Pairwise reduction bounds fan-in regardless of video length.
+    while len(reduced) > 1:
+        merged = []
+        for i in range(0, len(reduced), 2):
+            pair = reduced[i:i+2]
+            if len(pair) == 1:
+                merged.append(pair[0])
+                continue
+            compact = [{k: chunk[k] for k in ('title', 'instant_brief', 'key_points', 'entities')}
+                       for chunk in pair]
+            result = await _generate(evidence, gateway, reduced=compact)
+            merged.append(result.model_dump())
+        reduced = merged
+    return validate(reduced[0], evidence)
 
 
 def legacy(brief: BriefV2):

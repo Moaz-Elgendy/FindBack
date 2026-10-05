@@ -274,6 +274,8 @@ def process_item(self, item_id: str):
             return {"id": str(item.id), "status": item.status,
                     "skipped": "job already finished"}
         if job is not None:
+            if item.needs_retry and job.available_at > datetime.datetime.now(datetime.timezone.utc):
+                return {"id": str(item.id), "status": item.status, "skipped": "improvement not due"}
             if not claim_job(db, job.id):
                 # Another worker owns this content right now.
                 return {"id": str(item.id), "status": "skipped",
@@ -321,7 +323,12 @@ def process_item(self, item_id: str):
         item.failure_reason = None
         item.processed_at = datetime.datetime.now(datetime.timezone.utc)
         _copy_to_asset(db, item, None, None, pipeline_version=job.job_type)
-        db.commit()
+        if job is not None:
+            from app.services import brief_retry
+            if not brief_retry.schedule(db, item, job):
+                complete_job(db, job.id, success=True)
+        else:
+            db.commit()
         # Phase 14: the raw fetched text has done its job once the stages are
         # done. The brief, chunks and vectors stay -- they are what makes the
         # memory findable -- but the copy of the page itself does not.
@@ -331,10 +338,6 @@ def process_item(self, item_id: str):
             db.rollback()
             log.warning("[task] raw-text purge skipped: %s",
                         observability.describe_exc(exc))
-        if job is not None:
-            from app.services import brief_retry
-            if not brief_retry.schedule(db, item, job):
-                complete_job(db, job.id, success=True)
         observability.log_event(
             "job.completed", content_id=item.content_id, job_id=job.id if job else None,
             pipeline_version=JOB_TYPE_PROCESS, stage="READY", status="ready",

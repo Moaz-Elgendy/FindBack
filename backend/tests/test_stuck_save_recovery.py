@@ -432,8 +432,11 @@ def test_fetch_outcomes_finish_or_retry_bounded(sessions, user, queue, monkeypat
         assert state == "ready"
         assert job["attempt_count"] == 1  # completion counts the successful attempt
         with sessions() as session:
-            row = session.execute(text("SELECT summary, search_text, fetch_metadata FROM items WHERE id=:i"), {"i": item_id}).mappings().one()
-        assert "could not be read" in row["summary"]
+            row = session.execute(text("SELECT summary, search_text, fetch_metadata, brief_v2 FROM items WHERE id=:i"), {"i": item_id}).mappings().one()
+        assert row["summary"] == "A page"
+        assert row["brief_v2"]["confidence"] == "low"
+        assert row["brief_v2"]["missing_info"]
+        assert row["brief_v2"]["missing_info"] not in row["search_text"]
         assert URL in row["search_text"]
         assert row["fetch_metadata"]["input_provenance"] == "none"
     else:

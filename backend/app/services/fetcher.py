@@ -141,4 +141,4 @@ async def _try_youtube(url: str) -> dict | None:
         if transient:
             raise TransientFetchError('YouTube temporarily unavailable')
         return None
-    return {'text': text[:12000], 'title': title, 'thumbnail': f'https://img.youtube.com/vi/{vid}/hqdefault.jpg', 'source_type': 'youtube', 'input_provenance': 'transcript' if transcript else 'caption', 'transcript': segments, 'author': author, 'source_id': vid}
+    return {'text': text[:12000], 'title': title, 'thumbnail': f'https://img.youtube.com/vi/{vid}/hqdefault.jpg', 'source_type': 'youtube', 'input_provenance': 'transcript' if transcript else 'caption', 'transcript': segments, 'author': author, 'source_id': vid, 'caption': ''}

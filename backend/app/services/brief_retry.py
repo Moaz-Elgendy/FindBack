@@ -19,7 +19,6 @@ def should_retry(item) -> bool:
 def schedule(db, item, job) -> bool:
     item.needs_retry = should_retry(item)
     if not item.needs_retry:
-        db.commit()
         return False
     attempts = (item.processing_metadata or {}).get('media_attempts', 1)
     job.status = JOB_STATUS_PENDING

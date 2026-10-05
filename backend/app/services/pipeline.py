@@ -75,7 +75,7 @@ async def stage_fetch(item, raw_preview: str = "") -> None:
         if fetcher.video_source(item.url or ""):
             bundle, media_meta = await media_understanding.acquire(
                 item.url, fetched, getattr(item, "user_id", None),
-                cache_lookup=media_understanding.cached_evidence)
+                cache_lookup=lambda platform, source_id, owner: media_understanding.cached_evidence(platform, source_id, owner, url=item.url))
         else:
             bundle = media_understanding.initial_bundle(item.url, fetched)
             media_meta = {}
@@ -136,9 +136,10 @@ async def stage_understand(item) -> None:
                                   + usage.get("output_tokens", 0) * env.get_float("BRIEF_OUTPUT_COST_PER_MILLION", 0))
                                   / 1_000_000) if pricing and usage.get("usage_reported") else None
         processing.update(prompt_version=brief_v2.PROMPT_VERSION, brief_seconds=time.monotonic() - began)
-        config = ai.chat_config()
-        processing["brief_model"] = usage.get("model") or (config.model if config else None)
-        processing["brief_provider"] = usage.get("provider") or (config.provider if config else None)
+        from app.services.ai_gateway import get_gateway
+        adapter = get_gateway().adapter
+        processing["brief_model"] = usage.get("model")
+        processing["brief_provider"] = usage.get("provider") or getattr(adapter, "name", None)
         item.processing_metadata = processing
         item.fetch_metadata = dict(metadata, brief=brief.model_dump())
         item.title_clean = item.brief_v2["title"]

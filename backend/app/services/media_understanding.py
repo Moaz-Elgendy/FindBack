@@ -89,7 +89,7 @@ def download_options(directory: Path | None = None, *, audio_only=False) -> dict
     options = dict(noplaylist=True, quiet=True, no_warnings=True, socket_timeout=20,
                    retries=1, fragment_retries=1, max_filesize=cap,
                    format='bestaudio/best' if audio_only else
-                   'bestvideo[height<=480]+bestaudio/best[height<=480]',
+                   'bestvideo[height<=480]+bestaudio/bestvideo[width<=480]+bestaudio/best[height<=480]/best[width<=480]/bestaudio',
                    merge_output_format='mp4', cachedir=False)
     if directory is not None:
         options['outtmpl'] = str(directory / 'media.%(ext)s')
@@ -106,7 +106,9 @@ def download_options(directory: Path | None = None, *, audio_only=False) -> dict
 
 def probe(url: str) -> dict:
     from yt_dlp import YoutubeDL
-    with YoutubeDL(download_options()) as downloader:
+    options = download_options()
+    options.pop('format', None)
+    with YoutubeDL(options) as downloader:
         result = downloader.extract_info(url, download=False)
     if not result or result.get('_type') in ('playlist', 'multi_video'):
         raise ValueError('Single video required')
@@ -242,7 +244,7 @@ def read_frame(frame: Path) -> str:
     return result.stdout.strip()
 
 
-def cached_evidence(platform: str, source_id: str, user_id) -> dict | None:
+def cached_evidence(platform: str, source_id: str, user_id, url: str | None = None) -> dict | None:
     from sqlalchemy import or_
     from app.database import SessionLocal
     from app.models import ContentAsset, Item, VISIBILITY_PUBLIC
@@ -250,6 +252,8 @@ def cached_evidence(platform: str, source_id: str, user_id) -> dict | None:
     with SessionLocal() as db:
         item = (db.query(Item).outerjoin(ContentAsset, Item.content_id == ContentAsset.id)
                 .filter(Item.evidence_bundle['source_platform'].astext == platform,
+                        or_(Item.evidence_bundle['source_id'].astext == source_id,
+                            Item.evidence_bundle['url'].astext == url) if url else
                         Item.evidence_bundle['source_id'].astext == source_id,
                         Item.evidence_bundle['evidence_level'].astext == 'full_transcript',
                         or_(Item.user_id == user_id, ContentAsset.visibility == VISIBILITY_PUBLIC))

@@ -100,7 +100,8 @@ def _seed_legacy_rows(url: str) -> dict:
         # Columns added by later revisions must go too, or replaying the chain
         # would try to add them a second time.
         for column in ("search_text_tsv", "search_text", "chunk_timestamps",
-                         "chunk_texts", "normalized_text", "raw_text"):
+                         "chunk_texts", "normalized_text", "raw_text", "evidence_bundle",
+                         "brief_v2", "processing_metadata", "needs_retry"):
             conn.execute(text(f"ALTER TABLE items DROP COLUMN IF EXISTS {column}"))
         # 0010 adds this to `users`, which is a revision-0001 table, so it
         # survives the drops above and would be re-added on replay.

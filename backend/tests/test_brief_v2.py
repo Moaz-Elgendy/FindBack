@@ -70,3 +70,79 @@ def test_partial_confidence_and_missing_info():
     assert result.confidence == 'medium'
     with pytest.raises(ValueError):
         brief_v2.validate(payload(), ev)
+
+
+def test_fixture_set_runs_real_brief_stages():
+    import json
+    import importlib.util
+    from pathlib import Path
+    script = Path(__file__).resolve().parents[2] / 'scripts/eval_brief.py'
+    spec = importlib.util.spec_from_file_location('eval_brief', script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fixtures = json.loads((Path(__file__).parent / 'fixtures/brief_v2.json').read_text())
+    for fixture in fixtures:
+        result = asyncio.run(module.run(fixture['evidence'], fixture['output']))
+        assert all(result['checks'].values()), fixture['name']
+
+
+def test_malformed_tag_type_is_repaired():
+    class Gateway:
+        count = 0
+        async def generate_json(self, *args, **kwargs):
+            self.count += 1
+            return dict(payload(), tags=[17]) if self.count == 1 else payload()
+    gateway = Gateway()
+    result = asyncio.run(brief_v2.extract(evidence(), gateway))
+    assert result.title and gateway.count == 2
+
+
+def test_long_transcript_is_mapped_and_merged_without_losing_timestamps(monkeypatch):
+    monkeypatch.setenv('BRIEF_CHUNK_CHARS', '1000')
+    ev = evidence()
+    ev['transcript'] = [{'start': 5 + i * 10, 'end': 14 + i * 10,
+                         'text': ('Use Claude Code to write and test code. ' * 12)} for i in range(4)]
+    class Gateway:
+        calls = []
+        async def generate_json(self, system, user, **kwargs):
+            import json
+            data = json.loads(user)
+            self.calls.append(data)
+            output = payload()
+            if 'transcript' in data:
+                output['key_points'] = [{'point': 'Use Claude Code to write tests.',
+                                        'source_ref': brief_v2.timestamp(data['transcript'][0]['start'])}]
+            else:
+                output['key_points'] = [p for c in data['extracted_chunks'] for p in c['key_points']]
+            return output
+    gateway = Gateway()
+    result = asyncio.run(brief_v2.extract(ev, gateway))
+    assert len(gateway.calls) > 1
+    assert {p.source_ref for p in result.key_points} == {'00:05', '00:15', '00:25', '00:35'}
+
+
+def test_oversized_segment_and_many_chunks_keep_every_request_bounded(monkeypatch):
+    monkeypatch.setenv('BRIEF_CHUNK_CHARS', '1000')
+    ev = evidence()
+    ev['transcript'] = [{'start': i * 10, 'end': i * 10 + 5,
+                         'text': 'Claude writes tests. ' * 80} for i in range(16)]
+    class Gateway:
+        calls = []
+        async def generate_json(self, system, user, **kwargs):
+            import json
+            data = json.loads(user)
+            self.calls.append(user)
+            output = payload()
+            if 'transcript' in data:
+                assert len(json.dumps(data['transcript'], ensure_ascii=False)) <= 1000
+                refs = [brief_v2.timestamp(s['start']) for s in data['transcript']]
+            else:
+                assert len(data['extracted_chunks']) <= 2
+                refs = data['allowed_timestamps']
+                assert set(refs) == {p['source_ref'] for c in data['extracted_chunks'] for p in c['key_points']}
+            output['key_points'] = [{'point': 'Claude writes tests.', 'source_ref': ref} for ref in dict.fromkeys(refs)]
+            return output
+    gateway = Gateway()
+    result = asyncio.run(brief_v2.extract(ev, gateway))
+    assert max(map(len, gateway.calls)) <= 13000
+    assert {p.source_ref for p in result.key_points} == {brief_v2.timestamp(i * 10) for i in range(16)}
