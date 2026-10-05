@@ -116,7 +116,7 @@ def _pending_item_ids(db, content_id) -> list:
     """
     return [row[0] for row in db.execute(text(
         "SELECT id FROM items WHERE content_id = :cid "
-        "AND status IN ('pending', 'failed')"),
+        "AND (status IN ('pending', 'failed') OR (status = 'ready' AND needs_retry))"),
         {"cid": str(content_id)})]
 
 
@@ -147,6 +147,7 @@ def claim_job(db, job_id, lock_timeout_seconds: float = 300.0):
             updated_at = now()
         WHERE id = :id
           AND status IN ('PENDING', 'PROCESSING')
+          AND available_at <= now()
           AND (locked_at IS NULL
                OR locked_at < now() - make_interval(secs => :lock_secs))
     """), {"id": str(job_id), "lock_secs": lock_timeout_seconds})

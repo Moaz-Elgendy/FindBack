@@ -83,7 +83,7 @@ async def extract_brief_through(gateway, raw_text: str, url_title: str = "",
         user_content = f"URL title hint: {url_title}\n\nContent (truncated):\n{raw_text[:MAX_CONTENT_CHARS]}"
         prompt = system_prompt(profile)
         if input_provenance == "caption":
-            prompt += "\nOnly a video caption, description or title/author metadata is available. Summarize only this supplied text. The video spoken content was unavailable. Do not infer spoken takeaways, actions or timestamps. Leave highlights and timestamps empty."
+            prompt += "\nExtract every named item and claim from the caption and title. Do not invent spoken content or timestamps. Never describe extraction failures."
         data = await gateway.generate_json(prompt, user_content,
                                            temperature=0.1)
     except ai.AIConfigError as exc:

@@ -76,7 +76,9 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
     error = ''
     for attempt in range(2):
         instruction = user if not attempt else user + '\nRepair the previous response to match the schema. ' + error
-        data = await gateway.generate_json(SYSTEM_PROMPT, instruction, temperature=0.0)
+        from app.services.ai_gateway import Gateway
+        options = {"model_role": "complex" if reduced is not None else "normal"} if isinstance(gateway, Gateway) else {}
+        data = await gateway.generate_json(SYSTEM_PROMPT, instruction, temperature=0.0, **options)
         try:
             return validate(data, evidence)
         except (ValueError, TypeError) as exc:
@@ -119,3 +121,38 @@ def legacy(brief: BriefV2):
                  topics=brief.tags, actions=[brief.suggested_action] if brief.suggested_action else [],
                  timestamps=[p.source_ref for p in brief.key_points if p.source_ref],
                  structured_data={'content_type': brief.content_type})
+
+
+def offline(evidence: dict) -> tuple[dict, object]:
+    """Grounded fallback. Sparse evidence is never padded to satisfy tag counts."""
+    from app.schemas import Brief
+    from app.services.search import STOPWORDS
+    transcript = evidence.get('transcript') or []
+    title = evidence.get('title') or 'Saved link'
+    body = evidence.get('ocr_text') or evidence.get('caption') or title
+    points = [{'point': s['text'], 'source_ref': timestamp(s['start'])} for s in transcript]
+    if not points and body != title:
+        points = [{'point': line.strip(), 'source_ref': 'ocr' if evidence.get('ocr_text') else 'caption'}
+                  for line in body.splitlines() if line.strip()][:25]
+    corpus = ' '.join([title, body, *[s['text'] for s in transcript]])
+    words = re.findall(r'[^\W_]+(?:[-+][^\W_]+)*', corpus.lower())
+    candidates = [w for w in words if w not in STOPWORDS and len(w) > 1]
+    candidates.extend(' '.join(words[i:i+n]) for n in (2, 3) for i in range(len(words)-n+1)
+                      if words[i] not in STOPWORDS and words[i+n-1] not in STOPWORDS)
+    if evidence.get('source_platform'): candidates.append(evidence['source_platform'])
+    full = evidence.get('evidence_level') == 'full_transcript'
+    text = ' '.join(s['text'] for s in transcript[:3]) if transcript else body
+    tags = clean_tags(candidates)
+    data = dict(title=title[:80], content_type='video' if transcript else 'other',
+                instant_brief=text[:600], key_points=points, best_takeaway=None,
+                entities={'tools_products': [], 'people_orgs': [], 'numbers': []}, topics=[], tags=tags,
+                search_phrases=[], likely_intent=None, suggested_action=None,
+                confidence='medium' if full or evidence.get('caption') or evidence.get('ocr_text') else 'low',
+                evidence_used=[k for k, v in [('transcript', transcript), ('caption', evidence.get('caption')),
+                               ('ocr', evidence.get('ocr_text')), ('metadata', title)] if v],
+                missing_info=None if full else ('افتح المصدر الأصلي للتفاصيل.' if re.search(r'[\u0600-\u06ff]', body)
+                                                else 'Open original for the remaining details.'))
+    compatible = Brief(title=data['title'], overview=data['instant_brief'],
+                       highlights=[p['point'] for p in points], topics=tags,
+                       timestamps=[p['source_ref'] for p in points if p['source_ref']])
+    return data, compatible

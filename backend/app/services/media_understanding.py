@@ -66,7 +66,10 @@ def source_identity(url: str) -> tuple[str, str]:
         return 'youtube', source_id or path.split('/')[-1]
     platform = {'facebook.com': 'facebook', 'fb.watch': 'facebook', 'instagram.com': 'instagram',
                 'tiktok.com': 'tiktok'}.get(host, host)
-    if host.endswith('.tiktok.com'): platform = 'tiktok'
+    for name in ('facebook', 'instagram', 'tiktok'):
+        if host.endswith('.' + name + '.com'): platform = name
+    if platform == 'facebook' and parse_qs(parsed.query).get('v'):
+        return platform, parse_qs(parsed.query)['v'][0]
     return platform, path.split('/')[-1] or url
 
 
@@ -76,7 +79,7 @@ def initial_bundle(url: str, fetched: dict) -> EvidenceBundle:
     bundle = EvidenceBundle(source_platform=platform, url=url, source_id=fetched.get('source_id') or source_id,
                             title=fetched.get('title') or '', author=fetched.get('author') or '',
                             duration=fetched.get('duration'), transcript=fetched.get('transcript') or [],
-                            caption=(fetched.get('text') or '') if provenance in ('caption', 'page') else '')
+                            caption=fetched.get('caption', (fetched.get('text') or '') if provenance in ('caption', 'page') else ''))
     bundle.classify()
     return bundle
 
@@ -143,9 +146,19 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
     bundle = initial_bundle(url, fetched)
     metadata = {'stt_provider': 'captions' if bundle.transcript else None, 'stt_model': None,
                 'cost': 0.0, 'cost_known': True}
-    if bundle.evidence_level == 'full_transcript' or not env.get_bool('MEDIA_ENABLED', True):
+    if not env.get_bool('MEDIA_ENABLED', True):
         metadata.update(duration=bundle.duration, seconds_taken=time.monotonic() - began)
         return bundle, metadata
+    if cache_lookup:
+        try:
+            cached = cache_lookup(bundle.source_platform, bundle.source_id, user_id)
+            if cached:
+                cached = EvidenceBundle(**dict(cached, url=url, fetch_errors=[]))
+                metadata.update(cache_hit=True, stt_provider='cache', duration=cached.duration,
+                                seconds_taken=time.monotonic() - began)
+                return cached, metadata
+        except Exception as exc:
+            failure(bundle, 'cache', exc)
     with tempfile.TemporaryDirectory(prefix='findback-media-') as temp:
         directory = Path(temp)
         try:
@@ -173,20 +186,21 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
             failure(bundle, 'download', exc)
             path = None
         if path:
-            audio = directory / 'audio.wav'
-            try:
-                await asyncio.to_thread(extract_audio, path, audio)
-                from app.services.transcription import provider_for
-                provider = provider_for(bundle.duration)
-                metadata.update(stt_provider=provider.name, stt_model=provider.model)
-                stt_started = time.monotonic()
-                result = await provider.transcribe(audio)
-                bundle.transcript = [TranscriptSegment(**s) for s in result.segments]
-                bundle.language = result.language
-                metadata.update(stt_seconds=time.monotonic() - stt_started, cost=result.cost,
-                                cost_known=result.cost is not None)
-            except Exception as exc:
-                failure(bundle, 'audio', exc)
+            if bundle.evidence_level != 'full_transcript':
+                audio = directory / 'audio.wav'
+                try:
+                    await asyncio.to_thread(extract_audio, path, audio)
+                    from app.services.transcription import provider_for
+                    provider = provider_for(bundle.duration)
+                    metadata.update(stt_provider=provider.name, stt_model=provider.model)
+                    stt_started = time.monotonic()
+                    result = await provider.transcribe(audio)
+                    bundle.transcript = [TranscriptSegment(**s) for s in result.segments]
+                    bundle.language = result.language
+                    metadata.update(stt_seconds=time.monotonic() - stt_started, cost=result.cost,
+                                    cost_known=result.cost is not None)
+                except Exception as exc:
+                    failure(bundle, 'audio', exc)
             try:
                 frames = await asyncio.to_thread(sample_frames, path, directory, bundle.duration)
             except Exception as exc:
@@ -226,3 +240,18 @@ def read_frame(frame: Path) -> str:
     result = subprocess.run(['tesseract', str(frame), 'stdout', '-l', env.get('MEDIA_OCR_LANGUAGES', 'eng+ara')],
                             check=True, capture_output=True, text=True, timeout=30)
     return result.stdout.strip()
+
+
+def cached_evidence(platform: str, source_id: str, user_id) -> dict | None:
+    from sqlalchemy import or_
+    from app.database import SessionLocal
+    from app.models import ContentAsset, Item, VISIBILITY_PUBLIC
+    # The same source id is reusable only within the existing privacy boundary.
+    with SessionLocal() as db:
+        item = (db.query(Item).outerjoin(ContentAsset, Item.content_id == ContentAsset.id)
+                .filter(Item.evidence_bundle['source_platform'].astext == platform,
+                        Item.evidence_bundle['source_id'].astext == source_id,
+                        Item.evidence_bundle['evidence_level'].astext == 'full_transcript',
+                        or_(Item.user_id == user_id, ContentAsset.visibility == VISIBILITY_PUBLIC))
+                .order_by(Item.processed_at.desc()).first())
+        return dict(item.evidence_bundle) if item else None

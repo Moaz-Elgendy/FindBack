@@ -10,11 +10,14 @@ depends_on = None
 
 
 def upgrade():
-    for name in ('evidence_bundle', 'brief_v2', 'processing_metadata'):
-        op.add_column('items', sa.Column(name, JSONB, nullable=False,
-                                       server_default=sa.text("'{}'::jsonb")))
-    op.add_column('items', sa.Column('needs_retry', sa.Boolean, nullable=False,
-                                   server_default=sa.text('false')))
+    op.add_column("items", sa.Column("evidence_bundle", JSONB, nullable=False,
+                                    server_default=sa.text("'{}'::jsonb")))
+    op.add_column("items", sa.Column("brief_v2", JSONB, nullable=False,
+                                    server_default=sa.text("'{}'::jsonb")))
+    op.add_column("items", sa.Column("processing_metadata", JSONB, nullable=False,
+                                    server_default=sa.text("'{}'::jsonb")))
+    op.add_column("items", sa.Column("needs_retry", sa.Boolean, nullable=False,
+                                    server_default=sa.text("false")))
     op.create_index('items_evidence_source_idx', 'items',
                     [sa.text("(evidence_bundle->>'source_platform')"),
                      sa.text("(evidence_bundle->>'source_id')")],

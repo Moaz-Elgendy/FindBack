@@ -67,17 +67,20 @@ def test_youtube_profile_uses_content():
     assert profiles.classify(url='https://youtube.com/watch?v=x', text='1. Alpha\n2. Beta\n3. Gamma').name == 'list'
 
 
-def test_limited_video_brief_discloses_and_clears_inventions(monkeypatch):
-    async def extract(*args, **kwargs):
-        from app.schemas import Brief
-        return Brief(title=args[1], overview='The caption describes two tools.', highlights=['invented'], timestamps=['01:23'])
-    monkeypatch.setattr(extractor, 'extract_brief', extract)
-    item = SimpleNamespace(normalized_text='Two tools for writing.', raw_text='', title='https://youtube.com/watch?v=x', url='https://youtube.com/watch?v=x', source_type='youtube', fetch_metadata={'input_provenance': 'caption', 'title': 'Verified title'})
+def test_limited_video_extracts_caption_and_keeps_warning_separate():
+    from app.services.media_understanding import EvidenceBundle
+    caption = 'Alpha: writes code. Beta: tests code.'
+    item = SimpleNamespace(normalized_text=caption, raw_text='', title='https://youtube.com/watch?v=x',
+                           url='https://youtube.com/watch?v=x', source_type='youtube',
+                           fetch_metadata={'input_provenance': 'caption', 'title': 'Verified title'},
+                           evidence_bundle=EvidenceBundle(source_platform='youtube', url='https://youtube.com/watch?v=x',
+                               source_id='x', title='Verified title', caption=caption, evidence_level='partial').model_dump())
     asyncio.run(pipeline.stage_understand(item))
     asyncio.run(pipeline.stage_brief(item))
-    assert 'spoken content was unavailable' in item.summary
-    assert item.key_points == []
-    assert item.fetch_metadata['brief']['timestamps'] == []
+    assert 'spoken content was unavailable' not in item.summary
+    assert 'Alpha' in item.summary and 'Beta' in item.summary
+    assert item.key_points and item.brief_v2['missing_info']
+    assert item.brief_v2['missing_info'] not in item.search_text
     assert item.title_clean == 'Verified title'
     assert item.category == 'video'
     assert item.url in item.search_text
@@ -97,8 +100,8 @@ def test_heuristic_does_not_split_url_inside_prose():
 def test_caption_prompt_limits_model_to_supplied_evidence():
     class Gateway:
         async def generate_json(self, system, user, **kwargs):
-            assert 'spoken content was unavailable' in system
-            assert 'Leave highlights and timestamps empty' in system
+            assert 'Never describe extraction failures' in system
+            assert 'Extract every named item' in system
             assert 'Author: Creator' in user
             return {'title': 'Video title', 'overview': 'A video by Creator.'}
     brief = asyncio.run(extractor.extract_brief_through(Gateway(), 'Video title\nAuthor: Creator', 'Video title', input_provenance='caption'))

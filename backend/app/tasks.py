@@ -169,6 +169,14 @@ def _reuse_source(db, item, job):
         return None
     if not (source.fetch_metadata or {}).get("brief"):
         return None
+    if source.needs_retry:
+        return None
+    if not source.brief_v2 or (source.processing_metadata or {}).get("prompt_version") != "brief_v2":
+        return None
+    # A v2 job must not reuse a weaker video artifact and suppress acquisition.
+    if (source.evidence_bundle or {}) and source.evidence_bundle.get("evidence_level") != "full_transcript":
+        from app.services.fetcher import video_source
+        if video_source(item.url or ""): return None
     if db.execute(text("SELECT 1 FROM chunks WHERE item_id = :i LIMIT 1"),
                   {"i": str(source.id)}).first() is None:
         return None
@@ -198,6 +206,10 @@ def _reuse_derived_data(db, item, source) -> int:
     item.fetch_metadata = dict(
         item.fetch_metadata or {},
         brief=dict((source.fetch_metadata or {}).get("brief") or {}))
+    item.evidence_bundle = dict(source.evidence_bundle or {})
+    item.brief_v2 = dict(source.brief_v2 or {})
+    item.processing_metadata = dict(source.processing_metadata or {}, cache_hit=True)
+    item.needs_retry = False
     item.title_clean = source.title_clean or item.title
     item.entities = dict(source.entities or {})
     item.tags = list(source.tags or [])
@@ -272,7 +284,8 @@ def process_item(self, item_id: str):
             db.add(job)
             db.commit()
 
-        item.status = "processing"
+        if not (item.summary and item.needs_retry):
+            item.status = "processing"
         db.commit()
 
         # H3 step 1: content already processed at this pipeline version is
@@ -319,7 +332,9 @@ def process_item(self, item_id: str):
             log.warning("[task] raw-text purge skipped: %s",
                         observability.describe_exc(exc))
         if job is not None:
-            complete_job(db, job.id, success=True)
+            from app.services import brief_retry
+            if not brief_retry.schedule(db, item, job):
+                complete_job(db, job.id, success=True)
         observability.log_event(
             "job.completed", content_id=item.content_id, job_id=job.id if job else None,
             pipeline_version=JOB_TYPE_PROCESS, stage="READY", status="ready",
@@ -332,7 +347,7 @@ def process_item(self, item_id: str):
             item = db.query(Item).filter(Item.id == item_id).first()
             if item:
                 content_id = item.content_id
-                item.status = "failed"
+                item.status = "ready" if item.summary and item.needs_retry else "failed"
                 item.failure_reason = str(e)[:1000]
                 db.commit()
         except Exception: pass

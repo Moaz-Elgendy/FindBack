@@ -78,6 +78,7 @@ _PATCHABLE = {
 
 @pytest.fixture(autouse=True)
 def offline_providers(monkeypatch):
+    monkeypatch.setenv("MEDIA_ENABLED", "false")
     for key in AI_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
 

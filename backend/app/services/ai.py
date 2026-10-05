@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import random
+from contextvars import ContextVar
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ import httpx
 from app import env
 
 log = logging.getLogger("findback.ai")
+CHAT_USAGE = ContextVar("brief_chat_usage", default=None)
 
 # Test seams only: unit tests install an httpx.MockTransport here and zero the
 # backoff so the retry, rate-limit, and request-shape self-heal paths run
@@ -692,7 +694,7 @@ def parse_json_object(text: str, provider: str = "") -> dict:
 # --- public API --------------------------------------------------------------
 
 async def chat_json(system_prompt: str, user_prompt: str, *, temperature: float = 0.0,
-                    max_tokens: int | None = None) -> dict:
+                    max_tokens: int | None = None, model: str | None = None) -> dict:
     """One chat completion that must yield a JSON object. Raises AIError."""
     cfg = chat_config()
     if cfg is None:
@@ -700,7 +702,7 @@ async def chat_json(system_prompt: str, user_prompt: str, *, temperature: float 
             "no AI provider configured: set GROQ_API_KEY or GEMINI_API_KEY "
             "(see .env.example) or leave extraction to the offline heuristic")
     body: dict = {
-        "model": cfg.model,
+        "model": model or cfg.model,
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": user_prompt}],
         "temperature": temperature,
@@ -714,8 +716,16 @@ async def chat_json(system_prompt: str, user_prompt: str, *, temperature: float 
     last_error: AIError | None = None
     for json_attempt in range(1, 3):
         data = await _post_json(cfg.url, cfg.headers, body, provider=cfg.provider)
+        usage = CHAT_USAGE.get()
+        if usage is not None:
+            reported = data.get("usage") or {}
+            usage["requests"] = usage.get("requests", 0) + 1
+            usage["input_tokens"] = usage.get("input_tokens", 0) + reported.get("prompt_tokens", 0)
+            usage["output_tokens"] = usage.get("output_tokens", 0) + reported.get("completion_tokens", 0)
+            usage["usage_reported"] = bool(reported) and usage.get("usage_reported", True)
+            usage["provider"], usage["model"] = cfg.provider, body["model"]
         if env.DEBUG:
-            log.info("[ai] %s raw body: %s", cfg.provider, str(data)[:2000])
+            log.debug("[ai] %s raw body: %s", cfg.provider, str(data)[:2000])
         try:
             text = completion_text(data, cfg.provider)
             return parse_json_object(text, cfg.provider)

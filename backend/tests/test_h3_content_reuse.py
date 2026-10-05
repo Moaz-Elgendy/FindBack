@@ -91,7 +91,7 @@ def _add_user(sessions, label):
 def spies(monkeypatch):
     """Count the three stages that cost money, and fake the outside world."""
     from app.schemas import Brief
-    from app.services import embedder, extractor, fetcher, storage
+    from app.services import brief_v2, embedder, extractor, fetcher, storage
 
     calls = {"fetch": 0, "understand": 0, "embed": 0}
     vector = [0.001] * 1536
@@ -100,7 +100,7 @@ def spies(monkeypatch):
         calls["fetch"] += 1
         return {"text": "a shared body about kubernetes rollbacks and deploys. "
                         "Long enough to survive the length checks.",
-                "title": "Shared thing", "source_type": "article"}
+                "title": "Shared thing", "source_type": "article", "input_provenance": "page"}
 
     async def extract(raw_text, url_title="", url=""):
         calls["understand"] += 1
@@ -109,6 +109,17 @@ def spies(monkeypatch):
                      highlights=["automated rollback"], topics=["deploy"],
                      intent=["learn"],
                      structured_data={"content_type": "general"})
+
+    async def extract_v2(evidence):
+        from app.schemas import BriefV2
+        old = await extract(evidence.get("caption", ""), evidence.get("title", ""))
+        data, _ = brief_v2.offline(evidence)
+        data.update(title=old.title, instant_brief=old.overview,
+                    key_points=[{"point": p, "source_ref": "caption"} for p in old.highlights],
+                    entities={"tools_products": ["kubernetes"], "people_orgs": [], "numbers": []},
+                    search_phrases=["Find Kubernetes rollbacks.", "Automated rollback.", "Kubernetes deploys.",
+                                    "Shared deployment article.", "Rollback deployment tools."])
+        return BriefV2(**data)
 
     async def embed_many(texts, task="document"):
         calls["embed"] += 1
@@ -120,6 +131,7 @@ def spies(monkeypatch):
 
     monkeypatch.setattr(fetcher, "fetch_content", fetch)
     monkeypatch.setattr(extractor, "extract_brief", extract)
+    monkeypatch.setattr(brief_v2, "extract", extract_v2)
     monkeypatch.setattr(embedder, "embed_many", embed_many)
     monkeypatch.setattr(embedder, "embed_text", embed_text)
     monkeypatch.setattr(embedder, "embedding_model_name", lambda: MODEL)

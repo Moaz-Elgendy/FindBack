@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from app import env
 from app.schemas import Brief
 from app.services import ai, metrics, observability, privacy
 
@@ -69,9 +70,13 @@ class ProviderAdapter:
     name = "default"
 
     async def generate_json(self, system_prompt: str, user_prompt: str, *,
-                            temperature: float = 0.0) -> dict[str, Any]:
+                            temperature: float = 0.0, model_role: str | None = None) -> dict[str, Any]:
+        options = {}
+        if model_role:
+            options = {"model": env.get("BRIEF_COMPLEX_MODEL" if model_role == "complex" else "BRIEF_NORMAL_MODEL") or None,
+                       "max_tokens": max(1200, env.get_int("BRIEF_MAX_TOKENS", 2400))}
         return await ai.chat_json(system_prompt, user_prompt,
-                                  temperature=temperature)
+                                  temperature=temperature, **options)
 
     async def embed(self, texts, *, task: str = "document"):
         return await ai.embed_texts(texts, task=task)
@@ -108,7 +113,7 @@ class Gateway:
         self.adapter = adapter or ProviderAdapter()
 
     async def generate_json(self, system_prompt: str, user_prompt: str, *,
-                            temperature: float = 0.0) -> dict[str, Any]:
+                            temperature: float = 0.0, model_role: str | None = None) -> dict[str, Any]:
         # Register the user's own words so the privacy filter can redact them if
         # anything below us decides to log them.
         privacy.register_private(user_prompt)
@@ -117,8 +122,9 @@ class Gateway:
         # installed in a test is counted too.
         metrics.ai_requests.inc(labels={"outcome": "attempt"})
         try:
+            options = {"model_role": model_role} if model_role and isinstance(self.adapter, ProviderAdapter) else {}
             return await self.adapter.generate_json(system_prompt, user_prompt,
-                                                    temperature=temperature)
+                                                    temperature=temperature, **options)
         except Exception as exc:  # noqa: BLE001 - re-raised immediately
             metrics.ai_failures.inc(labels={"outcome": "raised"})
             observability.log_event(

@@ -25,8 +25,13 @@ from __future__ import annotations
 
 import re
 
+from app import env
 from app.schemas import Brief
-from app.services import embedder, extractor, fetcher, storage
+from app.services import ai, brief_v2, embedder, extractor, fetcher, media_understanding, storage
+import logging
+import time
+
+log = logging.getLogger("findback.pipeline")
 from app.services.extractor import memory_from_brief
 from app.services.limits import AI_LIMIT, EMBEDDING_LIMIT, FETCH_LIMIT
 
@@ -59,7 +64,29 @@ def resume_index(last_stage: str | None) -> int:
 async def stage_fetch(item, raw_preview: str = "") -> None:
     """Get the page text. Phase 7: bounded by the fetch concurrency budget."""
     with FETCH_LIMIT:
-        fetched = await fetcher.fetch_content(item.url, raw_preview or "")
+        try:
+            fetched = await fetcher.fetch_content(item.url, raw_preview or "")
+        except Exception:
+            if not fetcher.video_source(item.url or ""): raise
+            fetched = {"text": raw_preview or getattr(item, "raw_preview", None) or "", "title": item.title or "",
+                       "input_provenance": "caption" if raw_preview else "none",
+                       "fetch_errors": ["metadata fetch failed"]}
+    if "input_provenance" in fetched:
+        if fetcher.video_source(item.url or ""):
+            bundle, media_meta = await media_understanding.acquire(
+                item.url, fetched, getattr(item, "user_id", None),
+                cache_lookup=media_understanding.cached_evidence)
+        else:
+            bundle = media_understanding.initial_bundle(item.url, fetched)
+            media_meta = {}
+        bundle.fetch_errors.extend(fetched.get("fetch_errors", []))
+        item.evidence_bundle = bundle.model_dump()
+        old_meta = getattr(item, "processing_metadata", None) or {}
+        item.processing_metadata = dict(old_meta, **media_meta)
+        item.processing_metadata["media_attempts"] = old_meta.get("media_attempts", 0) + 1
+        if bundle.title: fetched["title"] = bundle.title
+        if bundle.transcript:
+            fetched["text"] = "\n".join(f"[{brief_v2.timestamp(s.start)}] {s.text}" for s in bundle.transcript)
     item.raw_text = fetched.get("text", "")[:MAX_RAW_CHARS]
     item.fetch_metadata = {k: v for k, v in fetched.items() if k != "text"}
     item.raw_s3_key = storage.store_raw_snapshot(str(item.id), fetched)
@@ -83,6 +110,42 @@ async def stage_understand(item) -> None:
     title = item.title or ""
     if fetcher.url_only(title) and metadata.get("title"):
         title = metadata["title"]
+    evidence = getattr(item, "evidence_bundle", None) or {}
+    if evidence:
+        evidence = dict(evidence, title=title or evidence.get("title", ""))
+        began = time.monotonic()
+        processing = dict(getattr(item, "processing_metadata", None) or {})
+        usage = {}
+        usage_token = ai.CHAT_USAGE.set(usage)
+        try:
+            with AI_LIMIT:
+                result = await brief_v2.extract(evidence)
+            item.brief_v2 = result.model_dump()
+            brief = brief_v2.legacy(result)
+            processing["brief_fallback"] = False
+        except Exception as exc:
+            log.warning("[brief] item=%s validation/provider failure=%s", getattr(item, "id", ""), type(exc).__name__)
+            item.brief_v2, brief = brief_v2.offline(evidence)
+            processing["brief_fallback"] = True
+            processing["tag_shortfall"] = len(item.brief_v2["tags"]) < 15
+        finally:
+            ai.CHAT_USAGE.reset(usage_token)
+        processing["llm_usage"] = usage
+        pricing = env.get("BRIEF_INPUT_COST_PER_MILLION") and env.get("BRIEF_OUTPUT_COST_PER_MILLION")
+        processing["llm_cost"] = ((usage.get("input_tokens", 0) * env.get_float("BRIEF_INPUT_COST_PER_MILLION", 0)
+                                  + usage.get("output_tokens", 0) * env.get_float("BRIEF_OUTPUT_COST_PER_MILLION", 0))
+                                  / 1_000_000) if pricing and usage.get("usage_reported") else None
+        processing.update(prompt_version=brief_v2.PROMPT_VERSION, brief_seconds=time.monotonic() - began)
+        config = ai.chat_config()
+        processing["brief_model"] = usage.get("model") or (config.model if config else None)
+        processing["brief_provider"] = usage.get("provider") or (config.provider if config else None)
+        item.processing_metadata = processing
+        item.fetch_metadata = dict(metadata, brief=brief.model_dump())
+        item.title_clean = item.brief_v2["title"]
+        item.entities = item.brief_v2["entities"]
+        item.tags = item.brief_v2["tags"]
+        item.intent = "other"
+        return
     provenance = metadata.get("input_provenance")
     with AI_LIMIT:
         # Called through the module so a test can replace the extraction call.
@@ -90,10 +153,6 @@ async def stage_understand(item) -> None:
             item.normalized_text or item.raw_text or "",
             title, url=item.url or "",
             **({"input_provenance": "caption"} if provenance == "caption" else {}))
-    if provenance == "caption" and fetcher.video_source(item.url or ""):
-        brief.overview = brief.overview[:180] + " The video's spoken content was unavailable; only its caption or metadata was available."
-        brief.highlights = []
-        brief.timestamps = []
     # The whole brief goes into fetch_metadata. It is JSONB and free-form, so a
     # new content type or a new brief field needs no DB migration (Phase 9).
     item.fetch_metadata = dict(item.fetch_metadata or {},
@@ -114,8 +173,9 @@ async def stage_brief(item) -> None:
     stored = (item.fetch_metadata or {}).get("brief") or {}
     brief = Brief(**stored) if stored else Brief()
     memory = memory_from_brief(brief)
-    item.summary = memory.summary
-    item.key_points = memory.key_points
+    modern = getattr(item, "brief_v2", None) or {}
+    item.summary = modern.get("instant_brief") or memory.summary
+    item.key_points = [p["point"] for p in modern["key_points"]] if modern else memory.key_points
     item.category = "video" if fetcher.video_source(item.url or "") else memory.category
     # Phase 12: the lexical document, so a word held only in structured_data is
     # still findable. Built here because BRIEF is where the brief becomes final.
@@ -123,6 +183,11 @@ async def stage_brief(item) -> None:
         item.title_clean or item.title or "", brief.overview,
         brief.highlights, brief.entities, brief.topics,
         brief.structured_data) + " " + (item.url or "")
+    if modern:
+        item.search_text = " ".join([modern["title"], modern["instant_brief"],
+                                     *item.key_points, *modern["tags"], *modern["search_phrases"],
+                                     *[str(v) for values in modern["entities"].values() for v in values],
+                                     item.url or ""])
 
 
 def search_document(title_clean: str, overview: str, highlights: list,
