@@ -1,6 +1,6 @@
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, field_validator
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Optional, List, Dict, Any, Literal
 from uuid import UUID
 from datetime import datetime
 
@@ -67,7 +67,44 @@ class ItemDetail(BaseModel):
     created_at: Optional[datetime]
     processed_at: Optional[datetime]
 
+    instant_brief: Optional[str] = None
+    best_takeaway: Optional[str] = None
+    key_points_with_refs: List[Dict[str, Any]] = []
+    content_type: Optional[str] = None
+    confidence: Optional[str] = None
+    evidence_level: Optional[str] = None
+    missing_info: Optional[str] = None
+    search_phrases: List[str] = []
+    topics: List[str] = []
+    likely_intent: Optional[str] = None
+    suggested_action: Optional[str] = None
+    evidence_used: List[str] = []
+    transcript: List[Dict[str, Any]] = []
+    ocr_text: str = ""
+    prompt_version: Optional[str] = None
+    needs_retry: bool = False
+    processing_metadata: Dict[str, Any] = {}
+
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_v2(cls, value):
+        if isinstance(value, dict):
+            return value
+        data = {name: getattr(value, name) for name in cls.model_fields if hasattr(value, name)}
+        brief = getattr(value, "brief_v2", None) or {}
+        evidence = getattr(value, "evidence_bundle", None) or {}
+        metadata = getattr(value, "processing_metadata", None) or {}
+        for name in ("instant_brief", "best_takeaway", "content_type", "confidence", "missing_info",
+                     "search_phrases", "topics", "likely_intent", "suggested_action", "evidence_used"):
+            if name in brief: data[name] = brief[name]
+        data.update(key_points_with_refs=brief.get("key_points", []),
+                    evidence_level=evidence.get("evidence_level"),
+                    transcript=evidence.get("transcript", []), ocr_text=evidence.get("ocr_text", ""),
+                    prompt_version=metadata.get("prompt_version"), processing_metadata=metadata,
+                    needs_retry=bool(getattr(value, "needs_retry", False)))
+        return data
 
 class Brief(BaseModel):
     """The FindBack Brief (Phase 9).
@@ -194,3 +231,41 @@ class ExtractedMemory(BaseModel):
     intent: str
     tags: List[str]
     title_clean: str
+
+
+class BriefPoint(BaseModel):
+    point: str = Field(min_length=1)
+    source_ref: Optional[str]
+    model_config = ConfigDict(extra="forbid")
+
+
+class BriefEntities(BaseModel):
+    tools_products: List[str]
+    people_orgs: List[str]
+    numbers: List[str]
+    model_config = ConfigDict(extra="forbid")
+
+
+class BriefV2(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    content_type: Literal["video", "article", "social_post", "recipe", "product", "tutorial",
+                          "ai_tool", "image", "pdf", "news", "list", "how_to", "other"]
+    instant_brief: str = Field(min_length=1)
+    key_points: List[BriefPoint]
+    best_takeaway: Optional[str]
+    entities: BriefEntities
+    topics: List[str]
+    tags: List[str] = Field(min_length=15, max_length=30)
+    search_phrases: List[str] = Field(min_length=5, max_length=8)
+    likely_intent: Optional[str]
+    suggested_action: Optional[str]
+    confidence: Literal["high", "medium", "low"]
+    evidence_used: List[Literal["transcript", "caption", "ocr", "metadata"]]
+    missing_info: Optional[str]
+    model_config = ConfigDict(extra="forbid")
+
+    def search_document(self) -> str:
+        return " ".join([self.title, self.instant_brief,
+                         *[p.point for p in self.key_points], *self.tags,
+                         *self.search_phrases, *self.entities.tools_products,
+                         *self.entities.people_orgs, *self.entities.numbers])

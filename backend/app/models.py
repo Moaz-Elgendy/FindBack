@@ -2,7 +2,7 @@ import uuid
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Column, Computed, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer,
+    Boolean, Column, Computed, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer,
     String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
@@ -108,6 +108,10 @@ class Item(Base):
     content_id = Column(UUID(as_uuid=True), ForeignKey("content_assets.id", ondelete="SET NULL"))
     fetch_metadata = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
     failure_reason = Column(Text)
+    evidence_bundle = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    brief_v2 = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    processing_metadata = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    needs_retry = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     summary = Column(Text)
     key_points = Column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
     category = Column(String(32))
@@ -160,6 +164,9 @@ class Item(Base):
             name="items_user_content_fk"),
         Index("items_user_created_idx", "user_id", "created_at"),
         Index("items_category_idx", "category"),
+        Index("items_evidence_source_idx", text("(evidence_bundle->>'source_platform')"),
+              text("(evidence_bundle->>'source_id')"),
+              postgresql_where=text("evidence_bundle->>'evidence_level' = 'full_transcript'")),
         Index("items_tsv_idx", "tsv", postgresql_using="gin"),
         # Phase 12: the full searchable document, not just title+summary+tags.
         Index("items_search_text_tsv_idx", "search_text_tsv", postgresql_using="gin"),
