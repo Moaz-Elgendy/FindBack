@@ -31,6 +31,20 @@ void main() {
   setUp(() async => db = await _freshDb());
   tearDown(() async => db.close());
 
+  test('local category filters apply before the search and Recent limits', () async {
+    await db.upsertRemoteItems([
+      ItemDetail.fromJson({'id': 'recipe', 'url': 'https://example.test/recipe',
+        'title': 'needle', 'category': 'recipe', 'created_at': '2026-01-01T00:00:00Z'}),
+      ItemDetail.fromJson({'id': 'article', 'url': 'https://example.test/article',
+        'title': 'needle', 'category': 'article', 'created_at': '2026-02-01T00:00:00Z'}),
+    ]);
+    expect((await db.localSearch('needle', category: 'recipe', limit: 1)).single.id, 'recipe');
+    expect((await db.recentLocalItems(category: 'recipe', limit: 1)).single.id, 'recipe');
+    expect(await db.localSearch('needle', category: 'tutorial'), isEmpty);
+    expect(await db.localSearch('needle', category: 'All'), hasLength(2));
+    expect(await db.recentLocalItems(category: 'All'), hasLength(2));
+  });
+
   test('a queued save is searchable immediately, before any upload', () async {
     final String clientId = await db.queueSave(
       url: 'https://example.com/fennel',

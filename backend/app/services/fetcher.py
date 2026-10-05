@@ -1,75 +1,141 @@
+import asyncio
 import os
-import httpx
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-async def fetch_content(url: str, preview: str = "") -> dict:
-    """
-    Returns {text: str, title: str, thumbnail: str, source_type: str}
-    Strategy chain: YouTube transcript -> Firecrawl -> Jina Reader -> preview fallback
-    """
-    domain = urlparse(url).hostname or ""
-    # YouTube
-    if "youtube.com" in domain or "youtu.be" in domain:
-        yt = await _try_youtube(url)
-        if yt: return yt
-    # Firecrawl if key present
-    fc_key = os.getenv("FIRECRAWL_API_KEY")
-    if fc_key:
+import httpx
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
+
+
+class TransientFetchError(RuntimeError):
+    """No usable fallback survived a temporary provider outage."""
+
+
+def video_source(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower()
+    if host == 'youtu.be' or host == 'youtube.com' or host.endswith('.youtube.com'):
+        return 'youtube'
+    if host == 'tiktok.com' or host.endswith('.tiktok.com'):
+        return 'video'
+    if (host == 'facebook.com' or host.endswith('.facebook.com')) and re.search(r'/(?:reel|reels|watch|videos|share/r)(?:/|$)', parsed.path):
+        return 'video'
+    return None
+
+
+def url_only(text: str) -> bool:
+    return bool(re.fullmatch(r'(?:Link:\s*)?https?://\S+\s*', text.strip(), re.I))
+
+
+def usable_text(text: str, video: bool = False) -> str:
+    """Reject error wrappers; for social pages keep prose, not navigation."""
+    if not text.strip() or url_only(text):
+        return ''
+    error = re.search(r'Target URL returned error\s+(\d{3})', text, re.I)
+    if error:
+        if int(error.group(1)) >= 500:
+            raise TransientFetchError('Upstream page temporarily unavailable')
+        return ''
+    if re.search(r'verify you are human|captcha|video (?:currently )?unavailable', text, re.I):
+        return ''
+    body = text.split('Markdown Content:', 1)[-1] if video else text
+    controls = r'log\s?in|sign\s?(?:in|up)|forgot password\??|privacy|terms|log in to .+'
+    lines = []
+    for line in body.splitlines():
+        plain = re.sub(r'\[([^]]+)\]\([^)]*\)', r'\1', line).strip(' #*')
+        if re.fullmatch(controls, plain, re.I) or plain.startswith(('Title:', 'URL Source:')):
+            continue
+        lines.append(line)
+    cleaned = '\n'.join(lines).strip()
+    if not cleaned or url_only(cleaned):
+        return ''
+    if video or re.search(r'log\s?in|sign in', text, re.I):
+        if len(re.findall(r'\b\w+\b', cleaned)) < 5:
+            return ''
+        return cleaned
+    return text
+
+
+async def fetch_content(url: str, preview: str = '') -> dict:
+    source = video_source(url)
+    transient = False
+    limited = None
+    if source == 'youtube':
         try:
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.post("https://api.firecrawl.dev/v1/scrape",
-                    headers={"Authorization": f"Bearer {fc_key}"},
-                    json={"url": url, "formats": ["markdown"]})
-                if r.status_code == 200:
-                    data = r.json().get("data", {})
-                    md = data.get("markdown","") or data.get("content","")
-                    if md and len(md) > 200:
-                        return {"text": md[:12000], "title": data.get("metadata",{}).get("title",""), "thumbnail": data.get("metadata",{}).get("ogImage","") or "", "source_type": "article"}
-        except Exception:
-            pass
-    # Jina Reader (free)
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
-            r = await c.get(f"https://cc.jina.ai/{url}", headers={"Accept":"text/markdown"})
-            if r.status_code == 200 and len(r.text) > 200:
-                title = ""
-                m = re.search(r"^Title:\s*(.+)$", r.text, re.M)
-                if m: title = m.group(1).strip()
-                return {"text": r.text[:12000], "title": title, "thumbnail": "", "source_type": "article"}
-    except Exception:
-        pass
-    # Fallback to preview / minimal
-    return {"text": preview or f"Link: {url}", "title": "", "thumbnail": "", "source_type": "article"}
+            limited = await _try_youtube(url)
+        except TransientFetchError:
+            transient = True
+        if limited and limited['input_provenance'] == 'transcript':
+            return limited
+    key = os.getenv('FIRECRAWL_API_KEY')
+    providers = [('firecrawl', key)] if key else []
+    providers.append(('reader', None))
+    for provider, key in providers:
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                if provider == 'firecrawl':
+                    response = await client.post('https://api.firecrawl.dev/v1/scrape', headers={'Authorization': f'Bearer {key}'}, json={'url': url, 'formats': ['markdown']})
+                else:
+                    response = await client.get(f'https://r.jina.ai/{url}', headers={'Accept': 'text/markdown'})
+                if response.status_code >= 500:
+                    transient = True
+                if response.status_code != 200:
+                    continue
+                if provider == 'firecrawl':
+                    data = response.json().get('data', {})
+                    text = data.get('markdown') or data.get('content') or ''
+                    meta = data.get('metadata') or {}
+                    title, thumbnail = meta.get('title', ''), meta.get('ogImage', '')
+                else:
+                    text = response.text
+                    match = re.search(r'^Title:\s*(.+)$', text, re.M)
+                    title, thumbnail = (match.group(1).strip() if match else ''), ''
+                text = usable_text(text, bool(source))
+                if text:
+                    return {'text': text[:12000], 'title': (limited or {}).get('title') or title, 'thumbnail': thumbnail or '', 'source_type': source or 'article', 'input_provenance': 'caption' if source else 'page'}
+        except (httpx.TimeoutException, httpx.TransportError, TransientFetchError):
+            transient = True
+        except (ValueError, TypeError):
+            continue
+    if limited:
+        return limited
+    text = usable_text(preview, bool(source))
+    if not text and transient:
+        raise TransientFetchError('Content providers temporarily unavailable')
+    return {'text': text[:12000], 'title': '', 'thumbnail': '', 'source_type': source or 'article', 'input_provenance': ('caption' if source else 'page') if text else 'none'}
+
 
 async def _try_youtube(url: str) -> dict | None:
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-        # extract video id
-        parsed = urlparse(url)
-        vid = ""
-        if "youtu.be" in parsed.hostname:
-            vid = parsed.path.lstrip("/")
-        else:
-            import urllib.parse as up
-            qs = dict(up.parse_qsl(parsed.query))
-            vid = qs.get("v","")
-        if not vid: return None
-        # run sync API in thread
-        import asyncio
-        def _fetch():
-            try: return YouTubeTranscriptApi.get_transcript(vid)
-            except Exception: return None
-        transcript = await asyncio.to_thread(_fetch)
-        if not transcript: return None
-        text = " ".join([t["text"] for t in transcript])
-        # get title via oEmbed
-        title = ""
-        try:
-            async with httpx.AsyncClient(timeout=8) as c:
-                r = await c.get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json")
-                if r.status_code == 200: title = r.json().get("title","")
-        except Exception: pass
-        return {"text": text[:12000], "title": title, "thumbnail": f"https://img.youtube.com/vi/{vid}/hqdefault.jpg", "source_type": "youtube"}
-    except Exception:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    parsed = urlparse(url)
+    vid = parsed.path.strip('/') if parsed.hostname == 'youtu.be' else parse_qs(parsed.query).get('v', [''])[0]
+    if not vid and parsed.path.startswith(('/shorts/', '/embed/')):
+        vid = parsed.path.split('/')[2]
+    if not vid:
         return None
+    transient = False
+    try:
+        transcript = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, vid)
+    except Exception as exc:
+        transcript = None
+        transient = (isinstance(exc, (httpx.TimeoutException, TimeoutError, RequestsTimeout, RequestsConnectionError))
+                     or (getattr(getattr(exc, "response", None), "status_code", 0) or 0) >= 500)
+    title = author = ''
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.get('https://www.youtube.com/oembed', params={'url': f'https://www.youtube.com/watch?v={vid}', 'format': 'json'})
+            if response.status_code >= 500:
+                transient = True
+            if response.status_code == 200:
+                data = response.json()
+                title, author = data.get('title', ''), data.get('author_name', '')
+    except (httpx.TimeoutException, httpx.TransportError):
+        transient = True
+    except (ValueError, TypeError):
+        pass
+    text = ' '.join(segment['text'] for segment in transcript) if transcript else '\n'.join(value for value in (title, f'Author: {author}' if author else '') if value)
+    if not text:
+        if transient:
+            raise TransientFetchError('YouTube temporarily unavailable')
+        return None
+    return {'text': text[:12000], 'title': title, 'thumbnail': f'https://img.youtube.com/vi/{vid}/hqdefault.jpg', 'source_type': 'youtube', 'input_provenance': 'transcript' if transcript else 'caption'}

@@ -23,6 +23,24 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 `DEV_AUTH_ENABLED=false`, add `--dart-define=API_TOKEN=<token>` — it seeds the
 token store so the dev path keeps working without a secret in source.
 
+## Physical Android device (USB or wireless debugging)
+
+Connect the phone to WSL's ADB first. From the repository root, run:
+
+```bash
+docker compose up --build
+# In another WSL terminal:
+tool/run_android.sh
+# With more than one device, pass the ID shown by adb devices:
+# tool/run_android.sh 192.168.1.8:40765
+```
+
+The launcher checks the local API and connected device, then runs
+`adb reverse tcp:8000 tcp:8000` before Flutter. This makes the phone's
+`127.0.0.1:8000` reach the API on the development machine. Forwarding must be
+restored after reconnecting wireless debugging. Plain `flutter run` targets
+localhost too, but does not establish this forwarding itself.
+
 Nothing is read from `.env` at runtime: a compiled binary has no `.env`, so all
 configuration arrives through `--dart-define` (`lib/config.dart`).
 

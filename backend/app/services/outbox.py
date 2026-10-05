@@ -273,9 +273,13 @@ def claim_batch(db, limit: int = 50) -> list:
     them publishing the same job.
     """
     return db.execute(text("""
-        SELECT id, content_id, job_type, attempt_count
+        SELECT id, content_id, job_type, attempt_count, status
         FROM processing_jobs
-        WHERE status = 'PENDING'
+        WHERE (status = 'PENDING'
+               OR (status = 'PROCESSING'
+                   AND claimed_at IS NULL
+                   AND locked_at IS NULL
+                   AND updated_at < now() - make_interval(secs => :lock_secs)))
           AND available_at <= now()
           AND (locked_at IS NULL
                OR locked_at < now() - make_interval(secs => :lock_secs))
@@ -311,41 +315,45 @@ def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
 
         item_ids = _pending_item_ids(db, job["content_id"])
         if not item_ids:
-            # Nothing to publish right now: a worker already owns the item, or
-            # the content is finished. The job must be left PENDING, because
-            # `claim_batch` only ever looks at PENDING jobs -- marking it
-            # PROCESSING here would take the one process able to retry it out
-            # of the loop and strand the save for good. The lock is released so
-            # a later tick can claim it again.
+            # Preserve the state when there is nothing to publish. A recovered
+            # publication must wait another timeout before being checked again.
+            changes = {ProcessingJob.locked_at: None}
+            if job["status"] == JOB_STATUS_PROCESSING:
+                changes[ProcessingJob.updated_at] = text("now()")
             db.query(ProcessingJob).filter(
-                ProcessingJob.id == job["id"]).update(
-                {ProcessingJob.locked_at: None})
+                ProcessingJob.id == job["id"]).update(changes)
             db.commit()
             stats["skipped"] += 1
-            log.info("[outbox] job %s has nothing to publish yet; staying "
-                     "PENDING", job["id"])
+            log.info("[outbox] job %s has nothing to publish yet; staying %s",
+                     job["id"], job["status"])
             continue
         try:
             for item_id in item_ids:
                 publisher(str(item_id))
             stats["items"] += len(item_ids)
             mark_processing(db, job["id"])
+            if job["status"] == JOB_STATUS_PROCESSING:
+                attempts = (job["attempt_count"] or 0) + 1
+                error = f"never claimed by a worker after {attempts} republishes"
+                if attempts >= max_attempts():
+                    record_failure(db, job["id"], error,
+                                   attempt_count=job["attempt_count"])
+                    stats["failed"] += 1
+                else:
+                    db.execute(text("""
+                        UPDATE processing_jobs
+                        SET attempt_count = :attempts,
+                            available_at = now() + make_interval(secs => :delay)
+                        WHERE id = :id
+                    """), {"id": str(job["id"]), "attempts": attempts,
+                           "delay": backoff_for(attempts).total_seconds()})
             db.commit()
             stats["published"] += 1
         except Exception as exc:  # noqa: BLE001 - surviving this is the point
             attempts = (job["attempt_count"] or 0) + 1
             db.rollback()
-            seconds = int(backoff_for(attempts).total_seconds())
-            db.query(ProcessingJob).filter(
-                ProcessingJob.id == job["id"]).update({
-                    ProcessingJob.attempt_count: attempts,
-                    ProcessingJob.last_error: f"{type(exc).__name__}: {exc}"[:1000],
-                    ProcessingJob.available_at: text(
-                        f"now() + interval '{seconds} seconds'"),
-                    ProcessingJob.locked_at: None,
-                    ProcessingJob.updated_at: text("now()"),
-                })
-            db.commit()
+            record_failure(db, job["id"], f"{type(exc).__name__}: {exc}",
+                           attempt_count=job["attempt_count"])
             stats["failed"] += 1
             log.warning("[outbox] publish failed for job %s (attempt %s): %s",
                         job["id"], attempts, exc)

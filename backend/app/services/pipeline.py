@@ -66,8 +66,10 @@ async def stage_fetch(item, raw_preview: str = "") -> None:
     thumbnail = fetched.get("thumbnail")
     if thumbnail and not item.thumbnail_url:
         item.thumbnail_url = thumbnail
+    if fetched.get("title") and (not item.title or fetcher.url_only(item.title)):
+        item.title = fetched["title"]
     if fetched.get("source_type"):
-        item.source_type = fetched["source_type"]
+        item.source_type = fetcher.video_source(item.url) or fetched["source_type"]
 
 
 async def stage_normalize(item) -> None:
@@ -77,11 +79,21 @@ async def stage_normalize(item) -> None:
 
 async def stage_understand(item) -> None:
     """The AI read of the content: the Brief."""
+    metadata = item.fetch_metadata or {}
+    title = item.title or ""
+    if fetcher.url_only(title) and metadata.get("title"):
+        title = metadata["title"]
+    provenance = metadata.get("input_provenance")
     with AI_LIMIT:
         # Called through the module so a test can replace the extraction call.
         brief = await extractor.extract_brief(
             item.normalized_text or item.raw_text or "",
-            item.title or "", url=item.url or "")
+            title, url=item.url or "",
+            **({"input_provenance": "caption"} if provenance == "caption" else {}))
+    if provenance == "caption" and fetcher.video_source(item.url or ""):
+        brief.overview = brief.overview[:180] + " The video's spoken content was unavailable; only its caption or metadata was available."
+        brief.highlights = []
+        brief.timestamps = []
     # The whole brief goes into fetch_metadata. It is JSONB and free-form, so a
     # new content type or a new brief field needs no DB migration (Phase 9).
     item.fetch_metadata = dict(item.fetch_metadata or {},
@@ -104,13 +116,13 @@ async def stage_brief(item) -> None:
     memory = memory_from_brief(brief)
     item.summary = memory.summary
     item.key_points = memory.key_points
-    item.category = memory.category
+    item.category = "video" if fetcher.video_source(item.url or "") else memory.category
     # Phase 12: the lexical document, so a word held only in structured_data is
     # still findable. Built here because BRIEF is where the brief becomes final.
     item.search_text = search_document(
         item.title_clean or item.title or "", brief.overview,
         brief.highlights, brief.entities, brief.topics,
-        brief.structured_data)
+        brief.structured_data) + " " + (item.url or "")
 
 
 def search_document(title_clean: str, overview: str, highlights: list,

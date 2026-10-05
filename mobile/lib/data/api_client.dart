@@ -78,9 +78,12 @@ class ApiClient {
     return SearchResponse.fromJson(data);
   }
 
-  Future<ItemPage> listItems({int limit = 20, String? cursor}) async {
+  Future<ItemPage> listItems({int limit = 20, String? cursor, String? category}) async {
     final params = <String, String>{'limit': '$limit'};
     if (cursor != null && cursor.isNotEmpty) params['cursor'] = cursor;
+    if (category != null && category.isNotEmpty && category != 'All') {
+      params['category'] = category.toLowerCase();
+    }
     final data = await _get('/api/v1/items', params);
     return ItemPage.fromJson(data);
   }

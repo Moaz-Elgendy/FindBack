@@ -131,14 +131,9 @@ def classify(url: str = "", text: str = "", title: str = "") -> Profile:
     """Pick the profile from what the content looks like, before calling a model.
 
     Deliberately local and cheap, so the choice is auditable and costs nothing.
-    A YouTube link is treated as a list: a user saving a video usually wants the
-    things it enumerates, which is the "5 skills" case from the product rules.
+    Video origin does not determine the extraction profile.
     """
-    lowered_url = (url or "").lower()
     haystack = f"{title}\n{text[:4000]}".lower()
-
-    if "youtube.com" in lowered_url or "youtu.be" in lowered_url:
-        return LIST
 
     if _COUNT_TITLE.match(title or ""):
         return LIST
@@ -146,6 +141,8 @@ def classify(url: str = "", text: str = "", title: str = "") -> Profile:
     for name, markers in _SIGNALS:
         if any(marker in haystack for marker in markers):
             return PROFILES[name]
+    if len(re.findall(r"(?:^|\s)\d+[.)]\s+", text or "")) >= 2:
+        return LIST
     return GENERAL
 
 

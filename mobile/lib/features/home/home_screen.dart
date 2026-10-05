@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' hide SearchController;
 import '../../app_services.dart';
 import '../../data/api_client.dart';
 import '../../models/search_result.dart';
+import '../../models/categories.dart';
 import '../../services/capture_service.dart';
 import 'capture_sheet.dart';
 import 'detail_page.dart';
@@ -18,16 +19,6 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.services});
 
   final AppServices services;
-
-  static const List<String> categories = <String>[
-    'All',
-    'article',
-    'recipe',
-    'video',
-    'product',
-    'tool',
-    'other',
-  ];
 
   static const int recentLimit = 20;
 
@@ -42,6 +33,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<SearchResult> _recent = const <SearchResult>[];
   bool _loadingRecent = true;
   String? _recentError;
+  List<String> _categories = const ['All'];
+  String _recentCategory = 'All';
+  int _recentRequestId = 0;
 
   @override
   void initState() {
@@ -51,9 +45,18 @@ class _HomeScreenState extends State<HomeScreen> {
       local: widget.services.db.localSearch,
     )..addListener(() {
         // The offline banner and the queue badge both live in the app bar.
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {});
+          if (!_search.hasQuery && _recentCategory != _search.category) _loadRecent();
+        }
       });
+    _loadCategories();
     _loadRecent();
+  }
+
+  Future<void> _loadCategories() async {
+    final categories = await loadCategories();
+    if (mounted) setState(() => _categories = ['All', ...categories]);
   }
 
   @override
@@ -64,17 +67,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadRecent() async {
+    final requestId = ++_recentRequestId;
+    _recentCategory = _search.category;
     setState(() => _loadingRecent = true);
     try {
-      final List<SearchResult> recent = await widget.services.items.recent(limit: HomeScreen.recentLimit);
-      if (!mounted) return;
+      final List<SearchResult> recent = await widget.services.items.recent(
+        limit: HomeScreen.recentLimit, category: _recentCategory);
+      if (!mounted || requestId != _recentRequestId) return;
       setState(() {
         _recent = recent;
         _loadingRecent = false;
         _recentError = null;
       });
     } on ApiException catch (error) {
-      if (!mounted) return;
+      if (!mounted || requestId != _recentRequestId) return;
       setState(() {
         _loadingRecent = false;
         _recentError = error.message;
@@ -174,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 children: <Widget>[
-                  for (final String category in HomeScreen.categories)
+                  for (final String category in _categories)
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: FilterChip(

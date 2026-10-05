@@ -5,12 +5,16 @@ from app.auth import get_current_user
 from app.models import Item
 from app.schemas import ItemDetail
 from app.services import retention
+from app.categories import Category
 
 router = APIRouter(prefix="/api/v1/items", tags=["items"])
 
 @router.get("", response_model=dict)
-def list_items(limit: int = 20, cursor: str = None, db: Session = Depends(get_db), user = Depends(get_current_user)):
+def list_items(limit: int = 20, cursor: str = None, category: Category = None,
+               db: Session = Depends(get_db), user = Depends(get_current_user)):
     q = db.query(Item).filter(Item.user_id == user.id)
+    if category is not None:
+        q = q.filter(Item.category == category.value)
     if cursor:
         cursor_item = db.query(Item).filter(Item.id == cursor, Item.user_id == user.id).first()
         if cursor_item:

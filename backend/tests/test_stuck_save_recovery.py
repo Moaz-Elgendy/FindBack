@@ -302,3 +302,140 @@ def test_a_save_that_keeps_failing_eventually_parks_as_failed(sessions, user,
     assert job["status"] == "FAILED", "the cap must stop the retry loop"
     assert job["attempt_count"] == 3, "attempts stop at the cap"
     assert item_status == "failed"
+
+
+@pytest.mark.parametrize("age_minutes,worker_claimed,expected", [
+    (10, False, True), (1, False, False), (10, True, False),
+])
+def test_dispatch_recovers_only_stale_unclaimed_publications(
+        sessions, user, queue, age_minutes, worker_claimed, expected):
+    """Recover a lost message while preserving recent sends and worker locks."""
+    from app.services.outbox import dispatch_once
+
+    with sessions() as s:
+        item_id = _save(s, user)
+        s.execute(text(
+            "UPDATE processing_jobs SET updated_at = now() - "
+            "make_interval(mins => :age), "
+            "locked_at = CASE WHEN :claimed THEN now() ELSE NULL END, "
+            "claimed_at = CASE WHEN :claimed THEN now() ELSE NULL END"),
+            {"age": age_minutes, "claimed": worker_claimed})
+        s.commit()
+        published = []
+        stats = dispatch_once(s, publisher=published.append)
+
+    assert published == ([item_id] if expected else [])
+    assert stats["published"] == int(expected)
+    assert _state(sessions, item_id)[1]["status"] == "PROCESSING"
+    with sessions() as s:
+        assert dispatch_once(s, publisher=published.append)["published"] == 0
+
+
+def _age_publication(session):
+    session.execute(text("UPDATE processing_jobs SET updated_at = now() - "
+                         "interval '10 minutes', available_at = now()"))
+    session.commit()
+
+
+def test_unclaimed_republishing_is_bounded(sessions, user, queue, monkeypatch):
+    from app.services.outbox import dispatch_once
+
+    monkeypatch.setenv("JOB_MAX_ATTEMPTS", "3")
+    with sessions() as s:
+        item_id = _save(s, user)
+        published = []
+        for attempt in range(1, 4):
+            _age_publication(s)
+            dispatch_once(s, publisher=published.append)
+            job = s.execute(text("SELECT status, attempt_count, last_error, "
+                                 "available_at > now() AS backed_off "
+                                 "FROM processing_jobs")).mappings().one()
+            assert job["attempt_count"] == attempt
+            assert job["status"] == ("FAILED" if attempt == 3 else "PROCESSING")
+            if attempt < 3:
+                assert job["backed_off"]
+        assert published == [item_id] * 3
+        assert job["last_error"] == "never claimed by a worker after 3 republishes"
+        _age_publication(s)
+        assert dispatch_once(s, publisher=published.append)["claimed"] == 0
+
+
+def test_empty_stale_publication_waits_before_rechecking(sessions, user, queue):
+    from app.services.outbox import dispatch_once
+
+    with sessions() as s:
+        _save(s, user)
+        s.execute(text("UPDATE items SET status = 'ready'"))
+        _age_publication(s)
+        published = []
+        assert dispatch_once(s, publisher=published.append)["skipped"] == 1
+        assert dispatch_once(s, publisher=published.append)["claimed"] == 0
+        assert published == []
+        _age_publication(s)
+        assert dispatch_once(s, publisher=published.append)["skipped"] == 1
+
+
+def test_permanently_failing_publisher_is_bounded(sessions, user, queue, monkeypatch):
+    from app.services.outbox import dispatch_once
+
+    monkeypatch.setenv("JOB_MAX_ATTEMPTS", "3")
+    calls = []
+
+    def fail(item_id):
+        calls.append(item_id)
+        raise RuntimeError("broker unavailable")
+
+    with sessions() as s:
+        item_id = _save(s, user)
+        s.execute(text("UPDATE processing_jobs SET status = 'PENDING'"))
+        for attempt in range(1, 4):
+            _age_publication(s)
+            assert dispatch_once(s, publisher=fail)["failed"] == 1
+            job = s.execute(text("SELECT status, attempt_count, last_error, "
+                                 "locked_at, available_at > now() AS backed_off "
+                                 "FROM processing_jobs")).mappings().one()
+            assert job["attempt_count"] == attempt
+            assert job["status"] == ("FAILED" if attempt == 3 else "PENDING")
+            assert job["locked_at"] is None
+            if attempt < 3:
+                assert job["backed_off"]
+        assert "broker unavailable" in job["last_error"]
+        _age_publication(s)
+        assert dispatch_once(s, publisher=fail)["claimed"] == 0
+        assert calls == [item_id] * 3
+
+
+@pytest.mark.parametrize("status_code,expected", [(401, "READY"), (503, "FAILED")])
+def test_fetch_outcomes_finish_or_retry_bounded(sessions, user, queue, monkeypatch, status_code, expected):
+    import httpx
+    from app.services import fetcher, storage
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "test")
+    monkeypatch.setenv("JOB_MAX_ATTEMPTS", "2")
+    client = httpx.AsyncClient
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", lambda **kw: client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(status_code)), **kw))
+    monkeypatch.setattr(storage, "store_raw_snapshot", lambda *args: None)
+    with sessions() as session:
+        item_id = _save(session, user)
+        session.execute(text("UPDATE items SET raw_preview = NULL WHERE id = :i"), {"i": item_id})
+        session.commit()
+    _run_worker(sessions, item_id)
+    if status_code == 503:
+        state, job = _state(sessions, item_id)
+        assert job["status"] == "PENDING"
+        assert job["attempt_count"] == 1
+        _dispatch(sessions)
+        _run_worker(sessions, item_id)
+    state, job = _state(sessions, item_id)
+    assert job["status"] == expected
+    if status_code == 401:
+        assert state == "ready"
+        assert job["attempt_count"] == 1  # completion counts the successful attempt
+        with sessions() as session:
+            row = session.execute(text("SELECT summary, search_text, fetch_metadata FROM items WHERE id=:i"), {"i": item_id}).mappings().one()
+        assert "could not be read" in row["summary"]
+        assert URL in row["search_text"]
+        assert row["fetch_metadata"]["input_provenance"] == "none"
+    else:
+        assert job["attempt_count"] == 2
+        assert _dispatch(sessions)[1] == []

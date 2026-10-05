@@ -99,8 +99,8 @@ into the app.
   shared asset another user still holds.
 - **Auth** — Supabase-compatible JWT verification, plus a local dev identity
   (`DEV_AUTH_ENABLED`) for development.
-- **Schema management** — Alembic migrations `0001`–`0011`, applied on API
-  startup through `SCHEMA_BOOTSTRAP` (or manually).
+- **Schema management** — Alembic migrations `0001`–`0011`. The Compose API
+  sets `SCHEMA_BOOTSTRAP=none`; development migrations are manual.
 
 ---
 
@@ -205,6 +205,29 @@ Full prerequisites, the three supported setups (fully local, Supabase, AWS),
 every configuration variable, a Docker-free backend setup, release builds, the
 end-to-end verification walkthrough and a troubleshooting table are in
 **[SETUP.md](SETUP.md)**.
+
+---
+
+## Manual development migrations
+
+The Compose API skips schema bootstrap on startup, including Alembic checks.
+A new database needs migrations before API requests can use it. Run the following
+from the repository root in Bash only when you intend to migrate the Compose
+Postgres database `findback`. It requires an explicit confirmation; cancelling or
+entering anything else leaves the database untouched.
+
+```bash
+read -r -p 'Type MIGRATE findback to migrate the dev database: ' migration_confirmation
+if [ "$migration_confirmation" = 'MIGRATE findback' ]; then
+  docker compose exec -T api alembic upgrade head
+else
+  echo 'Migration cancelled.'
+fi
+```
+
+This runs inside the API container against the Compose Postgres service, rather
+than a PostgreSQL instance on the host. Disposable test databases continue to be
+migrated by their fixtures after the test-database name guard passes.
 
 ---
 

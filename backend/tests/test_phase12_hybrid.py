@@ -308,6 +308,105 @@ def _search(db, uid, query, **kwargs):
         return asyncio.run(search.hybrid_search(s, uid, query, limit=10, **kwargs))
 
 
+@pytest.mark.parametrize("path", ["chunk_vector", "chunk_lexical", "note"])
+def test_category_filters_each_candidate_path_before_limit(db, sessions, path):
+    import asyncio
+    from app.services import search
+
+    uid, ids = _seed(db, sessions)
+    with sessions() as s:
+        if path == "chunk_vector":
+            rows = asyncio.run(search.chunk_search(
+                s, uid, "headphones", limit=1, category="recipe"))
+        elif path == "chunk_lexical":
+            s.execute(text("UPDATE chunks SET chunk_text = 'needle'"))
+            s.commit()
+            rows = search.chunk_lexical_search(
+                s, uid, "needle", ["needle"], limit=1, category="recipe")
+        else:
+            s.execute(text("UPDATE user_memories SET user_note = 'needle'"))
+            s.commit()
+            rows = search.note_search(s, uid, ["needle"], limit=1, category="recipe")
+    assert [str(row[0]) for row in rows] == [ids["chicken_recipe"]]
+    assert all(row[4] == "recipe" for row in rows)
+
+
+def test_search_endpoint_excludes_other_categories(db, sessions):
+    import asyncio
+    import httpx
+    from app.main import app
+    from app.database import get_db
+    from app.auth import get_current_user
+    from types import SimpleNamespace
+
+    uid, ids = _seed(db, sessions)
+    def get_session():
+        with sessions() as s:
+            yield s
+    previous = dict(app.dependency_overrides)
+    app.dependency_overrides[get_db] = get_session
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uid)
+    try:
+        async def request():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                return await client.get("/api/v1/search", params={
+                    "q": "headphones", "category": "recipe"})
+        response = asyncio.run(request())
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert [row["id"] for row in rows] == [ids["chicken_recipe"]]
+    assert all(row["category"] == "recipe" for row in rows)
+
+
+def test_recent_category_filter_and_pagination(db, sessions):
+    import asyncio
+    import httpx
+    from types import SimpleNamespace
+    from app.main import app
+    from app.database import get_db
+    from app.auth import get_current_user
+
+    uid, ids = _seed(db, sessions)
+    with sessions() as s:
+        s.execute(text("UPDATE items SET category='recipe' WHERE id=:id"),
+                  {"id": ids["headphones"]})
+        s.commit()
+    def get_session():
+        with sessions() as s:
+            yield s
+    previous = dict(app.dependency_overrides)
+    app.dependency_overrides[get_db] = get_session
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uid)
+    async def requests():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://test") as client:
+            first = await client.get("/api/v1/items", params={"category":"recipe", "limit":1})
+            assert first.status_code == 200
+            page = first.json()
+            assert page["items"][0]["category"] == "recipe"
+            assert page["next_cursor"]
+            second = await client.get("/api/v1/items", params={
+                "category":"recipe", "limit":1, "cursor":page["next_cursor"]})
+            assert second.status_code == 200
+            assert second.json()["items"][0]["category"] == "recipe"
+            assert second.json()["next_cursor"] is None
+            assert {page["items"][0]["id"], second.json()["items"][0]["id"]} == {
+                ids["chicken_recipe"], ids["headphones"]}
+            invalid = await client.get("/api/v1/items", params={"category":"unknown"})
+            assert invalid.status_code == 422
+            unfiltered = await client.get("/api/v1/items")
+            assert len(unfiltered.json()["items"]) == 5
+    try:
+        asyncio.run(requests())
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
+
+
 @pytest.mark.parametrize("query,expected_key,terms", QUERIES,
                          ids=[q for q, _, _ in QUERIES])
 def test_the_query_finds_the_memory_it_names(db, sessions, query,

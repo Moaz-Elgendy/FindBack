@@ -239,12 +239,12 @@ def lexical_search(db: Session, user_id, query: str, terms: list[str],
 
 
 def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
-                         limit: int = 50):
+                         limit: int = 50, category: str | None = None):
     """Full-text candidates from inside the content, with the matched chunk."""
     if not terms:
         return []
     try:
-        return db.execute(text("""
+        return db.execute(text(f"""
             SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
                    i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
                    ts_rank(c.tsv, to_tsquery('english', :q)) AS rank,
@@ -253,10 +253,11 @@ def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
             JOIN items i ON i.id = c.item_id
             WHERE i.user_id = :uid AND i.status = 'ready'
               AND c.tsv @@ to_tsquery('english', :q)
+              {_cat_filter(category, 'i.')}
             ORDER BY rank DESC
             LIMIT :lim
         """), {"uid": str(user_id), "q": or_tsquery(terms),
-               "lim": limit}).fetchall()
+               "lim": limit, "cat": category}).fetchall()
     except Exception as e:
         log.warning("[search] chunk lexical failed: %s", e)
         return []
@@ -269,7 +270,8 @@ _NOTE_DOCUMENT = ("coalesce(um.user_note, '') || ' ' || "
                   "coalesce(um.user_intent, '')")
 
 
-def note_search(db: Session, user_id, terms: list[str], limit: int = 50):
+def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
+                category: str | None = None):
     """Candidates from the user's own note and intent (Phase 12 + 13).
 
     A note is how the user remembers a thing -- "the one I saved to try on the
@@ -300,10 +302,11 @@ def note_search(db: Session, user_id, terms: list[str], limit: int = 50):
             WHERE um.user_id = :uid
               AND to_tsvector('english', {_NOTE_DOCUMENT})
                   @@ to_tsquery('english', :q)
+              {_cat_filter(category, 'i.')}
             ORDER BY rank DESC
             LIMIT :lim
         """), {"uid": str(user_id), "q": or_tsquery(terms),
-               "lim": limit}).fetchall()
+               "lim": limit, "cat": category}).fetchall()
     except Exception as e:
         log.warning("[search] note search failed: %s", e)
         return []
@@ -357,7 +360,7 @@ def _dedupe_rows(rows) -> list:
     return kept
 
 async def chunk_search(db: Session, user_id, query: str, limit: int = 50,
-                       q_emb=None):
+                       q_emb=None, category: str | None = None):
     """Find the chunks a query matches, not just the memories it matches.
 
     The item's own embedding is built from its title and brief, so a query
@@ -381,7 +384,7 @@ async def chunk_search(db: Session, user_id, query: str, limit: int = 50,
         return []
     vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
     try:
-        return db.execute(text("""
+        return db.execute(text(f"""
             SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
                    i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
                    1 - (c.embedding <=> CAST(:qvec AS vector)) AS cosine,
@@ -389,9 +392,11 @@ async def chunk_search(db: Session, user_id, query: str, limit: int = 50,
             FROM chunks c
             JOIN items i ON i.id = c.item_id
             WHERE i.user_id = :uid AND i.status = 'ready'
+              {_cat_filter(category, 'i.')}
             ORDER BY c.embedding <=> CAST(:qvec AS vector)
             LIMIT :lim
-        """), {"uid": str(user_id), "qvec": vec_str, "lim": limit}).fetchall()
+        """), {"uid": str(user_id), "qvec": vec_str, "lim": limit,
+               "cat": category}).fetchall()
     except Exception as e:  # a vector outage must not take search down
         log.warning("[search] chunk search failed: %s", e)
         return []
@@ -475,10 +480,10 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
                             meta)
     vec_rows = _filter_rows(vector_search(db, user_id, q_emb, category), meta)
     chunk_vec_rows = _filter_rows(
-        await chunk_search(db, user_id, query, q_emb=q_emb), meta)
+        await chunk_search(db, user_id, query, q_emb=q_emb, category=category), meta)
     chunk_lex_rows = _filter_rows(
-        chunk_lexical_search(db, user_id, query, terms), meta)
-    note_rows = _filter_rows(note_search(db, user_id, terms), meta)
+        chunk_lexical_search(db, user_id, query, terms, category=category), meta)
+    note_rows = _filter_rows(note_search(db, user_id, terms, category=category), meta)
 
     # The whole searchable document per item, so the reason can be checked
     # against everything that was actually indexed -- structured_data and
@@ -546,5 +551,4 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
             break
     took = int((time.time() - t0) * 1000)
     return results, took
-
 

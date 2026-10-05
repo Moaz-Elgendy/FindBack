@@ -10,12 +10,14 @@ Prompts per content type are Phase 10; this phase only fixes the schema.
 from __future__ import annotations
 
 import logging
+import re
 
 from pydantic import ValidationError
 
 from app import env
+from app.categories import CATEGORIES
 from app.schemas import Brief, ExtractedMemory
-from app.services import ai, privacy, profiles
+from app.services import ai, privacy, profiles, fetcher
 from app.services.ai_gateway import get_gateway
 
 log = logging.getLogger("findback.extractor")
@@ -44,7 +46,6 @@ FALLBACK = ExtractedMemory(
     tags=["saved", "pending", "memory"], title_clean="Saved Memory",
 )
 
-CATEGORIES = ("recipe", "tutorial", "tool", "product", "video", "article", "other")
 INTENTS = ("learn", "cook", "buy", "watch", "read", "other")
 # Providers count tokens, not characters, but a cap keeps a huge page from
 # becoming an oversized bill and keeps prompts inside small model contexts.
@@ -55,7 +56,7 @@ MAX_HIGHLIGHTS = 25
 
 
 async def extract_brief(raw_text: str, url_title: str = "",
-                       url: str = "") -> Brief:
+                       url: str = "", input_provenance: str = "page") -> Brief:
     """Pick a profile, ask the model for a brief in that shape, validate it.
 
     Never raises: any provider failure falls back to the offline heuristic.
@@ -63,24 +64,27 @@ async def extract_brief(raw_text: str, url_title: str = "",
     is logged with its reason and the item still reaches status=ready - with
     heuristic fields the user can see and re-process later.
     """
-    return await extract_brief_through(get_gateway(), raw_text, url_title, url)
+    return await extract_brief_through(get_gateway(), raw_text, url_title, url, input_provenance)
 
 
 async def extract_brief_through(gateway, raw_text: str, url_title: str = "",
-                                url: str = "") -> Brief:
+                                url: str = "", input_provenance: str = "page") -> Brief:
     """The extraction policy, written against the gateway rather than a provider.
 
     Everything provider-specific was decided before this function was entered:
     which endpoint, which key, which model. Here we only decide what to ask for.
     """
     profile = profiles.classify(url=url, text=raw_text or "", title=url_title)
-    if not raw_text or not raw_text.strip():
+    if not raw_text or not raw_text.strip() or fetcher.url_only(raw_text):
         # Nothing to ask about; an empty prompt wastes a call, and some
         # embeddings endpoints reject empty input outright with a 400.
         return _heuristic_brief(raw_text or "", url_title, profile)
     try:
         user_content = f"URL title hint: {url_title}\n\nContent (truncated):\n{raw_text[:MAX_CONTENT_CHARS]}"
-        data = await gateway.generate_json(system_prompt(profile), user_content,
+        prompt = system_prompt(profile)
+        if input_provenance == "caption":
+            prompt += "\nOnly a video caption, description or title/author metadata is available. Summarize only this supplied text. The video spoken content was unavailable. Do not infer spoken takeaways, actions or timestamps. Leave highlights and timestamps empty."
+        data = await gateway.generate_json(prompt, user_content,
                                            temperature=0.1)
     except ai.AIConfigError as exc:
         log.info("[extractor] no provider configured, using heuristic: %s", exc)
@@ -310,8 +314,9 @@ def _category_from_text(text: str, hint: str) -> str:
 
 def _heuristic_brief(text: str, hint: str, profile=None) -> Brief:
     """The offline brief when no provider answers. Keeps ingest working."""
-    overview = (text[:200].split(".")[0][:180] + ".") if text else \
-        "Saved for later."
+    if not text.strip() or fetcher.url_only(text):
+        return Brief(title=hint or "Saved link", overview="This link could not be read. Open the original to view it.")
+    overview = re.split(r"(?<=[.!?])\s+", text[:200], maxsplit=1)[0][:180]
     # Without a model there is no profile signal beyond the words, so the text
     # guess stands in. The profile's shape is still honoured.
     if profile is None:

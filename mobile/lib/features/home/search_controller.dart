@@ -7,7 +7,7 @@ import '../../models/search_result.dart';
 import '../../services/sync_service.dart' show ConnectivityProbe, systemIsOnline;
 
 typedef RemoteSearch = Future<SearchResponse> Function(String query, String? category);
-typedef LocalSearch = Future<List<SearchResult>> Function(String query);
+typedef LocalSearch = Future<List<SearchResult>> Function(String query, {String? category});
 
 /// Debounced search with an offline path, ported from the RN `useSearch` hook.
 ///
@@ -86,6 +86,7 @@ class SearchController extends ChangeNotifier {
       return;
     }
 
+    final selectedCategory = _category;
     final id = ++_requestId;
     _loading = true;
     notifyListeners();
@@ -94,20 +95,22 @@ class SearchController extends ChangeNotifier {
     _offline = !online;
     try {
       if (_offline) {
-        _results = await _local(text);
+        final rows = await _local(text, category: selectedCategory);
+        if (id != _requestId) return;
+        _results = rows;
         _tookMs = null;
       } else {
-        final response = await _remote(text, _category);
+        final response = await _remote(text, selectedCategory);
         if (id != _requestId) return;
         _results = response.results;
         _tookMs = response.tookMs;
       }
     } on ApiException catch (error) {
       debugPrint('[search] remote failed: $error');
-      await _fallback(text, id);
+      await _fallback(text, id, selectedCategory);
     } catch (error) {
       debugPrint('[search] failed: $error');
-      await _fallback(text, id);
+      await _fallback(text, id, selectedCategory);
     } finally {
       if (id == _requestId) {
         _loading = false;
@@ -116,9 +119,9 @@ class SearchController extends ChangeNotifier {
     }
   }
 
-  Future<void> _fallback(String text, int id) async {
+  Future<void> _fallback(String text, int id, String category) async {
     try {
-      final rows = await _local(text);
+      final rows = await _local(text, category: category);
       if (id != _requestId) return;
       _results = rows
           .map((SearchResult row) => row.copyWith(matchReason: 'Offline fallback', score: 0.3))

@@ -6,8 +6,8 @@ import 'sync_service.dart' show ConnectivityProbe, systemIsOnline;
 
 typedef RemoteItemFetch = Future<ItemDetail> Function(String id);
 typedef LocalItemFetch = Future<ItemDetail?> Function(String id);
-typedef RemoteRecentFetch = Future<ItemPage> Function(int limit);
-typedef LocalRecentFetch = Future<List<SearchResult>> Function(int limit);
+typedef RemoteRecentFetch = Future<ItemPage> Function(int limit, {String? category, String? cursor});
+typedef LocalRecentFetch = Future<List<SearchResult>> Function(int limit, {String? category});
 typedef ItemCache = Future<void> Function(List<ItemDetail> items);
 typedef RemoteDelete = Future<void> Function(String id);
 typedef LocalDelete = Future<int> Function(String id);
@@ -59,8 +59,10 @@ class ItemsService {
       ItemsService(
         remoteItem: api.getItem,
         localItem: db.localItem,
-        remoteRecent: (int limit) => api.listItems(limit: limit),
-        localRecent: (int limit) => db.recentLocalItems(limit: limit),
+        remoteRecent: (int limit, {String? category, String? cursor}) =>
+            api.listItems(limit: limit, category: category, cursor: cursor),
+        localRecent: (int limit, {String? category}) =>
+            db.recentLocalItems(limit: limit, category: category),
         cache: db.upsertRemoteItems,
         remoteDelete: api.deleteItem,
         localDelete: db.deleteItem,
@@ -99,10 +101,10 @@ class ItemsService {
   }
 
   /// The library list, always in newest-first order.
-  Future<List<SearchResult>> recent({int limit = 10}) async {
+  Future<List<SearchResult>> recent({int limit = 10, String? category, String? cursor}) async {
     if (await _isOnline()) {
       try {
-        final ItemPage page = await _remoteRecent(limit);
+        final ItemPage page = await _remoteRecent(limit, category: category, cursor: cursor);
         await _cache(page.items);
         return page.items
             .map((ItemDetail item) => SearchResult.fromItem(item))
@@ -111,7 +113,7 @@ class ItemsService {
         if (!error.isRetryableOffline) rethrow;
       }
     }
-    return _localRecent(limit);
+    return _localRecent(limit, category: category);
   }
 
   /// Deletes locally no matter what, so the item disappears from the device the

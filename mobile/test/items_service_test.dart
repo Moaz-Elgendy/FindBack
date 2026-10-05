@@ -17,7 +17,7 @@ class _Harness {
   ItemsService service({
     bool online = true,
     Future<ItemDetail> Function(String id)? remoteItem,
-    Future<ItemPage> Function(int limit)? remoteRecent,
+    RemoteRecentFetch? remoteRecent,
     Future<void> Function(String id)? remoteDelete,
     List<SearchResult>? localRecent,
   }) =>
@@ -29,11 +29,11 @@ class _Harness {
             },
         localItem: (String id) async => local[id],
         remoteRecent: remoteRecent ??
-            (int limit) async {
+            (int limit, {String? category, String? cursor}) async {
               remoteCalls++;
               return ItemPage(items: <ItemDetail>[_item('r1')]);
             },
-        localRecent: (int limit) async =>
+        localRecent: (int limit, {String? category}) async =>
             localRecent ?? local.values.map(SearchResult.fromItem).toList(),
         cache: (List<ItemDetail> items) async {
           for (final ItemDetail item in items) {
@@ -90,7 +90,7 @@ void main() {
     final _Harness h = _Harness()
       ..local['local-1'] = _item('local-1');
     final List<SearchResult> rows =
-        await h.service(online: false, remoteRecent: (int limit) async => throw AssertionError()).recent();
+        await h.service(online: false, remoteRecent: (int limit, {String? category, String? cursor}) async => throw AssertionError()).recent();
     expect(rows.single.title, 'Server local-1');
     expect(h.remoteCalls, 0);
   });

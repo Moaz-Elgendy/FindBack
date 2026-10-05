@@ -225,12 +225,14 @@ class LocalDb {
       );
 
   /// Substring search over the cached mirror — the offline answer set.
-  Future<List<SearchResult>> localSearch(String query, {int limit = 20}) async {
+  Future<List<SearchResult>> localSearch(String query, {int limit = 20, String? category}) async {
     final like = '%$query%';
+    final filtered = category != null && category != 'All' && category.isNotEmpty;
     final rows = await db.query(
       'items',
-      where: 'title LIKE ? OR title_clean LIKE ? OR summary LIKE ? OR tags LIKE ?',
-      whereArgs: <Object?>[like, like, like, like],
+      where: '(title LIKE ? OR title_clean LIKE ? OR summary LIKE ? OR tags LIKE ?)'
+          '${filtered ? ' AND category = ?' : ''}',
+      whereArgs: <Object?>[like, like, like, like, if (filtered) category],
       orderBy: 'created_at DESC',
       limit: limit,
     );
@@ -246,8 +248,12 @@ class LocalDb {
     });
   }
 
-  Future<List<SearchResult>> recentLocalItems({int limit = 10}) async {
-    final rows = await db.query('items', orderBy: 'created_at DESC', limit: limit);
+  Future<List<SearchResult>> recentLocalItems({int limit = 10, String? category}) async {
+    final filtered = category != null && category != 'All' && category.isNotEmpty;
+    final rows = await db.query('items',
+        where: filtered ? 'category = ?' : null,
+        whereArgs: filtered ? <Object?>[category] : null,
+        orderBy: 'created_at DESC', limit: limit);
     return rows.map(SearchResult.fromLocalRow).toList(growable: false);
   }
 
