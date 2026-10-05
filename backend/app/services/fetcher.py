@@ -29,6 +29,34 @@ def url_only(text: str) -> bool:
     return bool(re.fullmatch(r'(?:Link:\s*)?https?://\S+\s*', text.strip(), re.I))
 
 
+def clean_source_text(text: str, *, title: bool = False) -> str:
+    """Keep source prose while removing social UI and reader markup."""
+    social_wrapper = bool(re.search(r'^URL Source:\s*https?://(?:[^/]+\.)?facebook\.com/|original audio|see more on facebook|email or phone number', text or '', re.I | re.M))
+    text = re.sub(r'!\[[^]]*\]\([^)]*\)|!\[[^]]*\]\[[^]]*\]', '', text or '')
+    text = re.sub(r'\[([^]]+)\]\([^)]*\)', r'\1', text)
+    text = re.sub(r'(?im)^\s*\[[^]]+\]:\s*https?://\S+.*$', '', text)
+    text = text.split('Markdown Content:', 1)[-1]
+    controls = r'log\s?in|sign\s?(?:in|up)|forgot (?:password|account)\??|privacy|terms|log in to .+|see more(?: on Facebook)?|see less|like|comment|share|email or phone number|password|create new account|(?:.+\s*[·|–-]\s*)?original audio(?:\s*[·|–-].*)?'
+    counts = r'(?:[\d,.]+\s*[KMB]?\s*(?:reactions?|likes?|comments?|shares?|views?))(?:\s*[·|]\s*[\d,.]+\s*[KMB]?\s*(?:reactions?|likes?|comments?|shares?|views?))*'
+    lines = []
+    for line in text.splitlines():
+        plain = re.sub(r'^#{1,6}\s+', '', line.strip(' *\t'))
+        if re.fullmatch(controls, plain, re.I) or re.fullmatch(counts, plain, re.I):
+            continue
+        if social_wrapper and (plain.lower() == 'public' or re.fullmatch(r'[\d,.]+\s*[KMB]?', plain, re.I)):
+            continue
+        if plain.startswith(('Title:', 'URL Source:', 'Image ', 'Published Time:')):
+            continue
+        plain = re.sub(r'(?i)^' + counts + r'\s*[|·]\s*', '', plain)
+        if title:
+            if plain.lower() in ('facebook', 'instagram', 'tiktok', 'youtube', 'log in', 'login'):
+                continue
+            plain = re.sub(r'(?i)\s*[|–-]\s*(?:Facebook|Instagram|TikTok|YouTube)\s*$', '', plain)
+        if plain:
+            lines.append(plain)
+    return '\n'.join(lines).strip()
+
+
 def usable_text(text: str, video: bool = False) -> str:
     """Reject error wrappers; for social pages keep prose, not navigation."""
     if not text.strip() or url_only(text):
@@ -48,7 +76,7 @@ def usable_text(text: str, video: bool = False) -> str:
         if re.fullmatch(controls, plain, re.I) or plain.startswith(('Title:', 'URL Source:')):
             continue
         lines.append(line)
-    cleaned = '\n'.join(lines).strip()
+    cleaned = clean_source_text('\n'.join(lines)) if video else '\n'.join(lines).strip()
     if not cleaned or url_only(cleaned):
         return ''
     if video or re.search(r'log\s?in|sign in', text, re.I):
@@ -94,7 +122,7 @@ async def fetch_content(url: str, preview: str = '') -> dict:
                     title, thumbnail = (match.group(1).strip() if match else ''), ''
                 text = usable_text(text, bool(source))
                 if text:
-                    return {'text': text[:12000], 'title': (limited or {}).get('title') or title, 'thumbnail': thumbnail or '', 'source_type': source or 'article', 'input_provenance': 'caption' if source else 'page'}
+                    return {'text': text[:12000], 'title': clean_source_text((limited or {}).get('title') or title, title=True) if source else ((limited or {}).get('title') or title), 'thumbnail': thumbnail or '', 'source_type': source or 'article', 'input_provenance': 'caption' if source else 'page'}
         except (httpx.TimeoutException, httpx.TransportError, TransientFetchError):
             transient = True
         except (ValueError, TypeError):

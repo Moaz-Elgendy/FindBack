@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import subprocess
 import tempfile
 import time
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app import env
 from app.services import observability
+from app.services.fetcher import clean_source_text
 
 log = logging.getLogger('findback.media')
 
@@ -45,6 +47,11 @@ class EvidenceBundle(BaseModel):
     evidence_level: str = 'metadata_only'
     fetch_errors: list[str] = []
     language: str | None = None
+
+    @field_validator('title', 'caption', mode='before')
+    @classmethod
+    def clean_source(cls, value, info):
+        return clean_source_text(value or '', title=info.field_name == 'title')
 
     def classify(self) -> str:
         words = ' '.join(s.text for s in self.transcript if s.end >= s.start).split()
@@ -79,9 +86,19 @@ def initial_bundle(url: str, fetched: dict) -> EvidenceBundle:
     bundle = EvidenceBundle(source_platform=platform, url=url, source_id=fetched.get('source_id') or source_id,
                             title=fetched.get('title') or '', author=fetched.get('author') or '',
                             duration=fetched.get('duration'), transcript=fetched.get('transcript') or [],
-                            caption=fetched.get('caption', (fetched.get('text') or '') if provenance in ('caption', 'page') else ''))
+                            caption=fetched.get('caption', (fetched.get('text') or '') if provenance in ('caption', 'page') else '') or '')
     bundle.classify()
     return bundle
+
+
+def transcription_prompt(bundle: EvidenceBundle) -> str | None:
+    # Prefer explicit source keywords, then visible names, over a long caption.
+    caption = clean_source_text(bundle.caption)
+    keywords = re.search(r'\[keywords:\s*([^]]+)\]', caption, re.I)
+    source = keywords.group(1) if keywords else clean_source_text(bundle.title, title=True) + '\n' + caption
+    visible = re.findall(r'\b[A-Z][A-Z-]{2,}(?:[ \t]+[A-Z][A-Z-]{2,})*\b', bundle.ocr_text)
+    text = ', '.join(visible) + '\n' + source if visible else source
+    return text.strip()[:800] or None
 
 
 def download_options(directory: Path | None = None, *, audio_only=False) -> dict:
@@ -166,10 +183,10 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
         try:
             info = await asyncio.to_thread(probe, url)
             bundle.source_id = str(info.get('id') or bundle.source_id)
-            bundle.title = info.get('title') or bundle.title
+            bundle.title = clean_source_text(info.get('title') or bundle.title, title=True)
             bundle.author = info.get('uploader') or info.get('creator') or bundle.author
             bundle.duration = info.get('duration') or bundle.duration
-            bundle.caption = info.get('description') or bundle.caption
+            bundle.caption = clean_source_text(info.get('description') or bundle.caption)
             if cache_lookup:
                 cached = cache_lookup(bundle.source_platform, bundle.source_id, user_id)
                 if cached:
@@ -188,21 +205,6 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
             failure(bundle, 'download', exc)
             path = None
         if path:
-            if bundle.evidence_level != 'full_transcript':
-                audio = directory / 'audio.wav'
-                try:
-                    await asyncio.to_thread(extract_audio, path, audio)
-                    from app.services.transcription import provider_for
-                    provider = provider_for(bundle.duration)
-                    metadata.update(stt_provider=provider.name, stt_model=provider.model)
-                    stt_started = time.monotonic()
-                    result = await provider.transcribe(audio)
-                    bundle.transcript = [TranscriptSegment(**s) for s in result.segments]
-                    bundle.language = result.language
-                    metadata.update(stt_seconds=time.monotonic() - stt_started, cost=result.cost,
-                                    cost_known=result.cost is not None)
-                except Exception as exc:
-                    failure(bundle, 'audio', exc)
             try:
                 frames = await asyncio.to_thread(sample_frames, path, directory, bundle.duration)
             except Exception as exc:
@@ -216,6 +218,22 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
                         bundle.frame_notes.append(f'Frame {index + 1}: {text}')
                 except Exception as exc:
                     failure(bundle, 'ocr', exc)
+            if bundle.evidence_level != 'full_transcript':
+                audio = directory / 'audio.wav'
+                try:
+                    await asyncio.to_thread(extract_audio, path, audio)
+                    from app.services.transcription import provider_for
+                    provider = provider_for(bundle.duration)
+                    metadata.update(stt_provider=provider.name, stt_model=provider.model)
+                    stt_started = time.monotonic()
+                    prompt = transcription_prompt(bundle)
+                    result = await provider.transcribe(audio, initial_prompt=prompt) if prompt else await provider.transcribe(audio)
+                    bundle.transcript = [TranscriptSegment(**s) for s in result.segments]
+                    bundle.language = result.language
+                    metadata.update(stt_prompt_used=bool(prompt), stt_seconds=time.monotonic() - stt_started, cost=result.cost,
+                                    cost_known=result.cost is not None)
+                except Exception as exc:
+                    failure(bundle, 'audio', exc)
     bundle.classify()
     metadata.update(duration=bundle.duration, seconds_taken=time.monotonic() - began)
     return bundle, metadata
@@ -250,12 +268,19 @@ def cached_evidence(platform: str, source_id: str, user_id, url: str | None = No
     from app.models import ContentAsset, Item, VISIBILITY_PUBLIC
     # The same source id is reusable only within the existing privacy boundary.
     with SessionLocal() as db:
-        item = (db.query(Item).outerjoin(ContentAsset, Item.content_id == ContentAsset.id)
+        candidates = (db.query(Item).outerjoin(ContentAsset, Item.content_id == ContentAsset.id)
                 .filter(Item.evidence_bundle['source_platform'].astext == platform,
                         or_(Item.evidence_bundle['source_id'].astext == source_id,
                             Item.evidence_bundle['url'].astext == url) if url else
                         Item.evidence_bundle['source_id'].astext == source_id,
                         Item.evidence_bundle['evidence_level'].astext == 'full_transcript',
                         or_(Item.user_id == user_id, ContentAsset.visibility == VISIBILITY_PUBLIC))
-                .order_by(Item.processed_at.desc()).first())
-        return dict(item.evidence_bundle) if item else None
+                .order_by(Item.processed_at.desc()))
+        for item in candidates:
+            metadata = item.processing_metadata or {}
+            evidence = dict(item.evidence_bundle)
+            if (metadata.get('stt_provider') == 'local' and not metadata.get('stt_prompt_used')
+                    and transcription_prompt(EvidenceBundle(**evidence))):
+                continue
+            return evidence
+        return None

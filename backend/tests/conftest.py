@@ -91,3 +91,22 @@ def restore_service_modules():
     yield
     for module, name, original in saved:
         setattr(module, name, original)
+
+
+@pytest.fixture
+def successful_brief(monkeypatch):
+    """Queue/embedding tests need a successful LLM to reach the embedding stage."""
+    from app.schemas import BriefV2
+    from app.services import brief_v2
+    from test_brief_v2 import payload
+
+    async def extract(evidence):
+        data = payload()
+        data.update(title=evidence.get('title') or 'A page',
+                    instant_brief=evidence.get('title') or 'A page',
+                    key_points=[], entities={'tools_products': [], 'people_orgs': [], 'numbers': []},
+                    confidence='low', evidence_used=[],
+                    missing_info='Only page metadata is available.')
+        return BriefV2(**data)
+
+    monkeypatch.setattr(brief_v2, 'extract', extract)

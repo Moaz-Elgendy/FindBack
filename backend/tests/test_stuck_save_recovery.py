@@ -218,7 +218,7 @@ def test_with_no_provider_keys_the_item_still_reaches_ready(sessions, user,
 
 
 def test_a_failed_attempt_is_republished_by_the_dispatcher(sessions, user,
-                                                          queue, monkeypatch):
+                                                          queue, monkeypatch, successful_brief):
     """The dispatcher republishes a save whose worker attempt raised."""
     with sessions() as s:
         item_id = _save(s, user)
@@ -270,7 +270,7 @@ def test_the_dispatcher_never_consumes_a_job_it_published_nothing_for(
 
 
 def test_a_save_that_keeps_failing_eventually_parks_as_failed(sessions, user,
-                                                               queue, monkeypatch):
+                                                               queue, monkeypatch, successful_brief):
     """The retry loop is bounded: it ends FAILED, and it does end at all."""
     from app.services import outbox
 
@@ -406,7 +406,7 @@ def test_permanently_failing_publisher_is_bounded(sessions, user, queue, monkeyp
 
 
 @pytest.mark.parametrize("status_code,expected", [(401, "READY"), (503, "FAILED")])
-def test_fetch_outcomes_finish_or_retry_bounded(sessions, user, queue, monkeypatch, status_code, expected):
+def test_fetch_outcomes_finish_or_retry_bounded(sessions, user, queue, monkeypatch, status_code, expected, successful_brief):
     import httpx
     from app.services import fetcher, storage
     monkeypatch.setenv("FIRECRAWL_API_KEY", "test")

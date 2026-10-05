@@ -95,6 +95,7 @@ async def stage_fetch(item, raw_preview: str = "") -> None:
         item.thumbnail_url = thumbnail
     if fetched.get("title") and (not item.title or fetcher.url_only(item.title)):
         item.title = fetched["title"]
+    item.title = fetcher.clean_source_text(item.title or "", title=True)
     if fetched.get("source_type"):
         item.source_type = fetcher.video_source(item.url) or fetched["source_type"]
 
@@ -112,7 +113,9 @@ async def stage_understand(item) -> None:
         title = metadata["title"]
     evidence = getattr(item, "evidence_bundle", None) or {}
     if evidence:
-        evidence = dict(evidence, title=title or evidence.get("title", ""))
+        evidence = dict(evidence, title=fetcher.clean_source_text(title or evidence.get("title", ""), title=True),
+                        caption=fetcher.clean_source_text(evidence.get("caption", "")))
+        item.evidence_bundle = evidence
         began = time.monotonic()
         processing = dict(getattr(item, "processing_metadata", None) or {})
         usage = {}
@@ -122,6 +125,8 @@ async def stage_understand(item) -> None:
                 result = await brief_v2.extract(evidence)
             item.brief_v2 = result.model_dump()
             brief = brief_v2.legacy(result)
+            item.brief_v2.update(brief_source="llm", evidence_level=evidence.get("evidence_level", "metadata_only"),
+                                 prompt_version=brief_v2.PROMPT_VERSION)
             processing["brief_fallback"] = False
         except Exception as exc:
             log.warning("[brief] item=%s validation/provider failure=%s", getattr(item, "id", ""), type(exc).__name__)
@@ -130,6 +135,9 @@ async def stage_understand(item) -> None:
             processing["tag_shortfall"] = len(item.brief_v2["tags"]) < 15
         finally:
             ai.CHAT_USAGE.reset(usage_token)
+        processing["brief_source"] = item.brief_v2["brief_source"]
+        item.needs_retry = item.brief_v2["brief_source"] == "fallback"
+        processing["brief_attempts"] = processing.get("brief_attempts", 0) + 1
         processing["llm_usage"] = usage
         pricing = env.get("BRIEF_INPUT_COST_PER_MILLION") and env.get("BRIEF_OUTPUT_COST_PER_MILLION")
         processing["llm_cost"] = ((usage.get("input_tokens", 0) * env.get_float("BRIEF_INPUT_COST_PER_MILLION", 0)
@@ -189,6 +197,8 @@ async def stage_brief(item) -> None:
                                      *item.key_points, *modern["tags"], *modern["search_phrases"],
                                      *[str(v) for values in modern["entities"].values() for v in values],
                                      item.url or ""])
+        if modern.get("brief_source") == "fallback":
+            item.search_text = ""
 
 
 def search_document(title_clean: str, overview: str, highlights: list,
@@ -240,6 +250,11 @@ async def stage_embed(item, db) -> None:
     """Vectorise the memory string and every chunk, then write the Chunk rows."""
     from app.models import Chunk
 
+    if (getattr(item, "brief_v2", None) or {}).get("brief_source") == "fallback":
+        item.embedding = None
+        item.embedding_model = None
+        db.query(Chunk).filter(Chunk.item_id == item.id).delete()
+        return
     mem_str = embedder.memory_string(
         item.title_clean or "", item.summary or "", item.key_points or [],
         item.entities or {}, tags=item.tags or [],

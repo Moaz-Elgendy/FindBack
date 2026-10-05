@@ -25,7 +25,7 @@ class TranscriptionResult:
 class TranscriptionProvider(Protocol):
     name: str
     model: str
-    async def transcribe(self, audio: Path) -> TranscriptionResult: ...
+    async def transcribe(self, audio: Path, *, initial_prompt: str | None = None) -> TranscriptionResult: ...
 
 
 @lru_cache(maxsize=1)
@@ -42,10 +42,10 @@ class LocalTranscriptionProvider:
         if self.model.endswith('.en'):
             raise ValueError('STT_MODEL must be multilingual for Arabic and English')
 
-    async def transcribe(self, audio: Path) -> TranscriptionResult:
+    async def transcribe(self, audio: Path, *, initial_prompt: str | None = None) -> TranscriptionResult:
         def run():
             model = local_model(self.model, env.get('STT_DEVICE', 'cpu'), env.get('STT_COMPUTE_TYPE', 'int8'))
-            segments, info = model.transcribe(str(audio), vad_filter=True, beam_size=5)
+            segments, info = model.transcribe(str(audio), vad_filter=True, beam_size=5, initial_prompt=initial_prompt)
             return TranscriptionResult([
                 TranscriptSegment(start=s.start, end=s.end, text=s.text.strip()).model_dump()
                 for s in segments if s.text.strip() and s.end >= s.start], info.language)
@@ -59,7 +59,7 @@ class CloudTranscriptionProvider:
     def __init__(self):
         self.model = env.get('STT_CLOUD_MODEL', 'whisper-1')
 
-    async def transcribe(self, audio: Path) -> TranscriptionResult:
+    async def transcribe(self, audio: Path, *, initial_prompt: str | None = None) -> TranscriptionResult:
         base = env.get('STT_CLOUD_BASE_URL')
         key = env.get('STT_CLOUD_API_KEY')
         if not base or not key:
@@ -81,7 +81,7 @@ class CloudTranscriptionProvider:
                         response = await client.post(base.rstrip('/') + '/audio/transcriptions',
                             headers={'Authorization': f'Bearer {key}'},
                             data={'model': self.model, 'response_format': 'verbose_json',
-                                  'timestamp_granularities[]': 'segment'},
+                                  'timestamp_granularities[]': 'segment', **({'prompt': initial_prompt} if initial_prompt else {})},
                             files={'file': ('audio.wav', stream, 'audio/wav')})
                     response.raise_for_status()
                     data = response.json()

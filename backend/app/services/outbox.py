@@ -290,6 +290,26 @@ def claim_batch(db, limit: int = 50) -> list:
            "lock_secs": LOCK_TIMEOUT.total_seconds()}).mappings().all()
 
 
+def recover_briefs(db, limit: int = 50) -> None:
+    """Repair existing versioned saves with stale/missing native provenance."""
+    from app.services.brief_v2 import PROMPT_VERSION
+    from app.models import JOB_TYPE_PROCESS
+    rows = db.execute(text("""
+        SELECT i.id, i.content_id FROM items i
+        WHERE i.status = 'ready' AND i.brief_v2 <> '{}'::jsonb AND i.content_id IS NOT NULL
+          AND (i.brief_v2->>'prompt_version' IS DISTINCT FROM :version
+               OR coalesce(i.brief_v2->>'brief_source','') NOT IN ('llm','fallback')
+               OR i.brief_v2->>'evidence_level' IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM processing_jobs j WHERE j.content_id=i.content_id
+                          AND j.job_type=:job_type AND j.status IN ('PENDING','PROCESSING'))
+        ORDER BY i.created_at LIMIT :limit FOR UPDATE OF i SKIP LOCKED
+    """), {'version': PROMPT_VERSION, 'job_type': JOB_TYPE_PROCESS, 'limit': limit}).all()
+    for item_id, content_id in rows:
+        db.execute(text('UPDATE items SET needs_retry=true WHERE id=:id'), {'id': item_id})
+        record_job(db, content_id, JOB_TYPE_PROCESS)
+    db.commit()
+
+
 def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
     """Publish one batch of due jobs. Returns a small summary for logging.
 
@@ -302,6 +322,7 @@ def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
         def publisher(item_id: str) -> None:
             process_item.delay(item_id)
 
+    recover_briefs(db, limit)
     stats = {"claimed": 0, "published": 0, "failed": 0, "items": 0, "skipped": 0}
     for job in claim_batch(db, limit=limit):
         stats["claimed"] += 1

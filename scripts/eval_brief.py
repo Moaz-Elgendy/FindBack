@@ -27,9 +27,13 @@ def checks(output: dict, evidence: dict) -> dict[str, bool]:
     text = json.dumps(output, ensure_ascii=False).lower()
     full = evidence['evidence_level'] == 'full_transcript'
     return {
+        'real_brief': output.get('brief_source') == 'llm',
+        'clean_title': output['title'] == fetcher.clean_source_text(output['title'], title=True),
+        'search_tags': all(not brief_v2.bad_tag(t) for t in output['tags']),
+        'synthesized_points': not brief_v2.copied_points(output['key_points'], evidence),
         'no_meta_phrases': not any(p in text for p in brief_v2.FORBIDDEN),
         'tag_count_15_30': 15 <= len(output['tags']) <= 30,
-        'timestamped_points': not full or all(p['source_ref'] in {
+        'timestamped_points': not full or bool(output['key_points']) and all(p['source_ref'] in {
             brief_v2.timestamp(s['start']) for s in evidence['transcript']} for p in output['key_points']),
         'confidence_matches_evidence': output['confidence'] in ('high', 'medium') if full
                                        else output['confidence'] in ('low', 'medium'),
@@ -55,7 +59,15 @@ async def run(evidence: dict, output: dict | None = None) -> dict:
 
 async def main(args) -> int:
     results = []
-    if args.url:
+    if args.stored_item:
+        from app.database import SessionLocal
+        from app.models import Item
+        with SessionLocal() as db:
+            item = db.get(Item, args.stored_item)
+            if item is None: raise ValueError('Saved item not found')
+            evidence = dict(item.evidence_bundle)
+        results.append({'name': 'stored_evidence_live', **await run(evidence)})
+    elif args.url:
         try:
             fetched = await fetcher.fetch_content(args.url)
         except Exception as exc:
@@ -86,5 +98,6 @@ if __name__ == '__main__':
     parser.add_argument('--live', action='store_true', help='Use configured LLM for fixtures')
     parser.add_argument('--url', help='Manually compare real caption-only and acquired media; uses network')
     parser.add_argument('--title', help='Optional trusted title hint when upstream metadata is unavailable')
+    parser.add_argument('--stored-item', help='Evaluate persisted evidence from the active configured DB using the real LLM')
     parser.add_argument('--output', help='Write operator evaluation JSON')
     raise SystemExit(asyncio.run(main(parser.parse_args())))

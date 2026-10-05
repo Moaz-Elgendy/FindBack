@@ -226,7 +226,7 @@ def lexical_search(db: Session, user_id, query: str, terms: list[str],
                    greatest(ts_rank(i.search_text_tsv, to_tsquery('english', :q)),
                             ts_rank(i.tsv, to_tsquery('english', :q))) AS rank
             FROM items i
-            WHERE i.user_id = :uid AND i.status = 'ready'
+            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
               AND (i.search_text_tsv @@ to_tsquery('english', :q)
                    OR i.tsv @@ to_tsquery('english', :q))
               {_cat_filter(category, 'i.')}
@@ -252,7 +252,7 @@ def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
                    c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
             FROM chunks c
             JOIN items i ON i.id = c.item_id
-            WHERE i.user_id = :uid AND i.status = 'ready'
+            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
               AND c.tsv @@ to_tsquery('english', :q)
               {_cat_filter(category, 'i.')}
             ORDER BY rank DESC
@@ -301,6 +301,8 @@ def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
             JOIN items i
               ON i.content_id = um.content_id AND i.user_id = um.user_id
             WHERE um.user_id = :uid
+              AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback'
+              AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
               AND to_tsvector('english', {_NOTE_DOCUMENT})
                   @@ to_tsquery('english', :q)
               {_cat_filter(category, 'i.')}
@@ -324,7 +326,7 @@ def vector_search(db: Session, user_id, q_emb, category: str | None = None,
             SELECT {_ITEM_COLUMNS},
                    1 - (i.embedding <=> CAST(:qvec AS vector)) AS cosine
             FROM items i
-            WHERE i.user_id = :uid AND i.status = 'ready'
+            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
               AND i.embedding IS NOT NULL
               {_cat_filter(category, 'i.')}
             ORDER BY i.embedding <=> CAST(:qvec AS vector)
@@ -392,7 +394,7 @@ async def chunk_search(db: Session, user_id, query: str, limit: int = 50,
                    c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
             FROM chunks c
             JOIN items i ON i.id = c.item_id
-            WHERE i.user_id = :uid AND i.status = 'ready'
+            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
               {_cat_filter(category, 'i.')}
             ORDER BY c.embedding <=> CAST(:qvec AS vector)
             LIMIT :lim
@@ -560,7 +562,7 @@ def correct_tag_terms(db, user_id, terms: list[str]) -> list[str]:
     if not terms or not any(len(t) >= 4 for t in terms): return terms
     try:
         rows = db.execute(text("SELECT DISTINCT unnest(tags) FROM items "
-                               "WHERE user_id = :uid AND status = 'ready' LIMIT 1000"),
+                               "WHERE user_id = :uid AND status = 'ready' AND coalesce(brief_v2->>'brief_source','') <> 'fallback' AND coalesce(processing_metadata->>'brief_fallback','false') <> 'true' LIMIT 1000"),
                           {'uid': str(user_id)}).fetchall()
         vocabulary = sorted({word for row in rows for word in query_terms(row[0])})
         expanded = list(terms)

@@ -171,7 +171,8 @@ def _reuse_source(db, item, job):
         return None
     if source.needs_retry:
         return None
-    if not source.brief_v2 or (source.processing_metadata or {}).get("prompt_version") != "brief_v2":
+    from app.services.brief_v2 import PROMPT_VERSION
+    if not source.brief_v2 or source.brief_v2.get("brief_source") == "fallback" or (source.processing_metadata or {}).get("prompt_version") != PROMPT_VERSION:
         return None
     # A v2 job must not reuse a weaker video artifact and suppress acquisition.
     if (source.evidence_bundle or {}) and source.evidence_bundle.get("evidence_level") != "full_transcript":

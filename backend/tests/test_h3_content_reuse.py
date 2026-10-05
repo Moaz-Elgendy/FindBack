@@ -113,7 +113,8 @@ def spies(monkeypatch):
     async def extract_v2(evidence):
         from app.schemas import BriefV2
         old = await extract(evidence.get("caption", ""), evidence.get("title", ""))
-        data, _ = brief_v2.offline(evidence)
+        from test_brief_v2 import payload
+        data = payload()
         data.update(title=old.title, instant_brief=old.overview,
                     key_points=[{"point": p, "source_ref": "caption"} for p in old.highlights],
                     entities={"tools_products": ["kubernetes"], "people_orgs": [], "numbers": []},

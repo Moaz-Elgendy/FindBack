@@ -67,9 +67,20 @@ def test_youtube_profile_uses_content():
     assert profiles.classify(url='https://youtube.com/watch?v=x', text='1. Alpha\n2. Beta\n3. Gamma').name == 'list'
 
 
-def test_limited_video_extracts_caption_and_keeps_warning_separate():
+def test_limited_video_extracts_caption_and_keeps_warning_separate(monkeypatch):
     from app.services.media_understanding import EvidenceBundle
     caption = 'Alpha: writes code. Beta: tests code.'
+    from app.services import brief_v2
+    from app.schemas import BriefV2
+    from test_brief_v2 import payload
+    async def generated(ev):
+        data = dict(payload(), title='Verified title', instant_brief=caption,
+                    entities={'tools_products':['Alpha','Beta'],'people_orgs':[],'numbers':[]},
+                    key_points=[{'point':'Alpha supports code writing.','source_ref':'caption'},
+                                {'point':'Beta supports software testing.','source_ref':'caption'}],
+                    confidence='medium', evidence_used=['caption'], missing_info='Open the original for remaining details.')
+        return BriefV2(**data)
+    monkeypatch.setattr(brief_v2,'extract',generated)
     item = SimpleNamespace(normalized_text=caption, raw_text='', title='https://youtube.com/watch?v=x',
                            url='https://youtube.com/watch?v=x', source_type='youtube',
                            fetch_metadata={'input_provenance': 'caption', 'title': 'Verified title'},

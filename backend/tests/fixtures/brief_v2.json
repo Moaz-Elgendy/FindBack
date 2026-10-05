@@ -130,23 +130,23 @@
       "instant_brief": "Test Writer creates unit tests from code changes. Trace Reader explains stack traces to developers. Changelog Writer drafts release notes from commits.",
       "key_points": [
         {
-          "point": "Test Writer creates unit tests from code changes.",
+          "point": "Test Writer: derives unit tests from changes to code.",
           "source_ref": "00:05"
         },
         {
-          "point": "Trace Reader explains stack traces to developers.",
+          "point": "Trace Reader: helps developers interpret stack traces.",
           "source_ref": "00:16"
         },
         {
-          "point": "Changelog Writer drafts release notes from commits.",
+          "point": "Changelog Writer: turns commits into release notes.",
           "source_ref": "00:26"
         },
         {
-          "point": "Flake Finder identifies unstable tests.",
+          "point": "Flake Finder: spots tests that behave inconsistently.",
           "source_ref": "00:36"
         },
         {
-          "point": "Migration Writer prepares database migrations.",
+          "point": "Migration Writer: drafts migrations for the database.",
           "source_ref": "00:46"
         }
       ],
@@ -166,7 +166,7 @@
       "tags": [
         "claude code",
         "claude",
-        "agent skills",
+        "claude skills",
         "test writer",
         "trace reader",
         "changelog writer",
@@ -337,7 +337,7 @@
         "سجل الأخطاء",
         "unit tests",
         "debugging",
-        "agent skills",
+        "claude skills",
         "facebook",
         "dev lab"
       ],

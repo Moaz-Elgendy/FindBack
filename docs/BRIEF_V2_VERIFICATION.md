@@ -1,143 +1,184 @@
-# Brief pipeline upgrade verification
+# Brief pipeline gap verification
 
-Implemented the complete supplied task in eight reviewable commits. No bulk
-reprocessing of existing saves was requested or performed.
+Verified 2026-10-05 against the running Docker API, worker and PostgreSQL. This document supersedes the earlier evaluation-only and operator-annotated provenance claims.
 
-## Files and resulting behavior
+## Database and record
 
-| Files | Change |
-|---|---|
-| `backend/app/models.py`, `schemas.py`, `alembic/versions/0012_brief_v2.py` | Add versioned Brief/evidence/processing JSONB and retry flag; expose additive API fields while preserving legacy summary and string points. |
-| `backend/app/prompts/brief_v2.txt`, `services/brief_v2.py`, `services/extractor.py` | Exact supplied prompt, strict schema and tag validation, one repair attempt, timestamp grounding, bounded map/pairwise merge and grounded fallback. Remove caption suppression of useful facts. |
-| `backend/app/services/fetcher.py`, `media_understanding.py` | Preserve YouTube caption timestamps, acquire bounded yt-dlp media, mono audio, scene frames, bilingual OCR, temporary cleanup and privacy-scoped evidence cache. |
-| `backend/app/services/transcription.py` | Replaceable multilingual local/cloud STT, configurable routing, timestamped segments and bounded cloud uploads. |
-| `backend/app/services/pipeline.py`, `brief_retry.py`, `outbox.py`, `backend/app/tasks.py` | Store evidence/usage metadata; retain a searchable Brief while durable bounded evidence retries run; atomically schedule retries; upgrade and re-embed stronger evidence. |
-| `backend/app/services/ai.py`, `ai_gateway.py`, `backend/app/env.py` | Preserve existing provider abstraction, normal/complex model routing, usage/cost metadata and secret masking. |
-| `backend/app/services/search.py`, `embedder.py` | Index/embed Brief facts, tags, phrases and entities; preserve Arabic terms and cheaply expand minor tag typos. Exclude missing-information text. |
-| `mobile/lib/models/item.dart`, `data/local_db.dart`, `features/home/detail_page.dart` | Additive parsing and SQLite cache migration; Instant/Full Brief, timestamp links, source opening, polling and subtle improvement state. |
-| `backend/Dockerfile`, `requirements.txt`, `.dockerignore`, `.env.example`, `README.md`, `docs/BRIEF_V2.md` | Runtime dependencies, bounded settings, deployment and evaluation instructions. |
-| `backend/tests/test_brief_{v2,retry,worker,search}.py`, `test_media_{understanding,frames}.py`, `test_transcription.py` | Mocked schema, media, STT, OCR, cache, retry, crash durability, upgrade and search proof. |
-| `backend/tests/{conftest,test_video_input,test_h3_content_reuse,test_schema_parity,test_phase1_migration,test_phase16_migration,test_stuck_save_recovery}.py` | Keep existing regressions aligned with the additive schema and intended caption behavior; disable network acquisition in CI. |
-| `mobile/test/brief_{v2,detail,cache_migration}_test.dart` | Model compatibility, timestamp URLs, processing transitions and preservation of SQLite v1 saves. |
-| `backend/tests/fixtures/brief_v2.json`, `scripts/eval_brief.py` | Six-case mocked evaluation and optional live/Facebook comparison. Caption baseline explicitly excludes transcripts. |
+The running API/worker use `DATABASE_URL=postgresql://findback:<redacted>@postgres:5432/findback`, configured in `docker-compose.yml`. The active server is Docker PostgreSQL 16, database `findback`, server `172.18.0.3:5432`, directory `/var/lib/postgresql/data`, volume `findback_pgdata` (Docker daemon path `/var/lib/docker/volumes/findback_pgdata/_data`). It is separate from host PostgreSQL 18 at `localhost:5432/findback`, directory `/var/lib/postgresql/18/main`. The active database is at `0012_brief_v2`; no migration was added or applied during these gap fixes.
 
-## Migration and local runtime
+Target reel: `https://www.facebook.com/share/r/19PXq2Y3AR/`.
+Item: `e310cfa3-b604-46f2-b4b0-b5984a3f596b`.
+Content: `7a6d30c1-6720-4093-8316-e1c7e1045f5e`.
 
-Applied `0011_job_claim_time -> 0012_brief_v2` to the local `findback` database with:
+Before removing the earlier operator annotations, a custom-format backup was written to `/home/moaz/.codex/backups/findback/gap-fixes-20261005T153844Z/before-native-reprocess.dump`. SHA-256: `109253666fd1100ec92ce3b128eb8fe8fe03a2777b6988743450e7ac9840fff7`. Parent/file permissions: 0700/0600. A full restore was NOT RUN.
 
-```bash
-cd backend
-DATABASE_URL=postgresql://findback:findback@localhost:5432/findback .venv/bin/python -m alembic upgrade head
+The only operator record edit removed `brief_source`, `evidence_level`, `prompt_version` from this Brief and `brief_source` from its processing metadata. Item/job states, retry flags and transcripts were not manually changed. The existing outbox automatically recovered the missing/stale provenance, created durable jobs and published normal Celery tasks. All provenance is now assigned by `stage_understand`, including fallback provenance. Prompt version is separate from the existing `process_item:v1` compatibility label.
+
+## Verified failure behavior and configuration
+
+Regression tests cover a complete transcript followed by LLM failure: the stored placeholder has source `fallback`, low confidence, truthful retry note, empty tags/points, `needs_retry=true`, and a durable pending job. It has no final embedding, chunk vectors or searchable document. Every search candidate path excludes fallback records. A subsequent successful LLM Brief replaces it, clears the flag and is embedded normally.
+
+The existing HTTP adapter automatically exhausts configured primary attempts on 429/503/timeout, then uses the configured secondary. `Retry-After` numeric and HTTP-date forms are honored. `AI_MAX_RETRIES` caps attempts per provider; `AI_RETRY_WAIT_BUDGET_SECONDS` caps cumulative sleep, so a longer Retry-After exhausts that provider without retrying early. Schema validation can request a separate repair generation. Permanent HTTP errors do not trigger this failover.
+
+Actual worker configuration: primary Gemini `gemini-3.8-flash`; `SECONDARY_AI_PROVIDER=groq`, `SECONDARY_AI_MODEL=openai/gpt-oss-120b`; `BRIEF_MAX_TOKENS=6000`. No process-local provider/retry overrides were used for these automatic jobs. Mocked 503, 429, timeout, Retry-After and budget cases passed.
+
+Source cleaning fixtures cover the reel's reaction-count title, login controls, See more, Original audio, markdown links and image references while preserving real caption content and the comment instruction. Cleaned caption/keyword terms and observed OCR terms reach Whisper through its initial prompt; old local STT caches without that hint are skipped automatically. The normal base run persisted 18 segments with `stt_prompt_used=true`.
+
+## STT comparison on the actual reel
+
+Same 85.622-second downloaded reel; CPU int8, beam 5, VAD; both models received the same cleaned-source prompt. Times below exclude model loading/download:
+
+| Model | STT seconds | Segments | Recognition observations |
+|---|---:|---:|---|
+| base | 15.272 | 18 | Fine skills; Superpowers; Claude Mem; I'm pickabla; Task observer |
+| small | 51.432 | 40 | Find skills; Superpowers; Claude ma'am; Un picable; Task observer |
+
+Base loaded in 1.696 seconds. Small loaded/downloaded in 147.862 seconds; that is a one-time cost, not its STT time. Small was 3.37 times slower and did not resolve all names. Base remains configured. The normal worker's measured STT duration includes loading and host load and is not substituted for this paired timing.
+
+Caption independently confirms **Superpowers, Claude Mem, Task Observer**; OCR confirms **IMPECCABLE**. The exact first name, including “Find skills,” is not confirmed by caption/OCR and is not certified here. Neither transcription is exact. The prompt and validator reject STT-only named entities, prefer written confirmation and use functional descriptions for unconfirmed names. Unsupported “built-in” availability is also rejected; separate distribution instructions must not be merged into an inferred download destination.
+
+## Final native persistence and grounding
+
+The automatic dispatcher published Celery task `3822be23-82ce-4522-9661-20f4c16b0ac1` for existing job `4e3dbbe7-ff0d-4cc3-9798-2c61a7d895b5`. It resumed the complete-transcript retry through UNDERSTAND, BRIEF, CHUNK and EMBED. Gemini exhausted three 429 attempts; Groq returned real 200 responses, a named-entity repair ran, and Groq 429 backoff was observed before the accepted response. The worker completed at 2026-10-05 16:11:19 UTC.
+
+Direct application-engine queries and assertions established:
+
+```json
+{
+  "migration": "0012_brief_v2",
+  "item_id": "e310cfa3-b604-46f2-b4b0-b5984a3f596b",
+  "status": "ready",
+  "needs_retry": false,
+  "brief_source": "llm",
+  "evidence_level": "full_transcript",
+  "prompt_version": "brief_v3.2",
+  "chunks": 18
+}
 ```
 
-Real PostgreSQL tests exercise downgrade/reapply and legacy-data preservation.
-SQLite v1-to-v2 migration is also tested. Existing saves remain readable; new jobs
-create v2 artifacts. There is no automatic backfill. New environment variables and
-all defaults are listed in [BRIEF_V2.md](BRIEF_V2.md#environment-settings) and
-`.env.example`; credentials are not committed.
+Job is READY, last stage EMBED. Stored real Groq usage: 2 successful generations, 6845 input tokens, 3436 output tokens, usage reported. The final memory embedding has 1536 dimensions; all 18 transcript chunks have embeddings. This followed the live fallback state observed with `needs_retry=true`, PENDING/NORMALIZE, zero chunks and a null memory embedding. The upgrade was written by the normal worker, not by copying the evaluation artifact or manually annotating its provenance. ItemDetail serializes `brief_source=llm`.
 
-Docker image verification installed ffmpeg, Tesseract English/Arabic, yt-dlp and
-faster-whisper. The first Compose build encountered a host Docker credential-helper
-error. A retry with an empty temporary Docker client configuration successfully
-built `api`, `worker` and `outbox`, without changing the user's Docker configuration.
+Stored caption, read from the active DB:
 
-## Facebook before/after: real acquisition
-
-Tested `https://www.facebook.com/share/r/19PXq2Y3AR/` using the existing configured
-AI provider and the actual media runtime in Docker:
-
-```bash
-docker run --rm --env-file .env \
-  --mount type=bind,source=/home/moaz/FindBack,target=/workspace,readonly \
-  --mount type=bind,source=/tmp/findback-brief-results,target=/results \
-  --mount type=bind,source=/tmp/findback-whisper-cache,target=/root/.cache/huggingface \
-  --workdir /workspace findback-brief-verification \
-  python scripts/eval_brief.py --url 'https://www.facebook.com/share/r/19PXq2Y3AR/' \
-  --title '5 claude code skills every developer should know' --output /results/facebook-full.json
+```text
+Unlock the 5 Claude Code skills every developer should know. Most people only scratch the surface of what Claude can do. These five skills help Claude automatically find the right tools, plan before writing code, remember your projects across sessions, generate better frontend designs, and continuously improve the way it works with you. Whether you're building websites, apps, or AI projects, these skills can save hours of work and dramatically improve your workflow.
+Comment "Claude" below, and I'll send you all 5 GitHub repos.
+[keywords: Claude Code, Claude AI, Claude skills, Claude Code skills, AI coding, AI programming, Anthropic, frontend development, AI memory, Claude Mem, Task Observer, Superpowers, prompt engineering, coding assistant, AI developer tools]
+#claudecode #claudeai #coding #ai #programming
 ```
 
-| Comparison | Observed result |
-|---|---|
-| Caption only | `partial`, medium confidence, 30 normalized tags, separate missing-info field; provider failure used the grounded offline fallback. Scraped Facebook text contains page controls, so this fallback is noisy. |
-| Full pipeline | `full_transcript`, 85.622-second clip, multilingual local `base` STT, approximately 73 seconds transcription / 118 seconds acquisition, no recorded acquisition errors; 30 tags and timestamped transcript points. Provider failure again used offline fallback with medium confidence. |
+Grounding facts: “GitHub repos” and the instruction to comment “Claude” occur in that caption. “Anthropic” occurs in its keywords, supporting the `anthropic` tag as source-derived metadata, not an independent assertion that speech named Anthropic. The stored suggested_action matches the caption instruction. Native tag policy includes `claude skills` because that exact phrase occurs in written evidence; `agent skills` is absent because it is not supported here. The garbled first/frontend STT names are absent from the final named entities; the first skill remains a functional description.
 
-Full output now includes timestamped spoken evidence, for example:
+Raw stored Brief JSON, unedited output of `SELECT brief_v2::text FROM items WHERE id=...`:
 
-- `00:17–00:21`: searches the skill library and installs the relevant skill.
-- `00:26–00:34`: Superpowers; plan and check before modifying a project.
-- `00:45–00:47`: memory across sessions for projects, files and prior work.
-- `00:56–00:58`: front-end improvements using design references.
-- `01:06–01:11`: Task Observer; observes work style and improves other skills.
-
-These are descriptions of observed transcript passages, not a claim that the
-model produced a polished five-item Brief. STT misheard some names (including
-“Fine skills”, “Claude, man” and “I'm pickabla”). No unverified corrections were
-invented. The live configured Gemini service returned 503/429 responses, so
-polished model extraction and exact five-name identification remain unverified.
-Both live comparison rows passed the four evaluation checks, **2/2**. These checks
-are structural/content-policy checks, not a semantic quality score. Operator JSON:
-`/tmp/findback-brief-results/facebook-full.json`. An earlier caption-only successful
-LLM run produced five descriptive capabilities, but those were not verified names
-of the five skills. The new full run adds actual speech and references.
-
-## Checks and limits
-
-Initial full-suite failures exposed outdated migration fixtures and an old
-expectation that failed fetches must become error-message summaries. Those causes
-were corrected; failing tests were not hidden. A separate reviewer identified a
-READY/retry durability gap and unbounded final merge; both have regression tests.
-Reviewer recheck measured 100 segments producing requests up to 10,960 characters
-for maps and 1,250 for merges; oversized individual segments also stayed bounded.
-
-Known limits: login-gated media and extractor changes can prevent acquisition;
-OCR sampling can miss frames; first local STT run downloads model weights; cloud
-long-video STT needs configured credentials. Provider outages retain a grounded
-fallback, which can have fewer than the requested tag/phrase counts for sparse
-sources and can preserve noisy scraped text or recognition errors. Metadata marks
-that fallback. Strict accepted LLM responses still enforce 15–30 tags and 5–8
-phrases. Input-budget overflow uses fallback rather than an unbounded model call.
-
-Recommended next steps: restore the configured LLM's capacity/quota and rerun the
-live comparison below to assess the polished Brief and actual skill names. Provision
-Whisper weights on the worker beforehand if model-download access is restricted.
-Use cookies only for authorized content if a platform requires them.
-
-```bash
-backend/.venv/bin/python scripts/eval_brief.py
-backend/.venv/bin/python scripts/eval_brief.py --live
-backend/.venv/bin/python scripts/eval_brief.py --url 'https://www.facebook.com/share/r/19PXq2Y3AR/' --output /tmp/facebook-brief.json
+```json
+{"tags": ["claude skills", "claude", "claude code", "superpowers", "claude mem", "task observer", "telegram", "peterandstewiecode", "anthropic", "ai coding", "developer workflow", "code assistant", "frontend design", "planning", "automation", "github repos", "facebook video", "tutorial"], "title": "5 Claude Code Skills Every Developer Should Use", "topics": ["claude code", "ai coding assistant", "developer workflow"], "entities": {"numbers": [], "people_orgs": [], "tools_products": ["claude", "superpowers", "claude mem", "task observer", "telegram", "peterandstewiecode", "anthropic"]}, "confidence": "high", "key_points": [{"point": "Claude can be enhanced with a skill library that searches for needed tools and installs them automatically", "source_ref": "00:14"}, {"point": "Superpowers adds a planning layer that makes Claude pause, plan, and verify before modifying code", "source_ref": "00:19"}, {"point": "Claude Mem gives Claude memory across sessions, remembering project files and prior work", "source_ref": "00:24"}, {"point": "A frontend‑design skill lets Claude improve interfaces using design references", "source_ref": "00:29"}, {"point": "Task observer watches how you work, learns your style, and refines the other skills in the background", "source_ref": "00:34"}, {"point": "The skills are distributed through a Telegram link listed in the creator’s bio", "source_ref": "00:39"}], "brief_source": "llm", "content_type": "video", "missing_info": null, "best_takeaway": "Enabling these five Claude skills can automate tool setup, add safety checks, retain project context, enhance UI design, and personalize Claude’s behavior, saving developers hours of work.", "evidence_used": ["transcript", "caption", "ocr", "metadata"], "instant_brief": "The video outlines five Claude Code skills that automate tool selection, add planning safeguards, provide cross‑session memory, improve frontend design, and learn your work style. Access the skills via the Telegram link in the creator’s bio.", "likely_intent": "You may have saved this to learn which Claude Code skills can boost your development efficiency.", "evidence_level": "full_transcript", "prompt_version": "brief_v3.2", "search_phrases": ["how to get claude code skills", "claude superpowers planning feature", "claude mem cross session memory", "task observer learns my coding style", "telegram link for claude skill repos"], "suggested_action": "Comment \"Claude\" on the post to receive the five GitHub repositories with the skills"}
 ```
 
-Unrelated pre-existing `.agents/skills` edits and Zone.Identifier files were left
-untouched and excluded from commits.
+First 600 characters after joining the stored ordered segment text with newline separators (the DB stores timestamped segments, not a standalone transcript string):
 
-## Final verification results
+```text
+PETA, everyone's Claude is insanely fast, and mine is dumb, and can't even remember anything. I'll
+make your Claude an absolute beast, with just five skills. Okay wait, Claude has so many skills,
+you're telling me I only need five? You don't need all of them, you just need the right five.
+All right, what's the first one? Fine skills. What's that? You tell Claude what you're building,
+and it searches through the skill library finds what you need and installs it for you. So I don't even have
+to know which skill I'm looking for. Nope. Okay, what else? Superpowers. What's that? Think of it like a
 
-Exact final commands and observed summaries:
+```
+
+**Remaining timestamp accuracy limitation:** source_ref values pass the segment-start format/membership validator, but that is not semantic alignment proof. The final Brief gives Superpowers `00:19` although the naming segment starts at 24.24 seconds, Claude Mem `00:24` although the naming segment starts at 39.28 seconds, and the Telegram point `00:39` although its speech instruction starts at 78.48 seconds. The evaluator does not catch these mismatches. Confidence “high” is the model's stored value, not independent certification of every claim/reference. No manual timestamp edits were made.
+
+## Live search against the actual database
+
+Called the existing `search.hybrid_search` with the saved record's owner and normal real query embeddings. That owner's result corpus contained two saved items. No ranking weights were changed.
+
+| Query | Reel rank | Results | Milliseconds |
+|---|---:|---:|---:|
+| that video about claude code skills for developers | 2 | 2 | 677 |
+| the AI clip that remembers projects | 1 | 2 | 1007 |
+| the reel with planning memory and frontend tips | 1 | 2 | 526 |
+
+## Real LLM evaluation: separate from persistence
+
+The strengthened evaluator rejects fallback source, boilerplate titles, noisy tags, copied transcript sentences and invalid transcript references. It reads stored evidence from the active application database with `--stored-item`; it does not write an evaluation result back to that database.
+
+Several diagnostic real-provider runs were performed. A v3.1 Gemini run passed 1/1 and a v3.2 Groq run passed 1/1 before the final stricter tag/timestamp checks. Other runs failed validation and returned fallback. The **last** run under the final policy returned fallback after invalid timestamps and STT-only named entities were rejected. Its result is **0/1 cases passed**. This is not a successful current-policy real-LLM Brief, even though Groq returned real HTTP 200 JSON responses and usage. The earlier passes are not substituted for this result.
+
+Command:
+
+```bash
+docker compose exec -T worker python -u - --stored-item e310cfa3-b604-46f2-b4b0-b5984a3f596b --output /tmp/brief-v3.2-final.json < scripts/eval_brief.py
+```
+
+```json
+{
+  "name": "stored_evidence_live",
+  "brief_source": "fallback",
+  "prompt_version": "brief_v3.2",
+  "checks": {
+    "real_brief": false,
+    "clean_title": true,
+    "search_tags": true,
+    "synthesized_points": true,
+    "no_meta_phrases": true,
+    "tag_count_15_30": false,
+    "timestamped_points": false,
+    "confidence_matches_evidence": false
+  },
+  "llm_usage": {
+    "requests": 2,
+    "input_tokens": 6787,
+    "output_tokens": 3963,
+    "usage_reported": true,
+    "provider": "groq",
+    "model": "openai/gpt-oss-120b"
+  }
+}
+```
+
+```text
+Evaluation: 0/1 cases passed
+```
+
+## Automated tests
+
+The first full run reported `4 failed, 708 passed, 1 skipped`. Four queue/embedding recovery tests had no successful model response, so the new fallback guard correctly skipped the embedding stage where their failure was injected. They now explicitly mock successful Brief extraction to reach embedding, retaining their original failure/cap assertions. The no-provider test remains separate. Recovery regressions then passed: `17 passed in 16.99s`.
+
+Full command:
 
 ```bash
 TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests -q
-# 668 passed, 1 skipped, 1 warning in 256.62s (0:04:16)
-
-cd mobile && flutter test
-# +78: All tests passed!
-
-flutter analyze
-# No issues found! (ran in 12.5s)
-
-backend/.venv/bin/python scripts/eval_brief.py --output /tmp/findback-fixture-final.json
-# Evaluation: 6/6 cases passed
-
-TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_brief_v2.py backend/tests/test_brief_worker.py backend/tests/test_media_understanding.py -q
-# 25 passed in 5.63s
 ```
 
-The skipped test and python-jose datetime deprecation warning are existing suite
-conditions. Flutter results cover the complete test directory. No phone/device
-installation or release deployment was performed.
+Last full output: `715 passed, 1 skipped, 1 warning in 315.00s`. The warning is the existing python-jose `datetime.utcnow()` deprecation. The last prompt/repair clarification followed that run and was covered by this focused command:
 
-Local runtime refreshed with `docker compose up -d --no-deps api worker outbox`.
-All five existing services report `running`; `curl -fsS http://localhost:8000/health`
-returned `status=ok`, `db=ok`, `redis=ok`. A worker-container import/tool check
-confirmed yt-dlp, faster-whisper, ffmpeg 7.1.5 and Tesseract `ara`/`eng` packs.
-This is a local development refresh, not an external production release.
+```bash
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_brief_integrity.py backend/tests/test_brief_v2.py backend/tests/test_brief_worker.py -q
+```
+
+Output: `28 passed in 5.91s`. A broader focused run of Brief, source cleaning, media and AI tests also passed: `146 passed in 14.46s` before the last two small policy regressions were added.
+
+New regression files: `test_ai_resilience.py`, `test_source_cleaning.py`, `test_brief_integrity.py`; integration additions in `test_brief_worker.py`. Existing provider fake responses were adjusted to represent successful LLM responses rather than returning the fallback placeholder as though it came from a model. No test assertions were weakened to hide failures.
+
+CRLF-aware `git diff --check` passed for backend/scripts/config. Flutter/device checks were NOT RUN: no mobile code changed and no device was available. A release/deployment outside the existing local containers was NOT RUN.
+
+## Deferred observation
+
+A worker restart interrupted an already-claimed job. The existing dispatcher only republishes stale unclaimed publications and did not recover that claimed job after five minutes. Its existing task was republished via `process_item.delay` through the normal queue after the lock became stale, with no manual job/item state edits and no `process_item.apply` or process-local provider override. Subsequent fallback retries used the existing automatic dispatcher.
+
+This claimed-job interruption recovery gap is not fixed here. It can strand a claimed job if a worker is killed after receiving an early-acknowledged message. Relevant future phase: worker interruption recovery. This is distinct from the now-tested durable fallback Brief retry path.
+
+Additional focused command (146 passed):
+
+```bash
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_brief_integrity.py backend/tests/test_brief_v2.py backend/tests/test_brief_worker.py backend/tests/test_source_cleaning.py backend/tests/test_media_understanding.py backend/tests/test_ai_resilience.py backend/tests/test_ai_transport.py backend/tests/test_ai_parsing.py backend/tests/test_ai_model_selection.py -q
+```
+
+Recovery command (17 passed):
+
+```bash
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_phase6_state_machine.py backend/tests/test_stuck_save_recovery.py -q
+```
+
+All five local Docker services were observed running after verification. The final accepted Brief and search observations are separate from the last failed standalone evaluation, which did not overwrite the saved record.

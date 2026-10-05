@@ -27,6 +27,8 @@ import json
 import logging
 import math
 import random
+import time
+from email.utils import parsedate_to_datetime
 from contextvars import ContextVar
 import re
 from collections.abc import Sequence
@@ -55,7 +57,7 @@ GEMINI_OPENAI_BASE = f"{GEMINI_BASE}/openai"
 # Defaults are only a starting point: models are retired often, so every one of
 # these is overridable in .env and a rejected id is reported verbatim.
 CHAT_MODEL_DEFAULTS = {
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
     "gemini": "gemini-3.8-flash",
     "openai": "gpt-4o-mini",
     "openai_compatible": "gpt-4o-mini",
@@ -150,6 +152,10 @@ class AIConfigError(AIError):
 
 class AIUnreachableError(AIError):
     """DNS, connection, or timeout failure - the endpoint never answered."""
+
+
+class AITimeoutError(AIUnreachableError):
+    """Timeout after the configured transport attempts were exhausted."""
 
 
 class AIHTTPError(AIError):
@@ -398,9 +404,14 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
         raw = response.headers.get("retry-after", "").strip()
         if raw:
             try:
-                return min(float(raw), 20.0)
+                delay = float(raw)
+                if math.isfinite(delay) and delay >= 0:
+                    return delay
             except ValueError:
-                pass  # An HTTP-date; retrying with the default backoff is fine.
+                try:
+                    return max(0.0, parsedate_to_datetime(raw).timestamp() - time.time())
+                except (ValueError, TypeError, OverflowError):
+                    pass
     return min(BACKOFF_CAP, BACKOFF_BASE * (2 ** (attempt - 1))) * (0.8 + 0.4 * random.random())
 
 
@@ -430,6 +441,10 @@ async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
     """
     attempts = attempts or env.AI_MAX_ATTEMPTS
     timeout = timeout or env.AI_TIMEOUT
+    wait_budget = env.get_float("AI_RETRY_WAIT_BUDGET_SECONDS", 120.0)
+    if not math.isfinite(wait_budget) or wait_budget < 0:
+        wait_budget = 120.0
+    waited = 0.0
     dropped: set[str] = set()
     last_error: AIError | None = None
     response: httpx.Response | None = None
@@ -446,7 +461,8 @@ async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
                 response = await client.post(url, headers=headers, json=body)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             kind = type(exc).__name__
-            last_error = AIUnreachableError(
+            error_type = AITimeoutError if isinstance(exc, httpx.TimeoutException) else AIUnreachableError
+            last_error = error_type(
                 f"{provider} is unreachable at {url} ({kind}: {exc})", provider)
             log.warning("[ai] %s (attempt %d/%d)", last_error, attempt, attempts)
         else:
@@ -484,7 +500,13 @@ async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
                 log.warning("[ai] %s (attempt %d/%d)", last_error, attempt, attempts)
 
         if attempt < attempts:
-            await asyncio.sleep(_retry_delay(response, attempt))
+            delay = _retry_delay(response, attempt)
+            if delay > wait_budget - waited:
+                log.warning("[ai] %s retry wait budget exhausted (next wait %.1fs)",
+                            provider, delay)
+                break
+            await asyncio.sleep(delay)
+            waited += delay
 
     raise last_error or AIError(f"{provider} request failed", provider)
 
@@ -693,6 +715,32 @@ def parse_json_object(text: str, provider: str = "") -> dict:
 
 # --- public API --------------------------------------------------------------
 
+async def _chat_post(cfg: ChatConfig, body: dict) -> tuple[dict, ChatConfig]:
+    """Fail over only after primary transient retries have been exhausted."""
+    try:
+        return await _post_json(cfg.url, cfg.headers, body, provider=cfg.provider), cfg
+    except AIError as exc:
+        eligible = isinstance(exc, AITimeoutError) or (
+            isinstance(exc, AIHTTPError) and exc.status in (429, 503))
+        explicit = env.get("SECONDARY_AI_PROVIDER")
+        if not eligible or not explicit:
+            raise
+        provider = _resolve_provider(explicit)
+        if not provider:
+            raise
+        _, key = env.first_env(*CHAT_KEY_ENVS[provider])
+        if not key:
+            raise
+        model = env.get("SECONDARY_AI_MODEL") or CHAT_MODEL_DEFAULTS[provider]
+        secondary = ChatConfig(provider, key, model, f"{_chat_base_url(provider)}/chat/completions")
+        if (secondary.provider, secondary.model) == (cfg.provider, body["model"]):
+            raise
+        log.warning("[ai] %s exhausted retries; switching chat to %s:%s",
+                    cfg.provider, provider, model)
+        body["model"] = model
+        return await _post_json(secondary.url, secondary.headers, body, provider=provider), secondary
+
+
 async def chat_json(system_prompt: str, user_prompt: str, *, temperature: float = 0.0,
                     max_tokens: int | None = None, model: str | None = None) -> dict:
     """One chat completion that must yield a JSON object. Raises AIError."""
@@ -715,7 +763,7 @@ async def chat_json(system_prompt: str, user_prompt: str, *, temperature: float 
 
     last_error: AIError | None = None
     for json_attempt in range(1, 3):
-        data = await _post_json(cfg.url, cfg.headers, body, provider=cfg.provider)
+        data, cfg = await _chat_post(cfg, body)
         usage = CHAT_USAGE.get()
         if usage is not None:
             reported = data.get("usage") or {}
@@ -755,7 +803,7 @@ async def chat_text(system_prompt: str, user_prompt: str, *,
                          {"role": "user", "content": user_prompt}],
             "temperature": temperature,
             "max_tokens": 64}
-    data = await _post_json(cfg.url, cfg.headers, body, provider=cfg.provider)
+    data, cfg = await _chat_post(cfg, body)
     return completion_text(data, cfg.provider)
 
 def _normalize(vector: list[float]) -> list[float]:

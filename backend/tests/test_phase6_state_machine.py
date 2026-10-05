@@ -289,7 +289,7 @@ def test_only_the_four_allowed_states_exist(db):
 
 
 def test_failure_updates_attempt_count_last_error_and_status(
-        db, sessions, live_queue, monkeypatch):
+        db, sessions, live_queue, monkeypatch, successful_brief):
     """A failing worker records the attempt and the reason."""
     import app.tasks as app_tasks
 

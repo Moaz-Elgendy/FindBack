@@ -12,7 +12,7 @@ def payload():
                 best_takeaway=None, entities={'tools_products': ['Claude Code'], 'people_orgs': [], 'numbers': []},
                 topics=['coding'], tags=['claude code', 'claude', 'coding', 'code', 'ai', 'ai tools',
                 'developer tools', 'developers', 'software development', 'programming', 'tutorial',
-                'skills', 'agent skills', 'testing', 'code writing'],
+                'skills', 'code tools', 'testing', 'code writing'],
                 search_phrases=['Find Claude Code skills.', 'Tools for writing code.', 'AI tools for developers.',
                                 'Claude Code tutorial.', 'Skills for coding.'],
                 likely_intent='You may have saved this to write code.', suggested_action=None,
@@ -140,7 +140,7 @@ def test_oversized_segment_and_many_chunks_keep_every_request_bounded(monkeypatc
                 assert len(data['extracted_chunks']) <= 2
                 refs = data['allowed_timestamps']
                 assert set(refs) == {p['source_ref'] for c in data['extracted_chunks'] for p in c['key_points']}
-            output['key_points'] = [{'point': 'Claude writes tests.', 'source_ref': ref} for ref in dict.fromkeys(refs)]
+            output['key_points'] = [{'point': 'Claude supports writing software tests.', 'source_ref': ref} for ref in dict.fromkeys(refs)]
             return output
     gateway = Gateway()
     result = asyncio.run(brief_v2.extract(ev, gateway))

@@ -10,12 +10,37 @@ from app import env
 from app.schemas import BriefV2
 from app.services.ai_gateway import get_gateway
 
-PROMPT_VERSION = 'brief_v2'
-SYSTEM_PROMPT = (Path(__file__).parent.parent / 'prompts' / 'brief_v2.txt').read_text()
+PROMPT_VERSION = 'brief_v3.2'
+SYSTEM_PROMPT = (Path(__file__).parent.parent / 'prompts' / 'brief_v3.txt').read_text()
 FORBIDDEN = ("the video's spoken content was unavailable", 'only the caption was available',
              'this video discusses', 'this post is about')
 BANNED_TAGS = {'interesting', 'useful', 'video content', 'saved', 'pending', 'memory'}
 log = logging.getLogger('findback.brief')
+
+
+def normalized(text: str) -> str:
+    return ' '.join(re.findall(r'\w+', text.casefold()))
+
+
+def bad_tag(tag: str) -> bool:
+    from app.services.search import STOPWORDS
+    noise = STOPWORDS | set('every should most people only scratch surface what can five help automatically right before across know unlock reactions comments original audio see more how'.split())
+    words = normalized(tag).replace("_", " ").split()
+    return not words or words[0] in noise or tag in BANNED_TAGS
+
+
+def copied_points(points: list[dict], evidence: dict) -> bool:
+    sentences = {normalized(part) for s in evidence.get('transcript', [])
+                 for part in [s['text'], *re.split(r'[.!?]+', s['text'])]}
+    return any(normalized(part) in sentences and len(normalized(part).split()) >= 3
+               for p in points for part in [p['point'], p['point'].split(':',1)[-1]])
+
+
+def evidence_text(evidence: dict) -> str:
+    return normalized(' '.join([str(evidence.get(k) or '') for k in ('title','author','caption','ocr_text')]
+                              + [s['text'] for s in evidence.get('transcript', [])]
+                              + list(evidence.get('comments', [])) + list(evidence.get('frame_notes', []))))
+
 
 
 def clean_tags(values: list[str]) -> list[str]:
@@ -25,7 +50,7 @@ def clean_tags(values: list[str]) -> list[str]:
     for value in values:
         tag = re.sub(r'\s+', ' ', value.strip().lower())
         tag = re.sub(r'\bcalude\b', 'claude', tag)
-        if tag and len(tag) <= 80 and tag not in BANNED_TAGS and 1 <= len(tag.split()) <= 3 and tag not in out:
+        if tag and len(tag) <= 80 and not bad_tag(tag) and 1 <= len(tag.split()) <= 3 and tag not in out:
             out.append(tag)
     return out[:30]
 
@@ -44,8 +69,33 @@ def model_input(evidence: dict) -> dict:
 
 def validate(data: dict, evidence: dict) -> BriefV2:
     data = dict(data)
-    data['tags'] = clean_tags(data.get('tags', []))
+    corpus = evidence_text(evidence)
+    phrases = [phrase for phrase in ('claude skills', 'agent skills') if phrase in corpus]
+    data['tags'] = clean_tags(phrases + data.get('tags', []))
     brief = BriefV2.model_validate(data)
+    if copied_points(data.get('key_points', []), evidence):
+        raise ValueError('Points must synthesize facts, not copy transcript sentences')
+    written = evidence_text(dict(evidence, transcript=[]))
+    output_text = normalized(json.dumps(data, ensure_ascii=False))
+    if 'built in' in output_text and 'built in' not in corpus:
+        raise ValueError('Built-in availability is not established by source evidence')
+    for name in ('anthropic','github','telegram'):
+        if name in output_text.split() and name not in corpus.split():
+            raise ValueError('Claim mentions a name absent from source evidence')
+    if 'comment' in output_text.split() and 'comment' not in corpus.split():
+        raise ValueError('Comment action is absent from source evidence')
+    for name in [*brief.entities.tools_products, *brief.entities.people_orgs]:
+        if normalized(name) not in written:
+            raise ValueError('Named entity requires written-source confirmation, not an STT guess')
+    for tag in brief.tags:
+        if tag in {'anthropic','github','github repos','telegram','openai','claude mem','superpowers','impeccable','task observer'} and normalized(tag) not in corpus:
+            raise ValueError('Named tag is not supported by evidence')
+        if tag in {'claude skills','agent skills'}:
+            words=set(corpus.split())
+            if tag=='claude skills' and not ({'claude','skills'} <= words or 'claude' in words and 'مهارات' in words):
+                raise ValueError('Skill phrase tag is unsupported')
+            if tag=='agent skills' and not ({'agent','skills'} <= words or bool({'مهارات','مهارة'} & words) and bool({'وكلاء','وكيل'} & words)):
+                raise ValueError('Agent skill phrase tag is unsupported')
     encoded = json.dumps(brief.model_dump(), ensure_ascii=False).lower()
     if any(phrase in encoded for phrase in FORBIDDEN):
         raise ValueError('Forbidden extraction commentary')
@@ -70,6 +120,8 @@ def validate(data: dict, evidence: dict) -> BriefV2:
 
 async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = None) -> BriefV2:
     supplied = model_input(evidence)
+    if evidence.get('evidence_level') == 'full_transcript':
+        supplied['allowed_timestamps'] = list(dict.fromkeys(timestamp(s['start']) for s in evidence.get('transcript', [])))
     if reduced is not None:
         supplied.pop('transcript', None)
         supplied['extracted_chunks'] = reduced
@@ -93,7 +145,17 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
             return result
         except (ValueError, TypeError) as exc:
             # Do not repeat invalid model text or fetch errors as model content.
-            error = 'Validation failed; check required fields, counts, confidence, hedging and source timestamps.'
+            error = 'Validation failed; check required fields, counts, confidence, hedging, source timestamps, grounded names/tags and synthesized points.'
+            if type(exc) is ValueError:
+                error += ' ' + str(exc)
+                if str(exc) == 'Named entity requires written-source confirmation, not an STT guess':
+                    written = evidence_text(dict(evidence, transcript=[]))
+                    confirmed = [name for key in ('tools_products', 'people_orgs')
+                                 for name in data.get('entities', {}).get(key, []) if normalized(name) in written]
+                    error += ' Keep only these confirmed named entities: ' + json.dumps(confirmed, ensure_ascii=False) + '. Remove every other name from entities, tags and prose; describe its function instead.'
+            if evidence.get('evidence_level') == 'full_transcript':
+                error += ' Each key point must use exactly one of these source_ref values: ' + json.dumps(supplied['allowed_timestamps']) + '. Omit caption-only key points; keep caption-only facts in instant_brief or suggested_action.'
+            log.warning('Brief validation rejected: %s', error)
             if attempt:
                 raise ValueError(error) from exc
     raise ValueError(error)
@@ -155,35 +217,17 @@ def legacy(brief: BriefV2):
 
 
 def offline(evidence: dict) -> tuple[dict, object]:
-    """Grounded fallback. Sparse evidence is never padded to satisfy tag counts."""
+    """A pending placeholder: no invented summary, search handles or transcript bullets."""
     from app.schemas import Brief
-    from app.services.search import STOPWORDS
-    transcript = evidence.get('transcript') or []
-    title = evidence.get('title') or 'Saved link'
-    body = evidence.get('ocr_text') or evidence.get('caption') or title
-    points = [{'point': s['text'], 'source_ref': timestamp(s['start'])} for s in transcript]
-    if not points and body != title:
-        points = [{'point': line.strip(), 'source_ref': 'ocr' if evidence.get('ocr_text') else 'caption'}
-                  for line in body.splitlines() if line.strip()][:25]
-    corpus = ' '.join([title, body, *[s['text'] for s in transcript]])
-    words = re.findall(r'[^\W_]+(?:[-+][^\W_]+)*', corpus.lower())
-    candidates = [w for w in words if w not in STOPWORDS and len(w) > 1]
-    candidates.extend(' '.join(words[i:i+n]) for n in (2, 3) for i in range(len(words)-n+1)
-                      if words[i] not in STOPWORDS and words[i+n-1] not in STOPWORDS)
-    if evidence.get('source_platform'): candidates.append(evidence['source_platform'])
-    full = evidence.get('evidence_level') == 'full_transcript'
-    text = ' '.join(s['text'] for s in transcript[:3]) if transcript else body
-    tags = clean_tags(candidates)
-    data = dict(title=title[:80], content_type='video' if transcript else 'other',
-                instant_brief=text[:600], key_points=points, best_takeaway=None,
-                entities={'tools_products': [], 'people_orgs': [], 'numbers': []}, topics=[], tags=tags,
-                search_phrases=[], likely_intent=None, suggested_action=None,
-                confidence='medium' if full or evidence.get('caption') or evidence.get('ocr_text') else 'low',
-                evidence_used=[k for k, v in [('transcript', transcript), ('caption', evidence.get('caption')),
-                               ('ocr', evidence.get('ocr_text')), ('metadata', title)] if v],
-                missing_info=None if full else ('افتح المصدر الأصلي للتفاصيل.' if re.search(r'[\u0600-\u06ff]', body)
-                                                else 'Open original for the remaining details.'))
-    compatible = Brief(title=data['title'], overview=data['instant_brief'],
-                       highlights=[p['point'] for p in points], topics=tags,
-                       timestamps=[p['source_ref'] for p in points if p['source_ref']])
-    return data, compatible
+    from app.services.fetcher import clean_source_text
+    title = clean_source_text(evidence.get('title') or 'Saved link', title=True)[:80] or 'Saved link'
+    arabic = bool(re.search(r'[\u0600-\u06ff]', evidence.get('caption') or title))
+    data = dict(title=title, content_type='video' if evidence.get('transcript') else 'other',
+                instant_brief=title, key_points=[], best_takeaway=None,
+                entities={'tools_products': [], 'people_orgs': [], 'numbers': []}, topics=[], tags=[],
+                search_phrases=[], likely_intent=None, suggested_action=None, confidence='low',
+                evidence_used=[k for k,v in [('transcript',evidence.get('transcript')),('caption',evidence.get('caption')),
+                    ('ocr',evidence.get('ocr_text')),('metadata',title)] if v],
+                missing_info='تعذّر إنشاء الملخص؛ إعادة المحاولة معلّقة.' if arabic else 'Brief generation failed; a retry is pending.',
+                brief_source='fallback', evidence_level=evidence.get('evidence_level','metadata_only'), prompt_version=PROMPT_VERSION)
+    return data, Brief(title=title, overview=title)

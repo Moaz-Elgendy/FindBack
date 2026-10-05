@@ -82,6 +82,7 @@ class ItemDetail(BaseModel):
     transcript: List[Dict[str, Any]] = []
     ocr_text: str = ""
     prompt_version: Optional[str] = None
+    brief_source: str | None = None
     needs_retry: bool = False
     processing_metadata: Dict[str, Any] = {}
 
@@ -103,6 +104,7 @@ class ItemDetail(BaseModel):
                     evidence_level=evidence.get("evidence_level"),
                     transcript=evidence.get("transcript", []), ocr_text=evidence.get("ocr_text", ""),
                     prompt_version=metadata.get("prompt_version"), processing_metadata=metadata,
+                    brief_source=brief.get("brief_source"),
                     needs_retry=bool(getattr(value, "needs_retry", False)))
         return data
 
