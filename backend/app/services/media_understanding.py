@@ -187,6 +187,42 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
                                 cost_known=result.cost is not None)
             except Exception as exc:
                 failure(bundle, 'audio', exc)
+            try:
+                frames = await asyncio.to_thread(sample_frames, path, directory, bundle.duration)
+            except Exception as exc:
+                failure(bundle, 'frames', exc)
+                frames = []
+            for index, frame in enumerate(frames):
+                try:
+                    text = await asyncio.to_thread(read_frame, frame)
+                    if text:
+                        bundle.ocr_text += ('\n' if bundle.ocr_text else '') + text
+                        bundle.frame_notes.append(f'Frame {index + 1}: {text}')
+                except Exception as exc:
+                    failure(bundle, 'ocr', exc)
     bundle.classify()
     metadata.update(duration=bundle.duration, seconds_taken=time.monotonic() - began)
     return bundle, metadata
+
+
+def sample_frames(media: Path, directory: Path, duration: float | None) -> list[Path]:
+    cap = max(1, min(12, env.get_int('MEDIA_FRAME_CAP', 10)))
+    output = str(directory / 'frame-%03d.jpg')
+    timeout = max(30, env.get_int('MEDIA_FFMPEG_TIMEOUT', 300))
+    base = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(media)]
+    subprocess.run(base + ['-vf', r"select=gt(scene\,0.25),scale=720:-2", '-vsync', 'vfr',
+                          '-frames:v', str(cap), '-q:v', '3', output],
+                   check=True, capture_output=True, timeout=timeout)
+    frames = sorted(directory.glob('frame-*.jpg'))[:cap]
+    if not frames:
+        interval = max(1, (duration or 30) / cap)
+        subprocess.run(base + ['-vf', f'fps=1/{interval},scale=720:-2', '-frames:v', str(cap),
+                              '-q:v', '3', output], check=True, capture_output=True, timeout=timeout)
+        frames = sorted(directory.glob('frame-*.jpg'))[:cap]
+    return frames
+
+
+def read_frame(frame: Path) -> str:
+    result = subprocess.run(['tesseract', str(frame), 'stdout', '-l', env.get('MEDIA_OCR_LANGUAGES', 'eng+ara')],
+                            check=True, capture_output=True, text=True, timeout=30)
+    return result.stdout.strip()
