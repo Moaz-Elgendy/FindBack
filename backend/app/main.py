@@ -154,10 +154,18 @@ def prometheus_metrics():
 @app.get("/health")
 def health():
     checks = {"db": "down", "redis": "down"}
+    queue = {}
+    # One session for both reads. The queue counts are best-effort: failing to
+    # collect them says nothing about whether the database answers.
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
-        checks["db"] = "ok"
+            checks["db"] = "ok"
+            try:
+                queue = metrics.collect_queue_metrics(db)["counts"]
+            except Exception as exc:  # noqa: BLE001
+                log.warning("queue counts unavailable: %s",
+                            observability.describe_exc(exc))
     except Exception:
         pass
     try:
@@ -168,16 +176,9 @@ def health():
     status = "ok" if checks["db"] == "ok" else "degraded"
     # Phase 14: the retention policy is part of the service's public contract,
     # so an operator can see what is kept and for how long without reading code.
-    # Phase 18: the same reasoning for how much work is outstanding. Collected
-    # through the health handler's own session rather than a second one, and
-    # failing soft, because a health check must not be the thing that 500s.
-    queue = {}
-    try:
-        with SessionLocal() as db:
-            queue = metrics.collect_queue_metrics(db)["counts"]
-    except Exception as exc:  # noqa: BLE001
-        log.warning("queue counts unavailable: %s",
-                    observability.describe_exc(exc))
+    # Phase 18: the same reasoning for how much work is outstanding (collected
+    # above, through the same session, and failing soft because a health check
+    # must not be the thing that 500s).
     return {"status": status, "service": "findback-api", **checks,
             "retention": retention.retention_policy(), "queue": queue}
 

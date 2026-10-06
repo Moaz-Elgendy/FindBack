@@ -130,6 +130,10 @@ async def stage_understand(item) -> None:
             processing["brief_fallback"] = False
         except Exception as exc:
             log.warning("[brief] item=%s validation/provider failure=%s", getattr(item, "id", ""), type(exc).__name__)
+            if not usage.get("validation_rejections") or not isinstance(exc, (ValueError, TypeError)):
+                usage.setdefault("validation_rejections", []).append({
+                    "reason": "provider" if isinstance(exc, ai.AIError) else brief_v2.rejection_reason(exc),
+                    "detail": type(exc).__name__ if isinstance(exc, ai.AIError) else str(exc)})
             item.brief_v2, brief = brief_v2.offline(evidence)
             processing["brief_fallback"] = True
             processing["tag_shortfall"] = len(item.brief_v2["tags"]) < 15
@@ -139,6 +143,7 @@ async def stage_understand(item) -> None:
         item.needs_retry = item.brief_v2["brief_source"] == "fallback"
         processing["brief_attempts"] = processing.get("brief_attempts", 0) + 1
         processing["llm_usage"] = usage
+        processing["brief_rejections"] = usage.get("validation_rejections", [])
         pricing = env.get("BRIEF_INPUT_COST_PER_MILLION") and env.get("BRIEF_OUTPUT_COST_PER_MILLION")
         processing["llm_cost"] = ((usage.get("input_tokens", 0) * env.get_float("BRIEF_INPUT_COST_PER_MILLION", 0)
                                   + usage.get("output_tokens", 0) * env.get_float("BRIEF_OUTPUT_COST_PER_MILLION", 0))

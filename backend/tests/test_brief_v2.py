@@ -8,7 +8,7 @@ from app.services import brief_v2
 def payload():
     return dict(title='Claude Code skills', content_type='tutorial',
                 instant_brief='Use Claude Code to write and test code.',
-                key_points=[{'point': 'Claude Code: writes code.', 'source_ref': '00:05'}],
+                key_points=[{'point': 'Claude Code: writes code.', 'segment_ids': [1], 'source_ref': '00:05'}],
                 best_takeaway=None, entities={'tools_products': ['Claude Code'], 'people_orgs': [], 'numbers': []},
                 topics=['coding'], tags=['claude code', 'claude', 'coding', 'code', 'ai', 'ai tools',
                 'developer tools', 'developers', 'software development', 'programming', 'tutorial',
@@ -56,8 +56,8 @@ def test_invalid_schema_repairs_once_and_never_sends_fetch_errors():
     assert 'repair' in gateway.calls[1][1].lower()
 
 
-def test_full_transcript_requires_grounded_timestamp():
-    bad = dict(payload(), key_points=[{'point': 'Claude Code', 'source_ref': '99:59'}])
+def test_full_transcript_requires_known_segment_id():
+    bad = dict(payload(), key_points=[{'point': 'Claude Code', 'segment_ids': [99]}])
     with pytest.raises(ValueError):
         brief_v2.validate(bad, evidence())
 
@@ -111,7 +111,7 @@ def test_long_transcript_is_mapped_and_merged_without_losing_timestamps(monkeypa
             output = payload()
             if 'transcript' in data:
                 output['key_points'] = [{'point': 'Use Claude Code to write tests.',
-                                        'source_ref': brief_v2.timestamp(data['transcript'][0]['start'])}]
+                                        'segment_ids': [data['transcript'][0]['id']]}]
             else:
                 output['key_points'] = [p for c in data['extracted_chunks'] for p in c['key_points']]
             return output
@@ -135,12 +135,12 @@ def test_oversized_segment_and_many_chunks_keep_every_request_bounded(monkeypatc
             output = payload()
             if 'transcript' in data:
                 assert len(json.dumps(data['transcript'], ensure_ascii=False)) <= 1000
-                refs = [brief_v2.timestamp(s['start']) for s in data['transcript']]
+                refs = [s['id'] for s in data['transcript']]
             else:
                 assert len(data['extracted_chunks']) <= 2
-                refs = data['allowed_timestamps']
-                assert set(refs) == {p['source_ref'] for c in data['extracted_chunks'] for p in c['key_points']}
-            output['key_points'] = [{'point': 'Claude supports writing software tests.', 'source_ref': ref} for ref in dict.fromkeys(refs)]
+                refs = data['allowed_segment_ids']
+                assert set(refs) == {i for c in data['extracted_chunks'] for p in c['key_points'] for i in p['segment_ids']}
+            output['key_points'] = [{'point': 'Claude supports writing software tests.', 'segment_ids': [ref]} for ref in dict.fromkeys(refs)]
             return output
     gateway = Gateway()
     result = asyncio.run(brief_v2.extract(ev, gateway))

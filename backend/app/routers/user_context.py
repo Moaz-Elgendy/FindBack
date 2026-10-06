@@ -4,6 +4,8 @@ Every route here reads and writes the caller's own `UserMemory` row and nothing
 else. The content it points at is shared, the reason for saving is not, so no
 route in this file writes to ContentAsset.
 """
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -28,7 +30,7 @@ def _response(db: Session, user, memory) -> UserContextResponse:
 
 
 @router.get("/{content_id}", response_model=UserContextResponse)
-def get_context(content_id: str, db: Session = Depends(get_db),
+def get_context(content_id: UUID, db: Session = Depends(get_db),
                 user=Depends(get_current_user)):
     """This user's note and intent for one piece of content."""
     memory = user_context.get_memory(db, user.id, content_id)
@@ -40,7 +42,7 @@ def get_context(content_id: str, db: Session = Depends(get_db),
 
 
 @router.patch("/{content_id}", response_model=UserContextResponse)
-def update_context(content_id: str, payload: UserContextIn,
+def update_context(content_id: UUID, payload: UserContextIn,
                    db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Set or update the note and/or the intent.
 
@@ -62,7 +64,7 @@ def update_context(content_id: str, payload: UserContextIn,
 
 
 @router.delete("/{content_id}", response_model=UserContextResponse)
-def clear_context(content_id: str, db: Session = Depends(get_db),
+def clear_context(content_id: UUID, db: Session = Depends(get_db),
                   user=Depends(get_current_user)):
     """Withdraw the note and the intent. The save itself is kept."""
     memory = user_context.clear_context(db, user.id, content_id)

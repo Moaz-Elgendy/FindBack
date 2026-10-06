@@ -10,8 +10,12 @@ from app.services import identity
 from app.services.auth_tokens import decode_access_token
 
 
-async def get_current_user(authorization: str | None = Header(None), db: Session = Depends(get_db)) -> User:
+def get_current_user(authorization: str | None = Header(None), db: Session = Depends(get_db)) -> User:
     """Verify JWTs in production; permit an explicit local-only dev identity.
+
+    A plain `def` on purpose: FastAPI runs it in a worker thread. As `async def`
+    it ran on the event loop and its synchronous queries (`resolve_user`)
+    stalled every other request while Postgres answered.
 
     Phase 16: the token is still verified exactly as before, by
     `decode_access_token`. What changed is only which claim identifies the user

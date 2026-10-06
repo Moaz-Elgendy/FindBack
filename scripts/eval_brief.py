@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate actual Brief stages using fixed evidence; network only with --live/--url."""
+"""Evaluate actual Brief stages using fixed evidence; uses the production Brief stages, prompt, provider order and validators."""
 from __future__ import annotations
 
 import argparse
@@ -19,7 +19,7 @@ class FixtureAdapter:
     def __init__(self, output): self.output = output
     async def generate_json(self, system, user, **kwargs):
         assert system == brief_v2.SYSTEM_PROMPT
-        assert 'fetch_errors' not in json.loads(user)
+        assert 'fetch_errors' not in json.loads(user.split('\nRepair', 1)[0])
         return self.output
 
 
@@ -34,7 +34,12 @@ def checks(output: dict, evidence: dict) -> dict[str, bool]:
         'no_meta_phrases': not any(p in text for p in brief_v2.FORBIDDEN),
         'tag_count_15_30': 15 <= len(output['tags']) <= 30,
         'timestamped_points': not full or bool(output['key_points']) and all(p['source_ref'] in {
-            brief_v2.timestamp(s['start']) for s in evidence['transcript']} for p in output['key_points']),
+            brief_v2.timestamp(s['start']) for s in evidence['transcript']}
+            and bool(p.get('segment_ids'))
+            and all(i in {s['id'] for s in brief_v2.numbered_segments(evidence)} for i in p['segment_ids'])
+            and p['source_ref'] == brief_v2.timestamp(min(
+                s['start'] for s in brief_v2.numbered_segments(evidence) if s['id'] in p['segment_ids']))
+            for p in output['key_points']),
         'confidence_matches_evidence': output['confidence'] in ('high', 'medium') if full
                                        else output['confidence'] in ('low', 'medium'),
     }
@@ -52,12 +57,14 @@ async def run(evidence: dict, output: dict | None = None) -> dict:
         result = item.brief_v2
         assert result.get('missing_info') is None or result['missing_info'] not in item.search_text
         return {'output': result, 'checks': checks(result, evidence),
-                'processing_metadata': item.processing_metadata}
+                'processing_metadata': item.processing_metadata,
+                'rejections': item.processing_metadata.get('brief_rejections', [])}
     finally:
         if old is not None: ai_gateway.set_gateway(old)
 
 
 async def main(args) -> int:
+    if args.runs < 1: raise ValueError('--runs must be positive')
     results = []
     if args.stored_item:
         from app.database import SessionLocal
@@ -66,7 +73,8 @@ async def main(args) -> int:
             item = db.get(Item, args.stored_item)
             if item is None: raise ValueError('Saved item not found')
             evidence = dict(item.evidence_bundle)
-        results.append({'name': 'stored_evidence_live', **await run(evidence)})
+        for repeat in range(1, args.runs + 1):
+            results.append({'name': 'stored_evidence_live', 'run': repeat, **await run(evidence)})
     elif args.url:
         try:
             fetched = await fetcher.fetch_content(args.url)
@@ -99,5 +107,6 @@ if __name__ == '__main__':
     parser.add_argument('--url', help='Manually compare real caption-only and acquired media; uses network')
     parser.add_argument('--title', help='Optional trusted title hint when upstream metadata is unavailable')
     parser.add_argument('--stored-item', help='Evaluate persisted evidence from the active configured DB using the real LLM')
+    parser.add_argument('--runs', type=int, default=1, help='Serial real-LLM repetitions for --stored-item')
     parser.add_argument('--output', help='Write operator evaluation JSON')
     raise SystemExit(asyncio.run(main(parser.parse_args())))

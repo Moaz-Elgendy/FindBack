@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from pydantic import ValidationError
 
 from app import env
 from app.schemas import BriefV2
@@ -60,15 +61,52 @@ def timestamp(start: float) -> str:
     return f'{seconds // 60:02d}:{seconds % 60:02d}'
 
 
+def numbered_segments(evidence: dict) -> list[dict]:
+    # Number before splitting/chunking; pieces retain their original segment id/start.
+    return [dict(segment, id=segment.get('id', index))
+            for index, segment in enumerate(evidence.get('transcript') or [], 1)]
+
+
+def rejection_reason(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        errors = exc.errors()
+        if any(e['loc'] and e['loc'][0] == 'tags' and e['type'] in ('too_short', 'too_long') for e in errors):
+            return 'tag_count'
+        return 'schema'
+    message = str(exc).lower()
+    if 'segment' in message: return 'timestamp'
+    if 'name' in message or 'named' in message: return 'unsupported_name'
+    if 'tag' in message: return 'tag_count' if 'count' in message else 'unsupported_tag'
+    if 'copy' in message: return 'copied_transcript'
+    return 'grounding'
+
+
 def model_input(evidence: dict) -> dict:
     # Explicit allowlist: failures and internal processing data cannot become content.
     keys = ('source_platform', 'url', 'source_id', 'title', 'author', 'duration',
             'caption', 'transcript', 'ocr_text', 'frame_notes', 'comments', 'evidence_level', 'language')
-    return {k: evidence[k] for k in keys if k in evidence}
+    supplied = {k: evidence[k] for k in keys if k in evidence}
+    if evidence.get('transcript'):
+        supplied['transcript'] = [{k: segment[k] for k in ('id', 'start', 'text')}
+                                  for segment in numbered_segments(evidence)]
+    return supplied
 
 
 def validate(data: dict, evidence: dict) -> BriefV2:
     data = dict(data)
+    segments = {s['id']: s for s in numbered_segments(evidence)}
+    points = [dict(point) for point in data.get('key_points', [])]
+    for point in points:
+        ids = point.get('segment_ids')
+        free_time = re.fullmatch(r'\d+:\d{2}', str(point.get('source_ref') or ''))
+        if evidence.get('evidence_level') == 'full_transcript' or ids or free_time:
+            if not isinstance(ids, list) or not ids or any(type(i) is not int for i in ids):
+                raise ValueError('Missing or invalid segment_ids: cite a nonempty list of integer segment ids')
+            if any(i not in segments for i in ids):
+                raise ValueError('Unknown segment id: cite only supplied transcript segment ids')
+            point['segment_ids'] = list(dict.fromkeys(ids))
+            point['source_ref'] = timestamp(min(segments[i]['start'] for i in ids))
+    data['key_points'] = points
     corpus = evidence_text(evidence)
     phrases = [phrase for phrase in ('claude skills', 'agent skills') if phrase in corpus]
     data['tags'] = clean_tags(phrases + data.get('tags', []))
@@ -103,11 +141,7 @@ def validate(data: dict, evidence: dict) -> BriefV2:
                                   or re.match(r'^(قد|ربما|لعل)', brief.likely_intent)):
         raise ValueError('likely_intent must be hedged')
     full = evidence.get('evidence_level') == 'full_transcript'
-    if full:
-        allowed = {timestamp(s['start']) for s in evidence.get('transcript', [])}
-        if any(p.source_ref not in allowed for p in brief.key_points):
-            raise ValueError('Every full-transcript point needs a segment start timestamp')
-    elif brief.confidence == 'high' or not brief.missing_info:
+    if not full and (brief.confidence == 'high' or not brief.missing_info):
         raise ValueError('Limited evidence requires low/medium confidence and missing_info')
     available = {'metadata'}
     if evidence.get('transcript'): available.add('transcript')
@@ -121,12 +155,14 @@ def validate(data: dict, evidence: dict) -> BriefV2:
 async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = None) -> BriefV2:
     supplied = model_input(evidence)
     if evidence.get('evidence_level') == 'full_transcript':
-        supplied['allowed_timestamps'] = list(dict.fromkeys(timestamp(s['start']) for s in evidence.get('transcript', [])))
+        supplied['allowed_segment_ids'] = [s['id'] for s in numbered_segments(evidence)]
     if reduced is not None:
         supplied.pop('transcript', None)
-        supplied['extracted_chunks'] = reduced
-        supplied['allowed_timestamps'] = list(dict.fromkeys(
-            p['source_ref'] for chunk in reduced for p in chunk['key_points'] if p['source_ref']))
+        supplied['extracted_chunks'] = [dict(chunk, key_points=[
+            {k: v for k, v in point.items() if k != 'source_ref'} for point in chunk['key_points']])
+            for chunk in reduced]
+        supplied['allowed_segment_ids'] = list(dict.fromkeys(
+            i for chunk in reduced for point in chunk['key_points'] for i in point['segment_ids']))
     user = json.dumps(supplied, ensure_ascii=False)
     # Bound metadata and reduction overhead too; oversized input uses the grounded fallback.
     if len(user) > max(1000, env.get_int('BRIEF_CHUNK_CHARS', 12000)) + 12000:
@@ -140,12 +176,25 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
         try:
             result = validate(data, evidence)
             if reduced is not None and evidence.get('evidence_level') == 'full_transcript':
-                if any(p.source_ref not in supplied['allowed_timestamps'] for p in result.key_points):
-                    raise ValueError('Merge introduced an unavailable timestamp')
+                if any(i not in supplied['allowed_segment_ids'] for p in result.key_points for i in p.segment_ids):
+                    raise ValueError('Merge introduced an unavailable segment id')
             return result
         except (ValueError, TypeError) as exc:
             # Do not repeat invalid model text or fetch errors as model content.
-            error = 'Validation failed; check required fields, counts, confidence, hedging, source timestamps, grounded names/tags and synthesized points.'
+            from app.services import ai
+            reason = rejection_reason(exc)
+            rejection = {'attempt': attempt + 1, 'reason': reason,
+                         'detail': str(exc) if type(exc) is ValueError else 'Schema validation: ' + ', '.join(
+                             '.'.join(map(str, e['loc'])) + ' (' + e['type'] + ')' for e in exc.errors())
+                             if isinstance(exc, ValidationError) else 'Invalid response type'}
+            if reason == 'unsupported_name':
+                written = evidence_text(dict(evidence, transcript=[]))
+                rejection['entity_support'] = {name: normalized(name) in written
+                    for key in ('tools_products', 'people_orgs') for name in data.get('entities', {}).get(key, [])}
+            usage = ai.CHAT_USAGE.get()
+            if usage is not None:
+                usage.setdefault('validation_rejections', []).append(rejection)
+            error = 'Validation failed [' + reason + ']; check required fields, tag counts, confidence, hedging, segment ids, grounded names/tags and synthesized points.'
             if type(exc) is ValueError:
                 error += ' ' + str(exc)
                 if str(exc) == 'Named entity requires written-source confirmation, not an STT guess':
@@ -154,7 +203,7 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
                                  for name in data.get('entities', {}).get(key, []) if normalized(name) in written]
                     error += ' Keep only these confirmed named entities: ' + json.dumps(confirmed, ensure_ascii=False) + '. Remove every other name from entities, tags and prose; describe its function instead.'
             if evidence.get('evidence_level') == 'full_transcript':
-                error += ' Each key point must use exactly one of these source_ref values: ' + json.dumps(supplied['allowed_timestamps']) + '. Omit caption-only key points; keep caption-only facts in instant_brief or suggested_action.'
+                error += ' Each key point must cite segment_ids from: ' + json.dumps(supplied['allowed_segment_ids']) + '. Omit caption-only key points; keep caption-only facts in instant_brief or suggested_action.'
             log.warning('Brief validation rejected: %s', error)
             if attempt:
                 raise ValueError(error) from exc
@@ -163,7 +212,8 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
 
 async def extract(evidence: dict, gateway=None) -> BriefV2:
     gateway = gateway or get_gateway()
-    segments = evidence.get('transcript') or []
+    evidence = dict(evidence, transcript=numbered_segments(evidence))
+    segments = evidence['transcript']
     cap = max(1000, env.get_int('BRIEF_CHUNK_CHARS', 12000))
     groups, current, size = [], [], 2
     split_segments = []

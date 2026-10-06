@@ -1,10 +1,14 @@
+import re
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 STRIP_PARAMS = {"utm_source","utm_medium","utm_campaign","utm_term","utm_content","fbclid","gclid","igshid","tt_from"}
 
 def canonical_url(url: str) -> str:
     url = url.strip()
-    if not url.startswith("http"):
+    # A scheme means "http://" or "https://", not merely a leading "http": a bare
+    # host such as httpbin.org/get starts with it too and used to be left
+    # without a scheme, which urlparse then reads as a path with no host.
+    if not re.match(r"https?://", url, re.IGNORECASE):
         url = "https://" + url
     p = urlparse(url)
     host = p.hostname.lower() if p.hostname else ""

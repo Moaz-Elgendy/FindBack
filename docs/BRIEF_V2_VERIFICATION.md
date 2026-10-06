@@ -1,64 +1,46 @@
-# Brief pipeline gap verification
+# Brief v3.2 verification
 
-Verified 2026-10-05 against the running Docker API, worker and PostgreSQL. This document supersedes the earlier evaluation-only and operator-annotated provenance claims.
+Verified 2026-10-06 (Africa/Cairo). Results below are observed, not completion claims for unresolved reliability issues.
 
-## Database and record
+## Real runtime and saved record
 
-The running API/worker use `DATABASE_URL=postgresql://findback:<redacted>@postgres:5432/findback`, configured in `docker-compose.yml`. The active server is Docker PostgreSQL 16, database `findback`, server `172.18.0.3:5432`, directory `/var/lib/postgresql/data`, volume `findback_pgdata` (Docker daemon path `/var/lib/docker/volumes/findback_pgdata/_data`). It is separate from host PostgreSQL 18 at `localhost:5432/findback`, directory `/var/lib/postgresql/18/main`. The active database is at `0012_brief_v2`; no migration was added or applied during these gap fixes.
+The Compose PostgreSQL database was empty. It was backed up before existing migrations were applied to `0012_brief_v2`. API/worker use Compose PostgreSQL at `postgres:5432/findback` (DATABASE_URL); the temporary override `/tmp/findback-reel-runtime.yml` publishes it at localhost:55433 because host port 5432 is occupied. The repository Compose configuration was not changed. Restarting without the override can reintroduce the port conflict. No historical backup was restored.
 
-Target reel: `https://www.facebook.com/share/r/19PXq2Y3AR/`.
-Item: `e310cfa3-b604-46f2-b4b0-b5984a3f596b`.
-Content: `7a6d30c1-6720-4093-8316-e1c7e1045f5e`.
+Normal HTTP POST `/api/v1/ingest` of https://www.facebook.com/share/r/19PXq2Y3AR/ created item `bfa5da53-099a-44ea-9ec6-99e9d02bd804`. The historical requested item `e310cfa3-b604-46f2-b4b0-b5984a3f596b` is absent; this fresh record does not establish its former state.
 
-Before removing the earlier operator annotations, a custom-format backup was written to `/home/moaz/.codex/backups/findback/gap-fixes-20261005T153844Z/before-native-reprocess.dump`. SHA-256: `109253666fd1100ec92ce3b128eb8fe8fe03a2777b6988743450e7ac9840fff7`. Parent/file permissions: 0700/0600. A full restore was NOT RUN.
+The automatic worker completed in approximately 102 seconds. Stored status is READY, needs_retry=false, brief_source=llm, evidence_level=full_transcript, prompt_version=brief_v3.2. Gemini gemini-3.8-flash produced the saved Brief. There are 18 transcript chunks, all embedded, and a memory embedding, using gemini-embedding-001. No manual provenance/state writes or process-local provider overrides were used.
 
-The only operator record edit removed `brief_source`, `evidence_level`, `prompt_version` from this Brief and `brief_source` from its processing metadata. Item/job states, retry flags and transcripts were not manually changed. The existing outbox automatically recovered the missing/stale provenance, created durable jobs and published normal Celery tasks. All provenance is now assigned by `stage_understand`, including fallback provenance. Prompt version is separate from the existing `process_item:v1` compatibility label.
+## Timestamp grounding
 
-## Verified failure behavior and configuration
+Production supplies numbered {id,start,text} transcript segments. Points must cite known integer segment_ids; missing/unknown IDs cause rejection and one repair attempt. Code derives mm:ss by flooring the earliest cited start. IDs survive splitting/map-reduce. The Claude Mem regression uses start 39.28 seconds and yields 00:39; the saved Claude Mem point also cites 00:39. Known but semantically wrong IDs remain possible: this validator is not semantic entailment proof.
 
-Regression tests cover a complete transcript followed by LLM failure: the stored placeholder has source `fallback`, low confidence, truthful retry note, empty tags/points, `needs_retry=true`, and a durable pending job. It has no final embedding, chunk vectors or searchable document. Every search candidate path excludes fallback records. A subsequent successful LLM Brief replaces it, clears the flag and is embedded normally.
+## Five real production-path evaluations
 
-The existing HTTP adapter automatically exhausts configured primary attempts on 429/503/timeout, then uses the configured secondary. `Retry-After` numeric and HTTP-date forms are honored. `AI_MAX_RETRIES` caps attempts per provider; `AI_RETRY_WAIT_BUDGET_SECONDS` caps cumulative sleep, so a longer Retry-After exhausts that provider without retrying early. Schema validation can request a separate repair generation. Permanent HTTP errors do not trigger this failover.
+The evaluator calls production stage_understand/stage_brief/stage_chunk, using the same prompt, gateway, provider order, backoff, validation and repair. Five serial runs reused the stored evidence. Gemini returned quota 429; automatic failover used configured Groq openai/gpt-oss-120b, including backoff for Groq TPM throttling. Final checks passed 3/5 (60%); runs 1 and 3 returned fallback. The command exited 1. These evaluation outputs did not replace the accepted stored Gemini Brief.
 
-Actual worker configuration: primary Gemini `gemini-3.8-flash`; `SECONDARY_AI_PROVIDER=groq`, `SECONDARY_AI_MODEL=openai/gpt-oss-120b`; `BRIEF_MAX_TOKENS=6000`. No process-local provider/retry overrides were used for these automatic jobs. Mocked 503, 429, timeout, Retry-After and budget cases passed.
+| Run | Result | Every validation rejection (including repaired attempts) |
+|---|---|---|
+| 1 | FAIL: fallback | 1: schema — Schema validation: title (string_too_long); 2: schema — Schema validation: entities.numbers.0 (string_type) |
+| 2 | PASS | 1: unsupported_name — Named entity requires written-source confirmation, not an STT guess [Fine skills, Pickabla] |
+| 3 | FAIL: fallback | 1: schema — Schema validation: entities.numbers.0 (string_type); 2: unsupported_name — Named entity requires written-source confirmation, not an STT guess [skill library, pickabla] |
+| 4 | PASS | 1: unsupported_name — Named entity requires written-source confirmation, not an STT guess [Fine skills, Pickabla] |
+| 5 | PASS | 1: unsupported_name — Named entity requires written-source confirmation, not an STT guess [Fine skills, Pickabla] |
 
-Source cleaning fixtures cover the reel's reaction-count title, login controls, See more, Original audio, markdown links and image references while preserving real caption content and the comment instruction. Cleaned caption/keyword terms and observed OCR terms reach Whisper through its initial prompt; old local STT caches without that hint are skipped automatically. The normal base run persisted 18 segments with `stt_prompt_used=true`.
+No timestamp or tag-count validation rejection occurred in these five runs. Fallback outputs failed final tag-count/timestamp/confidence checks as well as real_brief. “Fine skills” and “Pickabla” are transcript guesses absent from caption/OCR. “skill library” is a generic transcript phrase, not a confirmed product name; its rejected response also included unsupported Pickabla. No demonstrated rejection of a caption/OCR-supported name required loosening the validator. Schema repairs remain unreliable: title length and numeric entity string types caused failures. This phase reports those failures rather than claiming five successful runs.
 
-## STT comparison on the actual reel
+## Search against distractors
 
-Same 85.622-second downloaded reel; CPU int8, beam 5, VAD; both models received the same cleaned-source prompt. Times below exclude model loading/download:
+Seeded 16 labelled synthetic distractors covering AI/coding, similar Claude material, a recipe, product and article. Corpus: 17 READY items. Seeds use real memory embeddings, empty brief_v2 and timestamps matching the target. They have no transcript chunks, whereas the target does; this is a small synthetic benchmark, not a production-scale relevance claim.
 
-| Model | STT seconds | Segments | Recognition observations |
-|---|---:|---:|---|
-| base | 15.272 | 18 | Fine skills; Superpowers; Claude Mem; I'm pickabla; Task observer |
-| small | 51.432 | 40 | Find skills; Superpowers; Claude ma'am; Un picable; Task observer |
+| Query | Rank | RRF score |
+|---|---|---|
+| that video about claude code skills for developers | 1 | 0.031327828173350454 |
+| the AI clip that remembers projects | 1 | 0.030963529277715188 |
+| the reel with planning memory and frontend tips | 1 | 0.03132782784616519 |
 
-Base loaded in 1.696 seconds. Small loaded/downloaded in 147.862 seconds; that is a one-time cost, not its STT time. Small was 3.37 times slower and did not resolve all names. Base remains configured. The normal worker's measured STT duration includes loading and host load and is not substituted for this paired timing.
+All three queries surfaced the reel through lexical_search, vector_search, chunk_lexical_search and _chunk_vector_rows. Tags participate in lexical indexed text; there is no independent tag candidate channel. Search tracing was updated for the user patch’s synchronous chunk-vector path; production ranking was not changed.
 
-Caption independently confirms **Superpowers, Claude Mem, Task Observer**; OCR confirms **IMPECCABLE**. The exact first name, including “Find skills,” is not confirmed by caption/OCR and is not certified here. Neither transcription is exact. The prompt and validator reject STT-only named entities, prefer written confirmation and use functional descriptions for unconfirmed names. Unsupported “built-in” availability is also rejected; separate distribution instructions must not be merged into an inferred download destination.
-
-## Final native persistence and grounding
-
-The automatic dispatcher published Celery task `3822be23-82ce-4522-9661-20f4c16b0ac1` for existing job `4e3dbbe7-ff0d-4cc3-9798-2c61a7d895b5`. It resumed the complete-transcript retry through UNDERSTAND, BRIEF, CHUNK and EMBED. Gemini exhausted three 429 attempts; Groq returned real 200 responses, a named-entity repair ran, and Groq 429 backoff was observed before the accepted response. The worker completed at 2026-10-05 16:11:19 UTC.
-
-Direct application-engine queries and assertions established:
-
-```json
-{
-  "migration": "0012_brief_v2",
-  "item_id": "e310cfa3-b604-46f2-b4b0-b5984a3f596b",
-  "status": "ready",
-  "needs_retry": false,
-  "brief_source": "llm",
-  "evidence_level": "full_transcript",
-  "prompt_version": "brief_v3.2",
-  "chunks": 18
-}
-```
-
-Job is READY, last stage EMBED. Stored real Groq usage: 2 successful generations, 6845 input tokens, 3436 output tokens, usage reported. The final memory embedding has 1536 dimensions; all 18 transcript chunks have embeddings. This followed the live fallback state observed with `needs_retry=true`, PENDING/NORMALIZE, zero chunks and a null memory embedding. The upgrade was written by the normal worker, not by copying the evaluation artifact or manually annotating its provenance. ItemDetail serializes `brief_source=llm`.
-
-Stored caption, read from the active DB:
+## Stored caption and grounding
 
 ```text
 Unlock the 5 Claude Code skills every developer should know. Most people only scratch the surface of what Claude can do. These five skills help Claude automatically find the right tools, plan before writing code, remember your projects across sessions, generate better frontend designs, and continuously improve the way it works with you. Whether you're building websites, apps, or AI projects, these skills can save hours of work and dramatically improve your workflow.
@@ -67,118 +49,49 @@ Comment "Claude" below, and I'll send you all 5 GitHub repos.
 #claudecode #claudeai #coding #ai #programming
 ```
 
-Grounding facts: “GitHub repos” and the instruction to comment “Claude” occur in that caption. “Anthropic” occurs in its keywords, supporting the `anthropic` tag as source-derived metadata, not an independent assertion that speech named Anthropic. The stored suggested_action matches the caption instruction. Native tag policy includes `claude skills` because that exact phrase occurs in written evidence; `agent skills` is absent because it is not supported here. The garbled first/frontend STT names are absent from the final named entities; the first skill remains a functional description.
+“GitHub repos” and “Comment Claude” are explicitly supported by the caption. Anthropic appears in its keywords. IMPECCABLE appears in OCR. Claude Mem, Superpowers and Task Observer are supported by caption. The first skill’s exact name is not confirmed; the saved point describes skill discovery rather than naming Fine skills. STT still contains corrupted names; no new small-versus-base timing comparison was run in this phase.
 
-Raw stored Brief JSON, unedited output of `SELECT brief_v2::text FROM items WHERE id=...`:
+## Raw stored Brief JSON
 
-```json
-{"tags": ["claude skills", "claude", "claude code", "superpowers", "claude mem", "task observer", "telegram", "peterandstewiecode", "anthropic", "ai coding", "developer workflow", "code assistant", "frontend design", "planning", "automation", "github repos", "facebook video", "tutorial"], "title": "5 Claude Code Skills Every Developer Should Use", "topics": ["claude code", "ai coding assistant", "developer workflow"], "entities": {"numbers": [], "people_orgs": [], "tools_products": ["claude", "superpowers", "claude mem", "task observer", "telegram", "peterandstewiecode", "anthropic"]}, "confidence": "high", "key_points": [{"point": "Claude can be enhanced with a skill library that searches for needed tools and installs them automatically", "source_ref": "00:14"}, {"point": "Superpowers adds a planning layer that makes Claude pause, plan, and verify before modifying code", "source_ref": "00:19"}, {"point": "Claude Mem gives Claude memory across sessions, remembering project files and prior work", "source_ref": "00:24"}, {"point": "A frontend‑design skill lets Claude improve interfaces using design references", "source_ref": "00:29"}, {"point": "Task observer watches how you work, learns your style, and refines the other skills in the background", "source_ref": "00:34"}, {"point": "The skills are distributed through a Telegram link listed in the creator’s bio", "source_ref": "00:39"}], "brief_source": "llm", "content_type": "video", "missing_info": null, "best_takeaway": "Enabling these five Claude skills can automate tool setup, add safety checks, retain project context, enhance UI design, and personalize Claude’s behavior, saving developers hours of work.", "evidence_used": ["transcript", "caption", "ocr", "metadata"], "instant_brief": "The video outlines five Claude Code skills that automate tool selection, add planning safeguards, provide cross‑session memory, improve frontend design, and learn your work style. Access the skills via the Telegram link in the creator’s bio.", "likely_intent": "You may have saved this to learn which Claude Code skills can boost your development efficiency.", "evidence_level": "full_transcript", "prompt_version": "brief_v3.2", "search_phrases": ["how to get claude code skills", "claude superpowers planning feature", "claude mem cross session memory", "task observer learns my coding style", "telegram link for claude skill repos"], "suggested_action": "Comment \"Claude\" on the post to receive the five GitHub repositories with the skills"}
-```
-
-First 600 characters after joining the stored ordered segment text with newline separators (the DB stores timestamped segments, not a standalone transcript string):
-
-```text
-PETA, everyone's Claude is insanely fast, and mine is dumb, and can't even remember anything. I'll
-make your Claude an absolute beast, with just five skills. Okay wait, Claude has so many skills,
-you're telling me I only need five? You don't need all of them, you just need the right five.
-All right, what's the first one? Fine skills. What's that? You tell Claude what you're building,
-and it searches through the skill library finds what you need and installs it for you. So I don't even have
-to know which skill I'm looking for. Nope. Okay, what else? Superpowers. What's that? Think of it like a
-
-```
-
-**Remaining timestamp accuracy limitation:** source_ref values pass the segment-start format/membership validator, but that is not semantic alignment proof. The final Brief gives Superpowers `00:19` although the naming segment starts at 24.24 seconds, Claude Mem `00:24` although the naming segment starts at 39.28 seconds, and the Telegram point `00:39` although its speech instruction starts at 78.48 seconds. The evaluator does not catch these mismatches. Confidence “high” is the model's stored value, not independent certification of every claim/reference. No manual timestamp edits were made.
-
-## Live search against the actual database
-
-Called the existing `search.hybrid_search` with the saved record's owner and normal real query embeddings. That owner's result corpus contained two saved items. No ranking weights were changed.
-
-| Query | Reel rank | Results | Milliseconds |
-|---|---:|---:|---:|
-| that video about claude code skills for developers | 2 | 2 | 677 |
-| the AI clip that remembers projects | 1 | 2 | 1007 |
-| the reel with planning memory and frontend tips | 1 | 2 | 526 |
-
-## Real LLM evaluation: separate from persistence
-
-The strengthened evaluator rejects fallback source, boilerplate titles, noisy tags, copied transcript sentences and invalid transcript references. It reads stored evidence from the active application database with `--stored-item`; it does not write an evaluation result back to that database.
-
-Several diagnostic real-provider runs were performed. A v3.1 Gemini run passed 1/1 and a v3.2 Groq run passed 1/1 before the final stricter tag/timestamp checks. Other runs failed validation and returned fallback. The **last** run under the final policy returned fallback after invalid timestamps and STT-only named entities were rejected. Its result is **0/1 cases passed**. This is not a successful current-policy real-LLM Brief, even though Groq returned real HTTP 200 JSON responses and usage. The earlier passes are not substituted for this result.
-
-Command:
-
-```bash
-docker compose exec -T worker python -u - --stored-item e310cfa3-b604-46f2-b4b0-b5984a3f596b --output /tmp/brief-v3.2-final.json < scripts/eval_brief.py
-```
+The following is the unedited database brief_v2::text export of the fresh record, not the absent historical item.
 
 ```json
-{
-  "name": "stored_evidence_live",
-  "brief_source": "fallback",
-  "prompt_version": "brief_v3.2",
-  "checks": {
-    "real_brief": false,
-    "clean_title": true,
-    "search_tags": true,
-    "synthesized_points": true,
-    "no_meta_phrases": true,
-    "tag_count_15_30": false,
-    "timestamped_points": false,
-    "confidence_matches_evidence": false
-  },
-  "llm_usage": {
-    "requests": 2,
-    "input_tokens": 6787,
-    "output_tokens": 3963,
-    "usage_reported": true,
-    "provider": "groq",
-    "model": "openai/gpt-oss-120b"
-  }
-}
+{"tags": ["claude skills", "claude", "claude code", "claude ai", "superpowers", "claude mem", "task observer", "impeccable", "anthropic", "ai coding", "ai programming", "developer productivity", "coding assistant", "ai developer tools", "frontend development", "github repos", "peterandstewiecode", "facebook reel", "programming tutorial"], "title": "5 Claude Code Skills to Improve AI Coding and Project Memory", "topics": ["AI coding", "developer productivity", "frontend design", "project memory", "prompt engineering"], "entities": {"numbers": ["5", "2"], "people_orgs": ["Peterandstewiecode", "Anthropic"], "tools_products": ["Claude", "Claude Code", "Claude AI", "Superpowers", "Claude Mem", "Impeccable", "Task Observer", "GitHub"]}, "confidence": "high", "key_points": [{"point": "Skill discovery: Automatically searches the skill library based on project requirements to locate and install needed tools without manual selection.", "source_ref": "00:14", "segment_ids": [4, 5]}, {"point": "Superpowers: Enforces a structured planning phase where Claude verifies intended actions before modifying code to prevent breaking changes.", "source_ref": "00:24", "segment_ids": [6, 7, 8, 9]}, {"point": "Claude Mem: Maintains persistent memory across multiple sessions to retain project file structures and previous history without repetitive re-prompting.", "source_ref": "00:39", "segment_ids": [9, 10, 11]}, {"point": "Impeccable: Enhances frontend user interface generation by applying design references to improve code output quality.", "source_ref": "00:54", "segment_ids": [12, 13]}, {"point": "Task Observer: Runs in the background to monitor developer coding style and continuously tune Claude's performance.", "source_ref": "01:04", "segment_ids": [14, 15, 16]}], "brief_source": "llm", "content_type": "list", "missing_info": null, "best_takeaway": "Combining planning and cross-session memory skills prevents Claude from introducing regressions and eliminates repetitive context setup across coding sessions.", "evidence_used": ["transcript", "caption", "ocr", "metadata"], "instant_brief": "Five specialized skills enhance Claude Code for development tasks by automating tool selection, planning, persistent memory, UI styling, and workflow adaptation. These skills enable Claude to retain project context across sessions and review actions before altering codebases. Repositories are shared via direct message or channel links in the profile.", "likely_intent": "You may have saved this to look up specific Claude skills for project memory, code safety, and frontend generation.", "evidence_level": "full_transcript", "prompt_version": "brief_v3.2", "search_phrases": ["5 claude code skills every developer should know", "claude mem persistent memory across sessions", "superpowers skill for claude to stop breaking code", "how to make claude remember project files", "task observer claude skill learns your style", "impeccable claude frontend design skill", "peterandstewiecode claude skills video"], "suggested_action": "Check the author's bio link or comment on the original post to obtain the five skill repositories."}
 ```
+
+First 600 characters of stored transcript segment text joined in order with spaces:
 
 ```text
-Evaluation: 0/1 cases passed
+PETA, everyone's Claude is insanely fast, and mine is dumb, and can't even remember anything. I'll make your Claude an absolute beast, with just five skills. Okay wait, Claude has so many skills, you're telling me I only need five? You don't need all of them, you just need the right five. All right, what's the first one? Fine skills. What's that? You tell Claude what you're building, and it searches through the skill library finds what you need and installs it for you. So I don't even have to know which skill I'm looking for. Nope. Okay, what else? Superpowers. What's that? Think of it like a 
 ```
 
-## Automated tests
+## Prompt changes: brief_v2 to brief_v3.2
 
-The first full run reported `4 failed, 708 passed, 1 skipped`. Four queue/embedding recovery tests had no successful model response, so the new fallback guard correctly skipped the embedding stage where their failure was injected. They now explicitly mock successful Brief extraction to reach embedding, retaining their original failure/cap assertions. The no-provider test remains separate. Recovery regressions then passed: `17 passed in 16.99s`.
+- Numbered transcript segments and segment_ids citations; application-owned source_ref, no model timestamps.
+- Written-source confirmation of named tools/organizations; avoid STT guesses and unsupported names/tags.
+- Synthesized key points rather than copied transcript lines; evidence-based confidence and missing_info.
+- Supported phrase tags such as claude skills; avoid boilerplate and unsupported distribution/built-in claims.
+- Caption-only instructions belong in instant_brief/suggested_action, not transcript-cited key points.
 
-Full command:
+## Commands and actual tests
 
 ```bash
-TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests -q
+docker compose -f docker-compose.yml -f /tmp/findback-reel-runtime.yml up -d --no-deps --force-recreate postgres
+docker compose exec -T worker python -u - --stored-item bfa5da53-099a-44ea-9ec6-99e9d02bd804 --runs 5 --output /tmp/facebook-five-live.json < scripts/eval_brief.py
+docker compose exec -T api python -u - --item bfa5da53-099a-44ea-9ec6-99e9d02bd804 --output /tmp/facebook-search-live.json < scripts/eval_search_brief.py
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:55433/fb_reel_check backend/.venv/bin/python -m pytest backend/tests/test_audit_fixes.py backend/tests/test_brief_segment_ids.py backend/tests/test_brief_v2.py backend/tests/test_brief_integrity.py backend/tests/test_brief_worker.py backend/tests/test_phase12_hybrid.py -q
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:55433/fb_reel_check backend/.venv/bin/python -m pytest backend/tests -q
 ```
 
-Last full output: `715 passed, 1 skipped, 1 warning in 315.00s`. The warning is the existing python-jose `datetime.utcnow()` deprecation. The last prompt/repair clarification followed that run and was covered by this focused command:
+Focused: 82 passed in 42.07s. Full: 747 passed, 1 skipped, 1 warning in 287.20s. Warning: python-jose datetime.utcnow deprecation. Tests use isolated fb_reel_check, not the application database. Direct stored-record assertions passed for native provenance, grounding validation, embedding presence and Claude Mem 00:39. Mobile tests NOT RUN: no mobile changes.
 
-```bash
-TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_brief_integrity.py backend/tests/test_brief_v2.py backend/tests/test_brief_worker.py -q
-```
+Artifacts and backups: `/home/moaz/.codex/backups/findback/reel-check-20261006/`: before-bootstrap.dump, accepted-reel-and-distractors.dump, stored-proof.json, stored-brief-raw.json, five-live.json, search-live.json. The five-live artifact contains complete unedited run outputs and rejection metadata.
 
-Output: `28 passed in 5.91s`. A broader focused run of Brief, source cleaning, media and AI tests also passed: `146 passed in 14.46s` before the last two small policy regressions were added.
+## Deferred observations
 
-New regression files: `test_ai_resilience.py`, `test_source_cleaning.py`, `test_brief_integrity.py`; integration additions in `test_brief_worker.py`. Existing provider fake responses were adjusted to represent successful LLM responses rather than returning the fallback placeholder as though it came from a model. No test assertions were weakened to hide failures.
+- Worker interruption recovery remains the next task; not changed or claimed verified.
+- Five-run real-LLM reliability is 60%; schema repair failures and recurring STT name guesses remain.
+- Temporary Compose port override is required on this host while port 5432 remains occupied.
+- The original historical record and its former v2 JSON are absent, so no before/after database comparison is claimed.
 
-CRLF-aware `git diff --check` passed for backend/scripts/config. Flutter/device checks were NOT RUN: no mobile code changed and no device was available. A release/deployment outside the existing local containers was NOT RUN.
-
-## Deferred observation
-
-A worker restart interrupted an already-claimed job. The existing dispatcher only republishes stale unclaimed publications and did not recover that claimed job after five minutes. Its existing task was republished via `process_item.delay` through the normal queue after the lock became stale, with no manual job/item state edits and no `process_item.apply` or process-local provider override. Subsequent fallback retries used the existing automatic dispatcher.
-
-This claimed-job interruption recovery gap is not fixed here. It can strand a claimed job if a worker is killed after receiving an early-acknowledged message. Relevant future phase: worker interruption recovery. This is distinct from the now-tested durable fallback Brief retry path.
-
-Additional focused command (146 passed):
-
-```bash
-TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_brief_integrity.py backend/tests/test_brief_v2.py backend/tests/test_brief_worker.py backend/tests/test_source_cleaning.py backend/tests/test_media_understanding.py backend/tests/test_ai_resilience.py backend/tests/test_ai_transport.py backend/tests/test_ai_parsing.py backend/tests/test_ai_model_selection.py -q
-```
-
-Recovery command (17 passed):
-
-```bash
-TEST_DATABASE_URL=postgresql://findback:findback@localhost:5432/fb_brief_upgrade backend/.venv/bin/python -m pytest backend/tests/test_phase6_state_machine.py backend/tests/test_stuck_save_recovery.py -q
-```
-
-All five local Docker services were observed running after verification. The final accepted Brief and search observations are separate from the last failed standalone evaluation, which did not overwrite the saved record.
+STOPPED.

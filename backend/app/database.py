@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session, sessionmaker, declarative_base
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://findback:findback@localhost:5432/findback")
 # Sync engine by design for the MVP (ARCHITECTURE previously overclaimed an async engine).
-SYNC_URL = DATABASE_URL.replace("postgresql://", "postgresql://")
+# `postgres://` (Heroku-style) is not a SQLAlchemy 2 dialect name, and an async
+# driver suffix cannot be used by a sync engine; both are folded to the plain one.
+SYNC_URL = (DATABASE_URL
+            .replace("postgres://", "postgresql://", 1)
+            .replace("postgresql+asyncpg://", "postgresql://", 1))
 
 # backend/ — lets us resolve alembic.ini and the `app` package from any cwd
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

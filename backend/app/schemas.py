@@ -4,8 +4,14 @@ from typing import Optional, List, Dict, Any, Literal
 from uuid import UUID
 from datetime import datetime
 
+# A share-sheet URL with tracking parameters can be long, but not unbounded.
+MAX_URL_CHARS = 4096
+# The app sends at most 20 per batch; the ceiling only stops a runaway client.
+MAX_SYNC_BATCH = 100
+
+
 class IngestRequest(BaseModel):
-    url: str
+    url: str = Field(min_length=1, max_length=MAX_URL_CHARS)
     preview: Optional[str] = None
     title_hint: Optional[str] = None
 
@@ -16,13 +22,13 @@ class IngestResponse(BaseModel):
 
 class SyncItem(BaseModel):
     client_id: str
-    url: str
+    url: str = Field(min_length=1, max_length=MAX_URL_CHARS)
     captured_at: Optional[str] = None
     preview: Optional[str] = None
     title_hint: Optional[str] = None
 
 class SyncBatchRequest(BaseModel):
-    items: List[SyncItem]
+    items: List[SyncItem] = Field(max_length=MAX_SYNC_BATCH)
 
 class SyncBatchResponse(BaseModel):
     mapped: List[Dict[str, Any]]
@@ -237,7 +243,8 @@ class ExtractedMemory(BaseModel):
 
 class BriefPoint(BaseModel):
     point: str = Field(min_length=1)
-    source_ref: Optional[str]
+    source_ref: Optional[str] = None
+    segment_ids: List[int] = Field(default_factory=list)
     model_config = ConfigDict(extra="forbid")
 
 

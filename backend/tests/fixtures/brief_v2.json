@@ -131,23 +131,33 @@
       "key_points": [
         {
           "point": "Test Writer: derives unit tests from changes to code.",
-          "source_ref": "00:05"
+          "segment_ids": [
+            1
+          ]
         },
         {
           "point": "Trace Reader: helps developers interpret stack traces.",
-          "source_ref": "00:16"
+          "segment_ids": [
+            2
+          ]
         },
         {
           "point": "Changelog Writer: turns commits into release notes.",
-          "source_ref": "00:26"
+          "segment_ids": [
+            3
+          ]
         },
         {
           "point": "Flake Finder: spots tests that behave inconsistently.",
-          "source_ref": "00:36"
+          "segment_ids": [
+            4
+          ]
         },
         {
           "point": "Migration Writer: drafts migrations for the database.",
-          "source_ref": "00:46"
+          "segment_ids": [
+            5
+          ]
         }
       ],
       "best_takeaway": null,

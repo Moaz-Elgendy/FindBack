@@ -16,7 +16,19 @@ celery.conf.update(task_serializer="json", accept_content=["json"],
                    # Redis result channel and retries a dead connection 20 times --
                    # a ~19 s stall per save while Redis is down, before the broker
                    # is even tried. The backend stays configured for /health.
-                   task_ignore_result=True)
+                   task_ignore_result=True,
+                   # Jobs are long (fetch, transcribe, call a model). With the
+                   # default prefetch of 4 a busy worker hoards three more jobs
+                   # that an idle one could be running.
+                   worker_prefetch_multiplier=1,
+                   # A provider call that never returns would otherwise pin a
+                   # worker forever. The soft limit raises inside the task, so
+                   # it is recorded as a failure and retried; the hard limit
+                   # kills the process if that does not unwedge it. Both sit
+                   # well above a normal run; override per deployment with
+                   # TASK_SOFT_TIME_LIMIT / TASK_TIME_LIMIT (seconds).
+                   task_soft_time_limit=int(os.getenv("TASK_SOFT_TIME_LIMIT", "900")),
+                   task_time_limit=int(os.getenv("TASK_TIME_LIMIT", "960")))
 
 
 @worker_process_init.connect

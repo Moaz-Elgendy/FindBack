@@ -1,5 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from datetime import datetime, timezone
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, or_
+from sqlalchemy.orm import Session, defer
+
 from app.database import get_db
 from app.auth import get_current_user
 from app.models import Item
@@ -9,29 +14,75 @@ from app.categories import Category
 
 router = APIRouter(prefix="/api/v1/items", tags=["items"])
 
+# Columns no response here ever shows. The 1536-float embedding alone is about
+# 12 KB of text per row, and a page of 20 used to pull all of it (plus the raw
+# page text and every chunk) across the wire from Postgres for nothing.
+_NOT_NEEDED = (defer(Item.embedding), defer(Item.raw_text),
+               defer(Item.normalized_text), defer(Item.chunk_texts),
+               defer(Item.chunk_timestamps), defer(Item.search_text))
+
+# What only the detail screen reads. The list endpoint leaves them out: a
+# transcript can be thousands of segments, and the list shows none of it.
+# GET /items/{id} still returns everything.
+_LIST_EXCLUDE = {"transcript", "ocr_text", "evidence_used", "processing_metadata"}
+
+MAX_PAGE = 100
+
+# `created_at` + `id`, so rows saved in the same instant have a total order and a
+# cursor survives its own row being deleted. Z-suffixed so no `+` has to survive
+# a query string.
+_CURSOR_TIME = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+def _encode_cursor(item: Item) -> str:
+    stamp = item.created_at.astimezone(timezone.utc).strftime(_CURSOR_TIME)
+    return f"{stamp}|{item.id}"
+
+
+def _decode_cursor(db: Session, user, cursor: str) -> tuple[datetime, UUID]:
+    try:
+        if "|" in cursor:
+            stamp, _, raw_id = cursor.partition("|")
+            return (datetime.strptime(stamp, _CURSOR_TIME)
+                    .replace(tzinfo=timezone.utc), UUID(raw_id))
+        # A bare item id: the cursor format before this one. Still accepted so a
+        # client mid-scroll across an upgrade is not stranded.
+        row = (db.query(Item.created_at, Item.id)
+                 .filter(Item.id == UUID(cursor), Item.user_id == user.id).first())
+    except ValueError:
+        raise HTTPException(422, "invalid cursor") from None
+    if row is None:
+        raise HTTPException(422, "cursor no longer valid")
+    return row.created_at, row.id
+
+
 @router.get("", response_model=dict)
-def list_items(limit: int = 20, cursor: str = None, category: Category = None,
+def list_items(limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = None,
+               category: Category = None,
                db: Session = Depends(get_db), user = Depends(get_current_user)):
-    q = db.query(Item).filter(Item.user_id == user.id)
+    q = db.query(Item).options(*_NOT_NEEDED).filter(Item.user_id == user.id)
     if category is not None:
         q = q.filter(Item.category == category.value)
     if cursor:
-        cursor_item = db.query(Item).filter(Item.id == cursor, Item.user_id == user.id).first()
-        if cursor_item:
-            q = q.filter(Item.created_at < cursor_item.created_at)
-    q = q.order_by(Item.created_at.desc()).limit(min(limit, 100) + 1).all()
-    has_more = len(q) > limit
-    items = q[:limit]
-    return {"items": [ItemDetail.model_validate(i).model_dump() for i in items], "next_cursor": str(items[-1].id) if has_more and items else None}
+        at, last_id = _decode_cursor(db, user, cursor)
+        q = q.filter(or_(Item.created_at < at,
+                         and_(Item.created_at == at, Item.id < last_id)))
+    rows = q.order_by(Item.created_at.desc(), Item.id.desc()).limit(limit + 1).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    return {"items": [ItemDetail.model_validate(i).model_dump(exclude=_LIST_EXCLUDE)
+                      for i in items],
+            "next_cursor": _encode_cursor(items[-1]) if has_more else None}
 
 @router.get("/{item_id}", response_model=ItemDetail)
-def get_item(item_id: str, db: Session = Depends(get_db), user = Depends(get_current_user)):
-    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user.id).first()
+def get_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    item = (db.query(Item).options(*_NOT_NEEDED)
+              .filter(Item.id == item_id, Item.user_id == user.id).first())
     if not item: raise HTTPException(404, "not found")
     return item
 
 @router.delete("/{item_id}", status_code=204)
-def delete_item(item_id: str, db: Session = Depends(get_db), user = Depends(get_current_user)):
+def delete_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
     item = db.query(Item).filter(Item.id == item_id, Item.user_id == user.id).first()
     if not item: raise HTTPException(404, "not found")
     if item.content_id is None:

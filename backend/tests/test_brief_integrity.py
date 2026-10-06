@@ -20,7 +20,7 @@ def test_fallback_is_not_transcript_dump_and_always_needs_retry():
 def test_raw_transcript_and_unsupported_brand_are_rejected():
     ev = evidence()
     with pytest.raises(ValueError):
-        brief_v2.validate(dict(payload(), key_points=[{'point':ev['transcript'][0]['text'], 'source_ref':'00:05'}]),ev)
+        brief_v2.validate(dict(payload(), key_points=[{'point':ev['transcript'][0]['text'], 'segment_ids':[1]}]),ev)
     with pytest.raises(ValueError):
         brief_v2.validate(dict(payload(),tags=payload()['tags']+['anthropic']),ev)
 
@@ -88,7 +88,7 @@ def test_name_repair_lists_only_written_confirmed_entities():
                 return dict(payload(),entities={'tools_products':['Claude Code','Pickabla'],'people_orgs':[],'numbers':[]})
             assert 'Keep only these confirmed named entities: ["Claude Code"]' in user
             assert 'Pickabla' not in user
-            assert '"allowed_timestamps": ["00:05"]' in user
+            assert '"allowed_segment_ids": [1]' in user
             return payload()
     gateway=Gateway()
     assert asyncio.run(brief_v2.extract(evidence(),gateway)).entities.tools_products==['Claude Code']

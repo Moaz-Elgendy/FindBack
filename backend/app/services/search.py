@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.services import embedder
 
@@ -70,6 +71,31 @@ _CONTENT_IDX = 8
 # The item columns every candidate query selects, in a fixed order.
 _ITEM_COLUMNS = ("i.id, i.title_clean, i.summary, i.tags, i.category, "
                  "i.source_domain, i.thumbnail_url, i.created_at, i.content_id")
+
+
+# Which items a search may return: finished, and not a degraded fallback brief.
+# One definition, so the candidate queries below cannot drift apart.
+_SEARCHABLE = (
+    "i.status = 'ready' "
+    "AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' "
+    "AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'")
+
+
+def _fetch(db: Session, label: str, sql: str, params: dict) -> list:
+    """Run one candidate query. A failure costs that list, never the request.
+
+    The savepoint is the point. PostgreSQL aborts the whole transaction on any
+    error, so without it one failing list (a vector of the wrong dimension, say)
+    made every later query in the same search raise InFailedSqlTransaction --
+    including the unguarded ones that load notes and documents, which turned a
+    degraded search into a 500.
+    """
+    try:
+        with db.begin_nested():
+            return db.execute(text(sql), params).fetchall()
+    except Exception as e:  # a candidate list must never take search down
+        log.warning("[search] %s failed: %s", label, e)
+        return []
 
 
 def query_terms(query: str) -> list[str]:
@@ -167,7 +193,7 @@ def _with_notes(db: Session, user_id, ids: list[str]) -> dict[str, dict]:
         FROM user_memories um
         WHERE um.user_id = :uid
           AND (um.user_note IS NOT NULL OR um.user_intent IS NOT NULL)
-          AND um.content_id::text = ANY(:ids)
+          AND um.content_id = ANY(CAST(:ids AS uuid[]))
     """), {"uid": str(user_id), "ids": ids}).fetchall()
     return {row[0]: {"note": row[1], "intent": row[2]} for row in rows}
 
@@ -179,7 +205,7 @@ def _documents(db: Session, user_id, item_ids: list[str]) -> dict[str, str]:
     rows = db.execute(text("""
         SELECT id::text, coalesce(search_text, '')
         FROM items
-        WHERE user_id = :uid AND id::text = ANY(:ids)
+        WHERE user_id = :uid AND id = ANY(CAST(:ids AS uuid[]))
     """), {"uid": str(user_id), "ids": item_ids}).fetchall()
     return {row[0]: row[1] for row in rows}
 
@@ -220,23 +246,19 @@ def lexical_search(db: Session, user_id, query: str, terms: list[str],
     """
     if not terms:
         return []
-    try:
-        return db.execute(text(f"""
+    return _fetch(db, "lexical", f"""
             SELECT {_ITEM_COLUMNS},
                    greatest(ts_rank(i.search_text_tsv, to_tsquery('english', :q)),
                             ts_rank(i.tsv, to_tsquery('english', :q))) AS rank
             FROM items i
-            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
+            WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND (i.search_text_tsv @@ to_tsquery('english', :q)
                    OR i.tsv @@ to_tsquery('english', :q))
               {_cat_filter(category, 'i.')}
             ORDER BY rank DESC
             LIMIT :lim
-        """), {"uid": str(user_id), "q": or_tsquery(terms),
-               "cat": category, "lim": limit}).fetchall()
-    except Exception as e:
-        log.warning("[search] lexical failed: %s", e)
-        return []
+        """, {"uid": str(user_id), "q": or_tsquery(terms),
+              "cat": category, "lim": limit})
 
 
 def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
@@ -244,24 +266,20 @@ def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
     """Full-text candidates from inside the content, with the matched chunk."""
     if not terms:
         return []
-    try:
-        return db.execute(text(f"""
+    return _fetch(db, "chunk lexical", f"""
             SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
                    i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
                    ts_rank(c.tsv, to_tsquery('english', :q)) AS rank,
                    c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
             FROM chunks c
             JOIN items i ON i.id = c.item_id
-            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
+            WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND c.tsv @@ to_tsquery('english', :q)
               {_cat_filter(category, 'i.')}
             ORDER BY rank DESC
             LIMIT :lim
-        """), {"uid": str(user_id), "q": or_tsquery(terms),
-               "lim": limit, "cat": category}).fetchall()
-    except Exception as e:
-        log.warning("[search] chunk lexical failed: %s", e)
-        return []
+        """, {"uid": str(user_id), "q": or_tsquery(terms),
+              "lim": limit, "cat": category})
 
 
 # The user's own words: the note they wrote and the intent they chose. Both
@@ -292,8 +310,7 @@ def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
     """
     if not terms:
         return []
-    try:
-        return db.execute(text(f"""
+    return _fetch(db, "note search", f"""
             SELECT {_ITEM_COLUMNS},
                    ts_rank(to_tsvector('english', {_NOTE_DOCUMENT}),
                            to_tsquery('english', :q)) AS rank
@@ -308,11 +325,8 @@ def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
               {_cat_filter(category, 'i.')}
             ORDER BY rank DESC
             LIMIT :lim
-        """), {"uid": str(user_id), "q": or_tsquery(terms),
-               "lim": limit, "cat": category}).fetchall()
-    except Exception as e:
-        log.warning("[search] note search failed: %s", e)
-        return []
+        """, {"uid": str(user_id), "q": or_tsquery(terms),
+              "lim": limit, "cat": category})
 
 
 def vector_search(db: Session, user_id, q_emb, category: str | None = None,
@@ -321,21 +335,17 @@ def vector_search(db: Session, user_id, q_emb, category: str | None = None,
     if q_emb is None:
         return []
     vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
-    try:
-        return db.execute(text(f"""
+    return _fetch(db, "vector", f"""
             SELECT {_ITEM_COLUMNS},
                    1 - (i.embedding <=> CAST(:qvec AS vector)) AS cosine
             FROM items i
-            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
+            WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND i.embedding IS NOT NULL
               {_cat_filter(category, 'i.')}
             ORDER BY i.embedding <=> CAST(:qvec AS vector)
             LIMIT :lim
-        """), {"uid": str(user_id), "qvec": vec_str,
-               "cat": category, "lim": limit}).fetchall()
-    except Exception as e:
-        log.warning("[search] vector failed: %s", e)
-        return []
+        """, {"uid": str(user_id), "qvec": vec_str,
+              "cat": category, "lim": limit})
 
 
 def _content_key(row) -> str:
@@ -362,6 +372,27 @@ def _dedupe_rows(rows) -> list:
         kept.append(row)
     return kept
 
+def _chunk_vector_rows(db: Session, user_id, q_emb, limit: int = 50,
+                       category: str | None = None) -> list:
+    """The synchronous half of `chunk_search`: one query, no embedding call."""
+    if q_emb is None:
+        return []
+    vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
+    return _fetch(db, "chunk vector", f"""
+            SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
+                   i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
+                   1 - (c.embedding <=> CAST(:qvec AS vector)) AS cosine,
+                   c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
+            FROM chunks c
+            JOIN items i ON i.id = c.item_id
+            WHERE i.user_id = :uid AND {_SEARCHABLE}
+              {_cat_filter(category, 'i.')}
+            ORDER BY c.embedding <=> CAST(:qvec AS vector)
+            LIMIT :lim
+        """, {"uid": str(user_id), "qvec": vec_str, "lim": limit,
+              "cat": category})
+
+
 async def chunk_search(db: Session, user_id, query: str, limit: int = 50,
                        q_emb=None, category: str | None = None):
     """Find the chunks a query matches, not just the memories it matches.
@@ -383,27 +414,7 @@ async def chunk_search(db: Session, user_id, query: str, limit: int = 50,
     # provider swap) can then replace it without reloading this module.
     if q_emb is None:
         q_emb = await embedder.embed_text(query, task="query")
-    if q_emb is None:
-        return []
-    vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
-    try:
-        return db.execute(text(f"""
-            SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
-                   i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
-                   1 - (c.embedding <=> CAST(:qvec AS vector)) AS cosine,
-                   c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
-            FROM chunks c
-            JOIN items i ON i.id = c.item_id
-            WHERE i.user_id = :uid AND i.status = 'ready' AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
-              {_cat_filter(category, 'i.')}
-            ORDER BY c.embedding <=> CAST(:qvec AS vector)
-            LIMIT :lim
-        """), {"uid": str(user_id), "qvec": vec_str, "lim": limit,
-               "cat": category}).fetchall()
-    except Exception as e:  # a vector outage must not take search down
-        log.warning("[search] chunk search failed: %s", e)
-        return []
-
+    return _chunk_vector_rows(db, user_id, q_emb, limit, category)
 
 
 def _ranks(rows) -> dict[str, int]:
@@ -411,8 +422,15 @@ def _ranks(rows) -> dict[str, int]:
 
     Kept separate from the weight so a rank map cannot confuse an item id with
     its own bookkeeping.
+
+    A chunk list holds several rows per item. The FIRST one is its best, so that
+    is the rank kept: a dict comprehension lets the last duplicate win, which
+    quietly demoted an item's best chunk to its worst.
     """
-    return {str(row[0]): index + 1 for index, row in enumerate(rows)}
+    ranks: dict[str, int] = {}
+    for index, row in enumerate(rows):
+        ranks.setdefault(str(row[0]), index + 1)
+    return ranks
 
 
 def metadata_filter(source_domain: str | None, saved_after: datetime | None,
@@ -471,19 +489,28 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
     each list can honestly contribute.
     """
     t0 = time.time()
-    terms = correct_tag_terms(db, user_id, query_terms(query))
     # Embed once. task="query" matters for Gemini, which trains separate
     # document and query vector spaces.
     # Called through the module rather than imported by name, so a test (or a
     # future provider swap) can replace the call without reloading this module.
     q_emb = await embedder.embed_text(query, task="query") if query.strip() else None
-
     meta = metadata_filter(source_domain, saved_after, saved_before)
+    # Everything below is synchronous SQL. Run on the event loop it would hold
+    # up every other request for as long as Postgres takes, so it goes to a
+    # worker thread. The session is used by one thread at a time.
+    return await run_in_threadpool(_rank_candidates, db, user_id, query, q_emb,
+                                   category, limit, meta, t0)
+
+
+def _rank_candidates(db: Session, user_id, query: str, q_emb, category,
+                     limit: int, meta: dict, t0: float):
+    """The database half of `hybrid_search`: gather the five lists, then fuse."""
+    terms = correct_tag_terms(db, user_id, query_terms(query))
     lex_rows = _filter_rows(lexical_search(db, user_id, query, terms, category),
                             meta)
     vec_rows = _filter_rows(vector_search(db, user_id, q_emb, category), meta)
     chunk_vec_rows = _filter_rows(
-        await chunk_search(db, user_id, query, q_emb=q_emb, category=category), meta)
+        _chunk_vector_rows(db, user_id, q_emb, category=category), meta)
     chunk_lex_rows = _filter_rows(
         chunk_lexical_search(db, user_id, query, terms, category=category), meta)
     note_rows = _filter_rows(note_search(db, user_id, terms, category=category), meta)
