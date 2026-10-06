@@ -46,6 +46,7 @@ class AppServices {
 
   /// Queue depth, shown as a badge so "saved on this device" is never silent.
   final ValueNotifier<int> pending = ValueNotifier<int>(0);
+  final ValueNotifier<CaptureOutcome?> sharedCapture = ValueNotifier(null);
 
   Future<void> refreshPending() async {
     try {
@@ -73,6 +74,7 @@ class AppServices {
             await share.captureShared(payload, capture);
         // A share that had to wait for the network changes the pending count.
         if (outcome?.isQueued ?? false) await refreshPending();
+        if (outcome != null) sharedCapture.value = outcome;
       } catch (error) {
         // The user shared a link the server actively refused. Swallowing it
         // would be a lie, but crashing the app over it is worse; the capture
@@ -85,6 +87,7 @@ class AppServices {
       final CaptureOutcome? outcome =
           await share.captureInitialShare(capture);
       if (outcome?.isQueued ?? false) await refreshPending();
+      if (outcome != null) sharedCapture.value = outcome;
     } catch (error) {
       debugPrint('[services] initial share could not be saved: $error');
     }
@@ -100,5 +103,6 @@ class AppServices {
     api.close();
     await db.close();
     pending.dispose();
+    sharedCapture.dispose();
   }
 }

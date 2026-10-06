@@ -54,6 +54,35 @@ class _Harness {
 }
 
 void main() {
+  test('library pages preserve cursor, category and cached Brief', () async {
+    final h = _Harness();
+    final asked = <String?>[];
+    final service = h.service(remoteRecent: (limit, {String? category, String? cursor}) async {
+      expect(category, 'tutorial');
+      asked.add(cursor);
+      return ItemPage(items: [_item(cursor == null ? 'first' : 'older')],
+          nextCursor: cursor == null ? 'next' : null);
+    });
+    final first = await service.recentPage(category: 'tutorial');
+    final second = await service.recentPage(category: 'tutorial', cursor: first.nextCursor);
+    expect(asked, [null, 'next']);
+    expect(second.items.single.id, 'older');
+    expect(second.nextCursor, isNull);
+    expect(h.cached.keys, ['first', 'older']);
+  });
+
+  test('offline library reaches beyond 20 without repeated rows', () async {
+    final h = _Harness();
+    for (var i = 0; i < 45; i++) { h.local['$i'] = _item('$i'); }
+    final service = h.service(online: false);
+    final first = await service.recentPage(limit: 20);
+    final second = await service.recentPage(limit: 20, cursor: first.nextCursor);
+    final third = await service.recentPage(limit: 20, cursor: second.nextCursor);
+    expect([...first.items, ...second.items, ...third.items].map((r) => r.id),
+        List.generate(45, (i) => '$i'));
+    expect(third.nextCursor, isNull);
+  });
+
   test('an unsaved item never asks the API', () async {
     final _Harness h = _Harness()..local['local-7'] = _item('local-7', title: 'Offline');
     final ItemDetail? item = await h.service(online: true).getItem('local-7');

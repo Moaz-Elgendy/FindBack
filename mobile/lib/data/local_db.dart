@@ -14,7 +14,7 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 2;
+  static const int schemaVersion = 3;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
@@ -69,7 +69,8 @@ class LocalDb {
         title_hint TEXT,
         captured_at TEXT NOT NULL,
         retries INTEGER DEFAULT 0,
-        status TEXT DEFAULT 'pending'
+        status TEXT DEFAULT 'pending',
+        server_id TEXT
       )
     ''');
     await db.execute('CREATE INDEX idx_items_created ON items(created_at DESC)');
@@ -181,7 +182,7 @@ class LocalDb {
       for (final MappedSave save in mapped) {
         await txn.update(
           'sync_queue',
-          <String, Object?>{'status': 'done'},
+          <String, Object?>{'status': 'done', 'server_id': save.serverId},
           where: 'client_id = ?',
           whereArgs: <Object?>[save.clientId],
         );
@@ -266,6 +267,19 @@ class LocalDb {
     final rows = await db.query('items', where: 'id = ?', whereArgs: <Object?>[id], limit: 1);
     if (rows.isEmpty) return null;
     return ItemDetail.fromLocalRow(rows.first);
+  }
+
+  Future<String?> syncedItemId(String localId) async {
+    final rows = await db.query('sync_queue', columns: ['server_id'],
+        where: 'client_id = ? AND status = ?',
+        whereArgs: [localId.substring('local-'.length), 'done'], limit: 1);
+    return rows.isEmpty ? null : rows.single['server_id'] as String?;
+  }
+
+  Future<ItemDetail?> localItemForUrl(String url) async {
+    final rows = await db.query('items', where: 'url = ? OR canonical_url = ?',
+        whereArgs: <Object?>[url, url], limit: 1);
+    return rows.isEmpty ? null : ItemDetail.fromLocalRow(rows.first);
   }
 
   Future<int> deleteItem(String id) => db.delete('items', where: 'id = ?', whereArgs: <Object?>[id]);

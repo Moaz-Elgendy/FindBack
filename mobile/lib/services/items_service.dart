@@ -45,6 +45,7 @@ class ItemsService {
     required LocalDelete localDelete,
     required QueueDrop dropQueued,
     ConnectivityProbe? isOnline,
+    Future<String?> Function(String localId)? resolveLocalId,
   })  : _remoteItem = remoteItem,
         _localItem = localItem,
         _remoteRecent = remoteRecent,
@@ -53,7 +54,8 @@ class ItemsService {
         _remoteDelete = remoteDelete,
         _localDelete = localDelete,
         _dropQueued = dropQueued,
-        _isOnline = isOnline ?? systemIsOnline;
+        _isOnline = isOnline ?? systemIsOnline,
+        _resolveLocalId = resolveLocalId;
 
   factory ItemsService.of({required ApiClient api, required LocalDb db, ConnectivityProbe? isOnline}) =>
       ItemsService(
@@ -68,6 +70,7 @@ class ItemsService {
         localDelete: db.deleteItem,
         dropQueued: db.dropQueued,
         isOnline: isOnline,
+        resolveLocalId: db.syncedItemId,
       );
 
   static const String localPrefix = 'local-';
@@ -81,13 +84,19 @@ class ItemsService {
   final LocalDelete _localDelete;
   final QueueDrop _dropQueued;
   final ConnectivityProbe _isOnline;
+  final Future<String?> Function(String localId)? _resolveLocalId;
 
   static bool isLocalId(String id) => id.startsWith(localPrefix);
 
   /// One item: the API copy when reachable (and cached on the way through), the
   /// mirror when not. A `local-*` id was never uploaded, so don't ask the API.
   Future<ItemDetail?> getItem(String id) async {
-    if (isLocalId(id)) return _localItem(id);
+    if (isLocalId(id)) {
+      final local = await _localItem(id);
+      if (local != null) return local;
+      final serverId = await _resolveLocalId?.call(id);
+      return serverId == null ? null : getItem(serverId);
+    }
     if (await _isOnline()) {
       try {
         final ItemDetail item = await _remoteItem(id);
@@ -101,19 +110,27 @@ class ItemsService {
   }
 
   /// The library list, always in newest-first order.
-  Future<List<SearchResult>> recent({int limit = 10, String? category, String? cursor}) async {
-    if (await _isOnline()) {
+  Future<List<SearchResult>> recent({int limit = 10, String? category, String? cursor}) async =>
+      (await recentPage(limit: limit, category: category, cursor: cursor)).items;
+
+  Future<({List<SearchResult> items, String? nextCursor})> recentPage({
+    int limit = 20, String? category, String? cursor, int loadedCount = 0,
+  }) async {
+    final localCursor = cursor?.startsWith('local:') == true;
+    if (!localCursor && await _isOnline()) {
       try {
         final ItemPage page = await _remoteRecent(limit, category: category, cursor: cursor);
         await _cache(page.items);
-        return page.items
-            .map((ItemDetail item) => SearchResult.fromItem(item))
-            .toList(growable: false);
+        return (items: page.items.map(SearchResult.fromItem).toList(growable: false),
+            nextCursor: page.nextCursor);
       } on ApiException catch (error) {
         if (!error.isRetryableOffline) rethrow;
       }
     }
-    return _localRecent(limit, category: category);
+    final offset = localCursor ? int.parse(cursor!.substring(6)) : loadedCount;
+    final rows = await _localRecent(offset + limit + 1, category: category);
+    return (items: rows.skip(offset).take(limit).toList(growable: false),
+        nextCursor: rows.length > offset + limit ? 'local:${offset + limit}' : null);
   }
 
   /// Deletes locally no matter what, so the item disappears from the device the

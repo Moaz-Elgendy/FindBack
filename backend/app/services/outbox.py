@@ -29,7 +29,7 @@ import threading
 import time
 from datetime import timedelta
 
-from sqlalchemy import text
+from sqlalchemy import event, or_, text
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
@@ -88,9 +88,12 @@ def record_job(db, content_id, job_type: str):
 
 def mark_processing(db, job_id) -> None:
     """The job is on the queue: the content is now occupied by this work."""
-    db.query(ProcessingJob).filter(ProcessingJob.id == job_id).update({
+    db.query(ProcessingJob).filter(ProcessingJob.id == job_id, or_(
+        ProcessingJob.status == JOB_STATUS_PENDING,
+        ProcessingJob.attempt_token.is_(None))).update({
         ProcessingJob.status: JOB_STATUS_PROCESSING,
         ProcessingJob.locked_at: None,
+        ProcessingJob.attempt_token: None,
         ProcessingJob.last_error: None,
         ProcessingJob.updated_at: text("now()"),
     })
@@ -143,16 +146,40 @@ def claim_job(db, job_id, lock_timeout_seconds: float = 300.0):
     result = db.execute(text("""
         UPDATE processing_jobs
         SET status = 'PROCESSING',
+            attempt_token = gen_random_uuid(),
             locked_at = now(),
             claimed_at = COALESCE(claimed_at, now()),
             updated_at = now()
         WHERE id = :id
           AND status IN ('PENDING', 'PROCESSING')
-          AND (locked_at IS NULL
+          AND (locked_at IS NULL AND (status = 'PENDING' OR attempt_token IS NULL)
                OR locked_at < now() - make_interval(secs => :lock_secs))
     """), {"id": str(job_id), "lock_secs": lock_timeout_seconds})
     db.commit()
     return result.rowcount == 1
+
+
+class AttemptLost(Exception):
+    """This worker no longer owns the job; all uncommitted writes must roll back."""
+
+
+def fence_attempt(db, job_id, attempt_token) -> None:
+    """Check ownership under a row lock before each worker transaction commits.
+
+    Recovery takes the same lock, so either this transaction commits before
+    recovery or its superseded writes are rejected. This also covers commits
+    made inside pipeline stages, rather than only the final job update.
+    """
+    def check(session, *args):
+        with session.no_autoflush:
+            token = session.execute(text(
+                'SELECT attempt_token FROM processing_jobs WHERE id = :id FOR UPDATE'),
+                {'id': str(job_id)}).scalar()
+        if token is None or str(token) != str(attempt_token):
+            raise AttemptLost('worker attempt was superseded')
+
+    event.listen(db, 'before_flush', check)
+    event.listen(db, 'before_commit', check)
 
 
 def complete_job(db, job_id, success: bool, error: str | None = None,
@@ -331,8 +358,9 @@ class JobHeartbeat:
     fails or reschedules the job, a late beat changes nothing.
     """
 
-    def __init__(self, job_id, interval: float | None = None):
+    def __init__(self, job_id, interval: float | None = None, *, attempt_token=None):
         self.job_id = str(job_id)
+        self.attempt_token = attempt_token
         self.interval = heartbeat_interval() if interval is None else interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -343,8 +371,9 @@ class JobHeartbeat:
         db = SessionLocal()
         try:
             db.execute(text("UPDATE processing_jobs SET locked_at = now() "
-                            "WHERE id = :id AND status = 'PROCESSING'"),
-                       {"id": self.job_id})
+                            "WHERE id = :id AND status = 'PROCESSING' "
+                            "AND attempt_token IS NOT DISTINCT FROM CAST(:token AS uuid)"),
+                       {"id": self.job_id, "token": str(self.attempt_token) if self.attempt_token else None})
             db.commit()
         except Exception as exc:  # noqa: BLE001 - a missed beat must not kill the job
             db.rollback()
@@ -397,6 +426,8 @@ def recover_lost_jobs(db, limit: int = 50) -> int:
         if job is None:
             break
         gives_up = (job["attempt_count"] or 0) + 1 >= max_attempts()
+        db.execute(text('UPDATE processing_jobs SET attempt_token = NULL WHERE id = :id'),
+                   {'id': str(job['id'])})
         db.execute(text("""
             UPDATE items
             SET status = :status,

@@ -141,7 +141,14 @@ class _DetailPageState extends State<DetailPage> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Memory')),
+      appBar: AppBar(),
+      floatingActionButton: !_loading && _error == null && _item != null
+          ? FloatingActionButton.extended(
+              onPressed: () => _openOriginal(_item!.url),
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Open Original'),
+            )
+          : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
@@ -155,7 +162,7 @@ class _DetailPageState extends State<DetailPage> {
   Widget _buildDetail(ThemeData theme, ItemDetail item) {
     final List<String> ingredients = item.ingredients;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 112),
       children: <Widget>[
         Text(item.bestTitle, style: theme.textTheme.headlineSmall),
         if (item.sourceDomain != null && item.sourceDomain!.isNotEmpty)
@@ -187,9 +194,7 @@ class _DetailPageState extends State<DetailPage> {
         if (item.needsRetry)
           const Padding(padding: EdgeInsets.only(top: 8), child: Text('Improving brief...')),
         if (item.missingInfo != null && item.missingInfo!.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(top: 8), child: Chip(
-            avatar: const Icon(Icons.info_outline, size: 16), label: Text(item.missingInfo!),
-          )),
+          Padding(padding: const EdgeInsets.only(top: 8), child: _Banner(text: item.missingInfo!)),
         const SizedBox(height: 16),
         Text(
           item.briefText.isEmpty ? 'Open the original to view this memory.' : item.briefText,
@@ -197,25 +202,42 @@ class _DetailPageState extends State<DetailPage> {
         ),
         if (item.bestTakeaway != null && item.bestTakeaway!.isNotEmpty)
           Padding(padding: const EdgeInsets.only(top: 10), child: Text(item.bestTakeaway!, style: theme.textTheme.titleSmall)),
-        if (item.pointsWithRefs.isNotEmpty)
-          ExpansionTile(
-            title: const Text('Full Brief'),
-            children: <Widget>[
-              for (final BriefKeyPoint point in item.pointsWithRefs)
-                ListTile(
-                  title: Text(point.point),
-                  trailing: point.sourceRef == null ? null : point.timestampUrl(item.url) == null
-                      ? Text(point.sourceRef!, style: theme.textTheme.bodySmall)
-                      : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text(point.sourceRef!)),
-                ),
-            ],
+        if (item.pointsWithRefs.isNotEmpty || item.keyPoints.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 20),
+            child: Card(
+              margin: EdgeInsets.zero,
+              color: theme.colorScheme.primaryContainer,
+              clipBehavior: Clip.antiAlias,
+              child: ExpansionTile(
+                key: PageStorageKey<String>('full-brief-${item.id}'),
+                textColor: theme.colorScheme.onPrimaryContainer,
+                collapsedTextColor: theme.colorScheme.onPrimaryContainer,
+                title: Text('Full Brief', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                subtitle: Text('${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · Tap to expand'),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                children: <Widget>[
+                  if (item.pointsWithRefs.isNotEmpty)
+                    for (final BriefKeyPoint point in item.pointsWithRefs)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(point.point, style: theme.textTheme.bodyLarge?.copyWith(height: 1.45, color: theme.colorScheme.onPrimaryContainer)),
+                            if (point.sourceRef != null)
+                              point.timestampUrl(item.url) == null
+                                  ? Padding(padding: const EdgeInsets.only(top: 6), child: Text(point.sourceRef!, style: theme.textTheme.bodySmall))
+                                  : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text(point.sourceRef!)),
+                          ],
+                        ),
+                      )
+                  else
+                    for (final String point in item.keyPoints) _Bullet(text: point),
+                ],
+              ),
+            ),
           ),
-        if (item.pointsWithRefs.isEmpty && item.keyPoints.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 20),
-          Text('Key points', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 6),
-          for (final String point in item.keyPoints) _Bullet(text: point),
-        ],
         if (ingredients.isNotEmpty) ...<Widget>[
           const SizedBox(height: 20),
           Text('Ingredients', style: theme.textTheme.titleMedium),
@@ -224,19 +246,23 @@ class _DetailPageState extends State<DetailPage> {
         ],
         if (item.tags.isNotEmpty) ...<Widget>[
           const SizedBox(height: 20),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: item.tags.map((String tag) => Chip(label: Text(tag))).toList(growable: false),
+          ExpansionTile(
+            key: PageStorageKey<String>('tags-${item.id}'),
+            title: const Text('Tags'),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            children: <Widget>[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: item.tags.map((String tag) => Chip(label: Text(tag))).toList(growable: false),
+                ),
+              ),
+            ],
           ),
         ],
         const SizedBox(height: 28),
-        FilledButton.icon(
-          onPressed: () => _openOriginal(item.url),
-          icon: const Icon(Icons.open_in_new),
-          label: const Text('Open Original'),
-        ),
-        const SizedBox(height: 10),
         Row(
           children: <Widget>[
             Expanded(

@@ -176,3 +176,57 @@ def test_the_heartbeat_keeps_the_lock_fresh_and_stops_cleanly(sessions, saved, e
     with sessions() as s:
         assert s.execute(text("SELECT extract(epoch FROM now() - locked_at) "
                               "FROM processing_jobs")).scalar() > 500
+
+
+def test_a_replaced_attempt_cannot_heartbeat_or_commit(sessions, saved, engine_in_use):
+    from app.models import Item
+    with sessions() as s:
+        job_id = s.execute(text('SELECT id FROM processing_jobs')).scalar()
+        assert outbox.claim_job(s, job_id)
+        token = s.execute(text('SELECT attempt_token FROM processing_jobs')).scalar()
+    beat = outbox.JobHeartbeat(job_id, attempt_token=token)
+    with sessions() as stale:
+        outbox.fence_attempt(stale, job_id, token)
+        item = stale.query(Item).filter(Item.id == saved).one()
+        item.title = 'stale overwrite'
+        with sessions() as s:
+            s.execute(text("UPDATE processing_jobs SET locked_at = now() - interval '10 minutes'"))
+            s.commit()
+            assert outbox.recover_lost_jobs(s) == 1
+            assert outbox.claim_job(s, job_id)
+            replacement = s.execute(text('SELECT attempt_token FROM processing_jobs')).scalar()
+            before = s.execute(text('SELECT locked_at FROM processing_jobs')).scalar()
+        beat.beat()
+        with sessions() as s:
+            assert s.execute(text('SELECT locked_at FROM processing_jobs')).scalar() == before
+            assert replacement != token
+        with pytest.raises(outbox.AttemptLost):
+            stale.commit()
+        stale.rollback()
+    with sessions() as s:
+        assert s.query(Item).filter(Item.id == saved).one().title != 'stale overwrite'
+
+
+def test_publish_completion_does_not_clear_a_workers_claim(sessions, saved):
+    with sessions() as s:
+        job_id = s.execute(text('SELECT id FROM processing_jobs')).scalar()
+        assert outbox.claim_job(s, job_id)
+        before = s.execute(text('SELECT locked_at FROM processing_jobs')).scalar()
+        outbox.mark_processing(s, job_id)
+        s.commit()
+        assert s.execute(text('SELECT locked_at FROM processing_jobs')).scalar() == before
+
+
+def test_attempt_token_migration_preserves_existing_jobs(db, sessions, saved):
+    from alembic import command
+    from app import database
+    cfg = database.alembic_config()
+    cfg.set_main_option('sqlalchemy.url', db.url.render_as_string(hide_password=False))
+    command.downgrade(cfg, '0012_brief_v2')
+    with sessions() as s:
+        before = dict(s.execute(text('SELECT id, status, attempt_count FROM processing_jobs')).mappings().one())
+    command.upgrade(cfg, 'head')
+    with sessions() as s:
+        after = dict(s.execute(text('SELECT id, status, attempt_count, attempt_token FROM processing_jobs')).mappings().one())
+    assert after.pop('attempt_token') is None
+    assert after == before

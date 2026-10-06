@@ -166,17 +166,19 @@ class ItemPage {
 }
 
 class IngestResult {
-  const IngestResult({required this.id, required this.status, required this.canonicalUrl});
+  const IngestResult({required this.id, required this.status, required this.canonicalUrl, this.alreadyExists = false});
 
   factory IngestResult.fromJson(Map<String, dynamic> json) => IngestResult(
         id: asId(json['id']),
         status: json['status'] as String? ?? 'pending',
         canonicalUrl: json['canonical_url'] as String? ?? '',
+        alreadyExists: json['already_exists'] == true,
       );
 
   final String id;
   final String status;
   final String canonicalUrl;
+  final bool alreadyExists;
 }
 
 /// One queued capture; mirrors the backend `SyncItem` schema.

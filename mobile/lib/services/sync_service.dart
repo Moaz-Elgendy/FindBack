@@ -76,17 +76,21 @@ class SyncService {
   void Function(int flushed)? _onFlushed;
 
   Duration get retryDelay => _retryIn;
+  final ValueNotifier<ApiException?> lastError = ValueNotifier(null);
 
   /// Sends everything currently queued. Never throws: callers include a timer
   /// and a connectivity stream, neither of which has anyone to report to.
-  Future<int> flush() async {
+  Future<int> flush({bool force = false}) async {
     if (_flushing) return 0;
-    if (DateTime.now().isBefore(_nextAttemptAt)) return 0;
+    if (!force && DateTime.now().isBefore(_nextAttemptAt)) return 0;
     _flushing = true;
     try {
       if (!await _isOnline()) return 0;
       final queue = await _pending();
-      if (queue.isEmpty) return 0;
+      if (queue.isEmpty) {
+        lastError.value = null;
+        return 0;
+      }
 
       final result = await _send(queue);
       await _apply(result.mapped);
@@ -94,10 +98,12 @@ class SyncService {
         await _markFailed(clientId);
       }
       _resetRetry();
+      lastError.value = null;
       final flushed = result.mapped.length;
       if (flushed > 0) _onFlushed?.call(flushed);
       return flushed;
     } on ApiException catch (error) {
+      lastError.value = error;
       _backOff();
       debugPrint('[sync] batch rejected (${error.kind.name}): ${error.message}');
       return 0;

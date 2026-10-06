@@ -123,6 +123,8 @@ def test_same_content_same_user_is_one_asset_and_one_memory(db, sessions, users)
         second = _save(s, user, "https://youtu.be/dQw4w9WgXcQ")
         assets, memories = _counts(s)
     assert str(first.id) == str(second.id), "one user, one item"
+    assert first.already_exists is False
+    assert second.already_exists is True
     assert assets == 1
     assert memories == 1
     with sessions() as s:

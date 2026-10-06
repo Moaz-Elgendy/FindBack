@@ -19,6 +19,7 @@ class IngestResponse(BaseModel):
     id: UUID
     status: str
     canonical_url: str
+    already_exists: bool = False
 
 class SyncItem(BaseModel):
     client_id: str

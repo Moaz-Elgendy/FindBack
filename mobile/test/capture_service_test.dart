@@ -6,6 +6,33 @@ import 'package:flutter_test/flutter_test.dart';
 const IngestResult _ok = IngestResult(id: 'uuid-1', status: 'pending', canonicalUrl: 'https://x/1');
 
 void main() {
+  for (final id in ['remote-1', 'local-1']) {
+    test('offline repeat of $id is reported without a second memory', () async {
+      var queued = 0;
+      final service = CaptureService(
+        ingest: (_, __, ___) async => throw AssertionError('offline'),
+        existingItem: (_) async => ItemDetail.fromJson({'id': id, 'url': 'https://x/1'}),
+        queue: (_, __, ___) async { queued++; return '1'; },
+        isOnline: () async => false);
+      final result = await service.capture(url: 'https://x/1');
+      expect(result.alreadyExists, isTrue);
+      expect(result.reference, id);
+      expect(queued, id.startsWith('local-') ? 1 : 0);
+    });
+  }
+
+  test('repeat-save signal travels from API to capture outcome', () async {
+    final result = IngestResult.fromJson({'id': 'existing', 'status': 'ready',
+      'canonical_url': 'https://x/1', 'already_exists': true});
+    final service = CaptureService(ingest: (_, __, ___) async => result,
+      queue: (_, __, ___) async => throw AssertionError('must not queue'),
+      isOnline: () async => true);
+    final outcome = await service.capture(url: 'https://x/1');
+    expect(outcome.alreadyExists, isTrue);
+    expect(outcome.reference, 'existing');
+    expect(_ok.alreadyExists, isFalse);
+  });
+
   test('online saves go straight to the API and skip the queue', () async {
     final List<String> queued = <String>[];
     final CaptureService service = CaptureService(

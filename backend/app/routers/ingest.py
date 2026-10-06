@@ -396,8 +396,8 @@ def _touch(db: Session, item: Item, canon: str) -> IngestResponse:
     if retry:
         return IngestResponse(id=item.id,
                           status=_status_for(_enqueue(db, str(item.id), item.content_id), "failed"),
-                          canonical_url=canon)
-    return IngestResponse(id=item.id, status=item.status, canonical_url=canon)
+                          canonical_url=canon, already_exists=True)
+    return IngestResponse(id=item.id, status=item.status, canonical_url=canon, already_exists=True)
 
 
 @router.post("/sync/batch", response_model=SyncBatchResponse)

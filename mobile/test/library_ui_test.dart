@@ -1,0 +1,196 @@
+import 'package:findback/app_services.dart';
+import 'package:findback/data/api_client.dart';
+import 'package:findback/data/local_db.dart';
+import 'package:findback/data/token_store.dart';
+import 'package:findback/features/home/home_screen.dart';
+import 'package:findback/models/item.dart';
+import 'package:findback/services/capture_service.dart';
+import 'package:findback/services/items_service.dart';
+import 'package:findback/services/share_intent_service.dart';
+import 'package:findback/services/sync_service.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+class _Tokens extends TokenStore {
+  @override
+  Future<String?> read() async => null;
+}
+
+Map<String, dynamic> _item(String id, String category) => {
+  'id': id, 'url': 'https://example.test/$id', 'title_clean': '$id title',
+  'category': category, 'status': 'ready', 'tags': <String>[],
+};
+
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi; });
+
+  Future<AppServices> setup(WidgetTester tester, {
+    required RemoteRecentFetch recent, bool duplicate = false, SyncService? syncService,
+  }) async {
+    final db = (await tester.runAsync(() => LocalDb.openAt(inMemoryDatabasePath)))!;
+    final api = ApiClient(tokens: _Tokens());
+    return AppServices(db: db, api: api,
+      items: ItemsService(remoteItem: (_) async => ItemDetail.fromJson({
+        ..._item('old', 'tutorial'), 'instant_brief': 'Existing useful Brief.'}),
+        localItem: (_) async => null, remoteRecent: recent,
+        localRecent: (_, {String? category}) async => [], cache: (_) async {},
+        remoteDelete: (_) async {}, localDelete: (_) async => 0,
+        dropQueued: (_) async => 0, isOnline: () async => true),
+      capture: CaptureService(ingest: (_, __, ___) async => IngestResult(
+          id: 'old', status: 'ready', canonicalUrl: 'https://example.test/old',
+          alreadyExists: duplicate),
+        queue: (_, __, ___) async => throw AssertionError('not offline'),
+        isOnline: () async => true),
+      share: ShareIntentService(),
+      sync: syncService ?? SyncService(pending: () async => [], send: (_) async => throw UnimplementedError(),
+        apply: (_) async {}, markFailed: (_) async => {}, isOnline: () async => false));
+  }
+
+  testWidgets('library loads items past 20 and stops at the last page', (tester) async {
+    final asked = <String?>[];
+    final services = await setup(tester, recent: (limit, {String? category, String? cursor}) async {
+      asked.add(cursor);
+      final start = cursor == null ? 0 : int.parse(cursor);
+      final end = start + limit > 45 ? 45 : start + limit;
+      return ItemPage(items: [for (var i = start; i < end; i++) ItemDetail.fromJson(_item('$i', 'tutorial'))],
+          nextCursor: end < 45 ? '$end' : null);
+    });
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 2; i++) {
+      await tester.scrollUntilVisible(find.text('Load more').hitTestable(), 400, scrollable: find.byType(Scrollable).last);
+      await tester.tap(find.text('Load more'));
+      await tester.pumpAndSettle();
+    }
+    await tester.scrollUntilVisible(find.text('44 title').hitTestable(), 400, scrollable: find.byType(Scrollable).last);
+    expect(find.text('44 title'), findsOneWidget);
+    expect(find.text('Load more'), findsNothing);
+    expect(asked, [null, '20', '40']);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
+  testWidgets('duplicate outside loaded page appears centered in a neutral dialog', (tester) async {
+    final services = await setup(tester, duplicate: true,
+      recent: (limit, {String? category, String? cursor}) async => ItemPage(
+        items: [ItemDetail.fromJson(_item('new', 'tutorial'))]));
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save a link'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(1), 'https://example.test/old');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+    expect(find.text('Already exists'), findsOneWidget);
+    expect(find.text('old title'), findsOneWidget);
+    expect(find.text('Existing useful Brief.'), findsOneWidget);
+    expect(find.text('Saved. FindBack will summarise it shortly.'), findsNothing);
+    final dialog = find.byType(AlertDialog);
+    expect(tester.getCenter(dialog).dy, closeTo(tester.view.physicalSize.height / tester.view.devicePixelRatio / 2, 2));
+    expect(find.descendant(of: dialog, matching: find.byIcon(Icons.error)), findsNothing);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+  testWidgets('repeat from phone sharing uses the same existing-memory dialog', (tester) async {
+    final services = await setup(tester,
+      recent: (limit, {String? category, String? cursor}) async => const ItemPage(items: []));
+    services.sharedCapture.value = const CaptureOutcome(status: CaptureStatus.remote,
+        reference: 'old', alreadyExists: true);
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+    expect(find.text('Already exists'), findsOneWidget);
+    expect(find.text('old title'), findsOneWidget);
+    expect(services.sharedCapture.value, isNull);
+    await tester.tap(find.text('Open memory'));
+    await tester.pumpAndSettle();
+    expect(find.text('Existing useful Brief.'), findsOneWidget);
+    expect(find.text('Open Original'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
+  testWidgets('failed uploads explain the connection and allow an immediate retry', (tester) async {
+    var reachable = false;
+    final queue = [const SyncItem(clientId: 'q', url: 'https://example.test/q', capturedAt: 'now')];
+    final sync = SyncService(pending: () async => queue, send: (_) async {
+      if (!reachable) throw ApiException('connection refused');
+      return const SyncBatchResult(mapped: [MappedSave(clientId: 'q', serverId: 'server')], failedClientIds: []);
+    }, apply: (_) async => queue.clear(), markFailed: (_) async {},
+      isOnline: () async => true, retryBase: const Duration(hours: 1));
+    await sync.flush();
+    final services = await setup(tester, syncService: sync,
+      recent: (limit, {String? category, String? cursor}) async => const ItemPage(items: []));
+    services.pending.value = 1;
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    expect(find.text('Waiting for the backend. Your links are saved on this device.'), findsOneWidget);
+    reachable = true;
+    await tester.tap(find.text('Retry upload'));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+    expect(queue, isEmpty);
+    expect(sync.lastError.value, isNull);
+    expect(find.text('Waiting for the backend. Your links are saved on this device.'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
+  testWidgets('successful sync replaces the queued card without manual refresh', (tester) async {
+    var synced = false;
+    final services = await setup(tester,
+      recent: (limit, {String? category, String? cursor}) async => ItemPage(items: [
+        ItemDetail.fromJson(_item(synced ? 'server' : 'local-1', 'tutorial'))]));
+    services.pending.value = 1;
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    expect(find.text('local-1 title'), findsOneWidget);
+    synced = true;
+    services.pending.value = 0;
+    await tester.pumpAndSettle();
+    expect(find.text('server title'), findsOneWidget);
+    expect(find.text('local-1 title'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
+  testWidgets('resume retries queued uploads after the backend returns', (tester) async {
+    var reachable = false;
+    var sends = 0;
+    final queue = [const SyncItem(clientId: 'q', url: 'https://example.test/q', capturedAt: 'now')];
+    final sync = SyncService(pending: () async => queue, send: (_) async {
+      sends++;
+      if (!reachable) throw ApiException('connection refused');
+      return const SyncBatchResult(mapped: [MappedSave(clientId: 'q', serverId: 'server')], failedClientIds: []);
+    }, apply: (_) async => queue.clear(), markFailed: (_) async {},
+      isOnline: () async => true, retryBase: const Duration(hours: 1));
+    await sync.flush();
+    final services = await setup(tester, syncService: sync,
+      recent: (limit, {String? category, String? cursor}) async => const ItemPage(items: []));
+    services.pending.value = 1;
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    reachable = true;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+    expect(sends, 2);
+    expect(queue, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
+}

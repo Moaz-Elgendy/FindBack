@@ -15,9 +15,10 @@ enum CaptureStatus {
 }
 
 class CaptureOutcome {
-  const CaptureOutcome({required this.status, required this.reference, this.clientId});
+  const CaptureOutcome({required this.status, required this.reference, this.clientId, this.alreadyExists = false});
 
   final CaptureStatus status;
+  final bool alreadyExists;
 
   /// Server item id when [status] is `remote`, otherwise the local row id.
   final String reference;
@@ -35,9 +36,11 @@ class CaptureService {
     required IngestUrl ingest,
     required QueueSave queue,
     ConnectivityProbe? isOnline,
+    Future<ItemDetail?> Function(String url)? existingItem,
   })  : _ingest = ingest,
         _queue = queue,
-        _isOnline = isOnline ?? systemIsOnline;
+        _isOnline = isOnline ?? systemIsOnline,
+        _existingItem = existingItem;
 
   factory CaptureService.of({required ApiClient api, required LocalDb db, ConnectivityProbe? isOnline}) =>
       CaptureService(
@@ -46,11 +49,13 @@ class CaptureService {
         queue: (String url, String? preview, String? titleHint) =>
             db.queueSave(url: url, preview: preview, titleHint: titleHint),
         isOnline: isOnline,
+        existingItem: db.localItemForUrl,
       );
 
   final IngestUrl _ingest;
   final QueueSave _queue;
   final ConnectivityProbe _isOnline;
+  final Future<ItemDetail?> Function(String url)? _existingItem;
 
   /// Throws [ApiException] when the server actively rejects the URL — that is a
   /// real answer the user should see. Only connectivity problems are absorbed
@@ -59,16 +64,21 @@ class CaptureService {
     if (await _isOnline()) {
       try {
         final IngestResult result = await _ingest(url, preview, titleHint);
-        return CaptureOutcome(status: CaptureStatus.remote, reference: result.id);
+        return CaptureOutcome(status: CaptureStatus.remote, reference: result.id, alreadyExists: result.alreadyExists);
       } on ApiException catch (error) {
         if (!error.isRetryableOffline) rethrow;
       }
+    }
+    final existing = await _existingItem?.call(url);
+    if (existing != null && !existing.id.startsWith('local-')) {
+      return CaptureOutcome(status: CaptureStatus.remote, reference: existing.id, alreadyExists: true);
     }
     final String clientId = await _queue(url, preview, titleHint);
     return CaptureOutcome(
       status: CaptureStatus.queued,
       reference: 'local-$clientId',
       clientId: clientId,
+      alreadyExists: existing != null,
     );
   }
 }

@@ -88,3 +88,18 @@ def test_the_repair_attempt_still_names_the_confirmed_entities():
     result = asyncio.run(brief_v2.extract(_ev(), gateway))
     assert result.entities.tools_products == ['Claude Code']
     assert len(gateway.calls) == 2
+
+@pytest.mark.parametrize('name', ['pickabla', 'fine skills'])
+def test_lowercase_guessed_names_in_prose_are_rejected(name):
+    data = dict(payload(), instant_brief=f'{name} helps with frontend work.',
+                entities={'tools_products': [name], 'people_orgs': [], 'numbers': []})
+    with pytest.raises(ValueError, match='STT guess'):
+        brief_v2.validate(data, _ev())
+
+
+def test_tags_containing_a_dropped_name_are_removed():
+    data = dict(payload(), entities={'tools_products': ['pickabla'],
+                                     'people_orgs': [], 'numbers': []},
+                tags=payload()['tags'] + ['pickabla frontend', 'fine pickabla skills'])
+    result = brief_v2.validate(data, _ev())
+    assert all('pickabla' not in tag for tag in result.tags)

@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: findback
       POSTGRES_DB: findback
     ports:
-      - "5432:5432"
+      - "127.0.0.1:55433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql

@@ -19,6 +19,19 @@ ItemDetail _serverItem(String id, {String title = 'Server recipe'}) =>
 Future<LocalDb> _freshDb() => LocalDb.openAt(inMemoryDatabasePath);
 
 void main() {
+  test('existing saved link is found by URL and canonical URL', () async {
+    final db = await LocalDb.openAt(inMemoryDatabasePath);
+    try {
+      await db.upsertRemoteItems([ItemDetail.fromJson({'id': 'existing',
+        'url': 'https://example.com/shared', 'canonical_url': 'https://example.com/original',
+        'summary': 'Legacy long summary', 'instant_brief': 'Short cached Brief.'})]);
+      expect((await db.localItemForUrl('https://example.com/shared'))?.id, 'existing');
+      expect((await db.localItemForUrl('https://example.com/original'))?.id, 'existing');
+      expect(await db.localItemForUrl('https://example.com/new'), isNull);
+      expect((await db.recentLocalItems()).single.summary, 'Short cached Brief.');
+    } finally { await db.close(); }
+  });
+
   late LocalDb db;
 
   setUpAll(() {

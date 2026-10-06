@@ -14,7 +14,7 @@ The automatic worker completed in approximately 102 seconds. Stored status is RE
 
 Production supplies numbered {id,start,text} transcript segments. Points must cite known integer segment_ids; missing/unknown IDs cause rejection and one repair attempt. Code derives mm:ss by flooring the earliest cited start. IDs survive splitting/map-reduce. The Claude Mem regression uses start 39.28 seconds and yields 00:39; the saved Claude Mem point also cites 00:39. Known but semantically wrong IDs remain possible: this validator is not semantic entailment proof.
 
-## Five real production-path evaluations
+## Earlier baseline: five real production-path evaluations
 
 The evaluator calls production stage_understand/stage_brief/stage_chunk, using the same prompt, gateway, provider order, backoff, validation and repair. Five serial runs reused the stored evidence. Gemini returned quota 429; automatic failover used configured Groq openai/gpt-oss-120b, including backoff for Groq TPM throttling. Final checks passed 3/5 (60%); runs 1 and 3 returned fallback. The command exited 1. These evaluation outputs did not replace the accepted stored Gemini Brief.
 
@@ -26,7 +26,7 @@ The evaluator calls production stage_understand/stage_brief/stage_chunk, using t
 | 4 | PASS | 1: unsupported_name — Named entity requires written-source confirmation, not an STT guess [Fine skills, Pickabla] |
 | 5 | PASS | 1: unsupported_name — Named entity requires written-source confirmation, not an STT guess [Fine skills, Pickabla] |
 
-No timestamp or tag-count validation rejection occurred in these five runs. Fallback outputs failed final tag-count/timestamp/confidence checks as well as real_brief. “Fine skills” and “Pickabla” are transcript guesses absent from caption/OCR. “skill library” is a generic transcript phrase, not a confirmed product name; its rejected response also included unsupported Pickabla. No demonstrated rejection of a caption/OCR-supported name required loosening the validator. Schema repairs remain unreliable: title length and numeric entity string types caused failures. This phase reports those failures rather than claiming five successful runs.
+No timestamp or tag-count validation rejection occurred in these five runs. Fallback outputs failed final tag-count/timestamp/confidence checks as well as real_brief. “Fine skills” and “Pickabla” are transcript guesses absent from caption/OCR. “skill library” is a generic transcript phrase, not a confirmed product name; its rejected response also included unsupported Pickabla. No demonstrated rejection of a caption/OCR-supported name required loosening the validator. In this earlier baseline, title length and numeric entity string types caused schema repair failures. The follow-up results below supersede that reliability measurement.
 
 ## Search against distractors
 
@@ -89,9 +89,96 @@ Artifacts and backups: `/home/moaz/.codex/backups/findback/reel-check-20261006/`
 
 ## Deferred observations
 
-- Worker interruption recovery remains the next task; not changed or claimed verified.
-- Five-run real-LLM reliability is 60%; schema repair failures and recurring STT name guesses remain.
-- Temporary Compose port override is required on this host while port 5432 remains occupied.
+- Worker interruption recovery was deferred in the earlier baseline; it is now implemented and verified in the follow-up below.
+- Earlier five-run real-LLM reliability was 60%; the follow-up below measures the applied repairs.
+- Host PostgreSQL occupies port 5432; the later outbox network fix below makes Compose port 55433 permanent.
 - The original historical record and its former v2 JSON are absent, so no before/after database comparison is claimed.
+
+
+## Follow-up: grounding and worker ownership fixes
+
+Verified 2026-10-06 (Africa/Cairo), after the user applied the grounding/recovery patch. No new API response fields or endpoints. Prompt text/version is unchanged (`brief_v3.2`).
+
+### Changes and regression evidence
+
+- Casing no longer exempts guessed names from prose grounding. Unsupported lowercase `pickabla` and `fine skills` are rejected if used in prose. The exact generic phrase `skill library` remains allowed as a description only when it appears in source evidence; it is pruned from unconfirmed entities. Tags containing dropped names are also removed.
+- Each successful claim creates a new UUID `processing_jobs.attempt_token`. Heartbeats update only their own token. Recovery revokes the lost token. Worker-session flush/commit checks take a job row lock and reject superseded writes, including writes committed within pipeline stages. A superseded attempt rolls back and exits without marking its replacement failed.
+- A dispatcher publish completion cannot clear an already-claimed worker lock. The task path that creates a missing job now claims it before starting a heartbeat.
+- New regressions failed against the old code (lowercase prose accepted, ownership column/function absent, publisher cleared a claimed lock). The composite guessed-name tag regression also failed before its fix. Normal retry integration initially exposed retained-token blocking; it was corrected and the final regression checks passed.
+- Migration `0013_job_attempt_token` adds one nullable UUID column, without rewriting existing data. Downgrade/re-upgrade tests preserve existing jobs and initialize their token to NULL. Workers/API/outbox were stopped before migration and rebuilt/restarted afterward. The original saved reel Brief was compared with its earlier export and is unchanged.
+
+### Real LLM rerun: 5/5 passed
+
+Command (completed, exit 0):
+
+```bash
+docker compose exec -T api python -u - --stored-item bfa5da53-099a-44ea-9ec6-99e9d02bd804 --runs 5 --output /tmp/facebook-five-ownership.json < scripts/eval_brief.py
+```
+
+All five final evaluations passed every evaluator check, using real Groq `openai/gpt-oss-120b` responses after normal Gemini failover. First-response acceptance was 0/5: each run rejected unsupported STT guesses once and passed after the single automatic repair. There were no schema, timestamp or tag-count validation rejections in this rerun. No fallback output remained. These evaluations did not overwrite the accepted original Gemini Brief.
+
+| Run | Final result | Rejection before successful repair |
+|---|---|---|
+| 1 | PASS | attempt 1: unsupported_name (Fine skills, Pickabla) |
+| 2 | PASS | attempt 1: unsupported_name (Fine Skills, Pickabla) |
+| 3 | PASS | attempt 1: unsupported_name (Fine skills, Pickabla) |
+| 4 | PASS | attempt 1: unsupported_name (Fine skills, Pickable) |
+| 5 | PASS | attempt 1: unsupported_name (Fine skills, Pickabla) |
+
+Provider logs still show Gemini HTTP 429 quota exhaustion (`generate_content_free_tier_requests`, limit 20) and HTTP 503 high demand. Groq also returned token-per-minute 429s; the production retry/backoff path recovered. This proves five repaired successes through secondary-provider failover, not successful Gemini chat quota recovery or a statistically established future pass rate.
+
+### Live SIGKILL recovery
+
+Created a separate verification user through normal signed-token authentication, then saved the same Facebook reel through HTTP POST `/api/v1/ingest`. Test item: `e8309d0f-a170-43b8-82e6-3f353675c556`. No other claimed work was active before the kill. No saved-record state/provenance was manually edited and no clock/lock timeout was shortened.
+
+The actual Compose worker container was SIGKILLed after its native job claim and committed PROCESSING state, then restarted. The unchanged dispatcher recovered it after 302.01 seconds observed from the kill, counted one failed attempt, and republished after normal backoff. Observed states: PROCESSING/0 → PENDING/1 → PROCESSING/1 → READY/2. The final count of 2 comprises the worker-loss failure and the successful replacement attempt.
+
+- Old token: `ba948ad5-5d55-4885-8515-ec0b17d4487c`.
+- Replacement token: `67883cc1-1c4e-47a2-a413-8257513328dc`.
+- Final item/job: READY / READY; needs_retry=false.
+- Native stored provenance: brief_source=llm, evidence_level=full_transcript, prompt_version=brief_v3.2.
+- Total kill-to-observed-completion: 422.09 seconds. The restarted pipeline included media acquisition/STT and real-provider failover; no fixture LLM was used.
+
+The original item `bfa5da53-099a-44ea-9ec6-99e9d02bd804` remains READY with its prior real Gemini Brief and needs_retry=false. The historical `e310cfa3-b604-46f2-b4b0-b5984a3f596b` remains absent.
+
+### Actual test commands and results
+
+```bash
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:55433/fb_reel_check backend/.venv/bin/python -m pytest backend/tests/test_brief_grounding_repair.py backend/tests/test_worker_loss_recovery.py backend/tests/test_brief_integrity.py backend/tests/test_stuck_save_recovery.py backend/tests/test_phase5_outbox.py backend/tests/test_phase16_migration.py -q
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:55433/fb_reel_check backend/.venv/bin/python -m pytest backend/tests -q
+PYTHONPATH=backend backend/.venv/bin/python -u /tmp/findback-live-worker-kill.py
+docker compose -f docker-compose.yml -f /tmp/findback-reel-runtime.yml up -d --build --no-deps api worker outbox
+```
+
+Final focused: **58 passed in 33.10s**. Final full suite: **765 passed, 1 skipped, 1 warning in 358.45s**. An earlier full run reported 2 failed, 761 passed, 1 skipped: the two migration tests still expected head 0012 and were updated to the actual new head 0013; final suite includes the two subsequently added tag/migration regressions. The warning is python-jose datetime.utcnow deprecation. Test databases are isolated; mobile tests NOT RUN (no mobile changes). Python compilation and CRLF-aware git diff --check passed.
+
+Real database migration: `0012_brief_v2` → `0013_job_attempt_token`, after backup `ownership-fix-20261006/before-0013.dump`. No backup restore was performed. API/worker/outbox are rebuilt and running against Compose PostgreSQL; host port override remains localhost:55433.
+
+Artifacts: `/home/moaz/.codex/backups/findback/ownership-fix-20261006/`: before-0013.dump, original-reel-after-migration.json, five-live.json, five-live.log, worker-kill.json, recovered-reel-proof.json, worker-kill-check.py, focused-tests.log, full-tests.log. The JSON artifacts contain complete results/provenance. The kill harness was a temporary verification script, not a new application feature.
+
+### Remaining limitations
+
+- Fallback Brief retries remain unbounded with capped backoff; this behavior was not changed.
+- The five-minute recovery delay remains intentional and was measured, not shortened.
+- Attempt fencing prevents superseded database commits. It does not promise exactly-once outbound provider calls when workers overlap.
+- Known segment IDs can still be semantically inappropriate; timestamp derivation alone is not entailment verification.
+- Gemini chat quota is still exhausted; successful reruns relied on Groq failover.
+
+
+## Outbox network repair — 2026-10-06
+
+A later ordinary Compose restart recreated PostgreSQL with no Docker network attachment. Outbox repeatedly reported `could not translate host name "postgres" to address: Name or service not known`. Host PostgreSQL still occupied port 5432.
+
+Changed the PostgreSQL host mapping in docker-compose.yml to `127.0.0.1:55433:5432`, making the earlier temporary workaround permanent. Internal API/worker/outbox DATABASE_URL values remain `postgres:5432/findback`. Recreated only PostgreSQL with `docker compose up -d --no-deps --force-recreate postgres`. No schema migration, backup restore, application code change or data deletion was performed. The existing `findback_pgdata` volume and migration `0013_job_attempt_token` were retained. Backup: `/home/moaz/.codex/backups/findback/outbox-network-20261006/before-network-fix.dump`.
+
+Verified from the outbox container: PostgreSQL DNS resolves, SQL `select 1` returns 1, and production `dispatch_once` completes with zero failures. API /health reports db=ok and redis=ok. The before-fix dump and current database each contain four saved items; this is the later user dataset, not the earlier synthetic search corpus.
+
+Regression command actually run:
+
+```bash
+TEST_DATABASE_URL=postgresql://findback:findback@localhost:55433/fb_reel_check backend/.venv/bin/python -m pytest backend/tests/test_outbox_wiring.py backend/tests/test_phase5_outbox.py backend/tests/test_worker_loss_recovery.py -q
+```
+
+Result: **18 passed in 12.09s**. The new Compose port/internal-address regression failed against the old mapping, then passed after the change. Full suite NOT RUN in this configuration-only follow-up; the related tests and live DNS/DB/dispatcher checks were run.
 
 STOPPED.

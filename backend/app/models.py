@@ -326,6 +326,7 @@ class ProcessingJob(Base):
                           nullable=False)
     # Set while a dispatcher is publishing, so a second dispatcher skips it.
     locked_at = Column(DateTime(timezone=True))
+    attempt_token = Column(UUID(as_uuid=True))
     # Phase 8: which pipeline stage completed last (FETCH, NORMALIZE,
     # UNDERSTAND, BRIEF, CHUNK or EMBED). Drives where a retry resumes.
     last_stage = Column(String(16))

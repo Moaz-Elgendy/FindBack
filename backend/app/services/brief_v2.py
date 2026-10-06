@@ -179,11 +179,13 @@ def validate(data: dict, evidence: dict) -> BriefV2:
     if dropped:
         gone = {normalized(name) for name in dropped}
         if isinstance(data.get('tags'), list):
-            data['tags'] = [t for t in data['tags'] if not isinstance(t, str) or normalized(t) not in gone]
-        # A guessed name the prose still states as a name is the real defect.
-        # A lowercase phrase ("skill library") is a description, not a claim.
+            data['tags'] = [t for t in data['tags'] if not isinstance(t, str) or not any(
+                f' {name} ' in f' {normalized(t)} ' for name in gone)]
+        # Only the grounded generic description is exempt, never casing alone.
         prose = f' {prose_text(data)} '
-        if any(not name[:1].islower() and f' {normalized(name)} ' in prose for name in dropped):
+        if any(f' {normalized(name)} ' in prose and not (
+                normalized(name) == 'skill library' and 'skill library' in corpus)
+               for name in dropped):
             raise ValueError(NAME_ERROR)
         log.info('Brief validation dropped %d unconfirmed entity name(s)', len(dropped))
     phrases = [phrase for phrase in ('claude skills', 'agent skills') if phrase in corpus]

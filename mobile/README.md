@@ -35,11 +35,26 @@ tool/run_android.sh
 # tool/run_android.sh 192.168.1.8:40765
 ```
 
-The launcher checks the local API and connected device, then runs
-`adb reverse tcp:8000 tcp:8000` before Flutter. This makes the phone's
-`127.0.0.1:8000` reach the API on the development machine. Forwarding must be
-restored after reconnecting wireless debugging. Plain `flutter run` targets
-localhost too, but does not establish this forwarding itself.
+The The launcher checks the local API and connected device, establishes forwarding,
+and keeps restoring it while Flutter runs. It identifies the physical phone so
+wireless reconnects with a different ADB port are handled.
+
+For an already installed APK, keep forwarding alive in a separate terminal:
+
+```bash
+tool/run_android.sh --watch
+```
+
+This watches the paired phone and restores `tcp:8000` forwarding automatically.
+The loop can stay running across Compose restarts. Stop it with Ctrl+C. This is
+local development routing: the phone still needs an ADB connection to the laptop.
+For use without ADB, build with `--dart-define=API_BASE_URL=<reachable backend URL>`;
+`localhost` on the phone refers to the phone, not the laptop.
+
+Queued links remain on-device while the backend is unreachable. The app exposes
+failed uploads and offers **Retry upload**, retries on resume, and refreshes the
+library after a successful upload. SQLite version 3 preserves queued links and
+stores their returned server IDs so an already-open memory keeps working after sync.
 
 Nothing is read from `.env` at runtime: a compiled binary has no `.env`, so all
 configuration arrives through `--dart-define` (`lib/config.dart`).

@@ -7,7 +7,8 @@ from app.models import (
     Chunk, ContentAsset, Item, ProcessingJob,
 )
 from app.services import embedder, observability, retention
-from app.services.outbox import JobHeartbeat, claim_job, complete_job, record_failure
+from app.services.outbox import (AttemptLost, JobHeartbeat, claim_job, complete_job,
+                                 fence_attempt, record_failure)
 import datetime
 import asyncio
 import logging
@@ -287,10 +288,14 @@ def process_item(self, item_id: str):
                                 job_type=JOB_TYPE_PROCESS)
             db.add(job)
             db.commit()
+            if not claim_job(db, job.id):
+                return {"id": str(item.id), "status": "skipped"}
 
         # From here until the worker is done the lock is refreshed, so the
         # dispatcher can tell a busy worker from a dead one (see JobHeartbeat).
-        heartbeat = JobHeartbeat(job.id).start()
+        token = job.attempt_token
+        fence_attempt(db, job.id, token)
+        heartbeat = JobHeartbeat(job.id, attempt_token=token).start()
 
         if not (item.summary and item.needs_retry):
             item.status = "processing"
@@ -349,6 +354,9 @@ def process_item(self, item_id: str):
             pipeline_version=JOB_TYPE_PROCESS, stage="READY", status="ready",
             duration_ms=int(round((time.monotonic() - began) * 1000)))
         return {"id": str(item.id), "status": "ready"}
+    except AttemptLost:
+        db.rollback()
+        return {"id": item_id, "status": "skipped", "reason": "attempt superseded"}
     except Exception as e:
         if heartbeat is not None:
             heartbeat.stop()  # before the job is rescheduled, not after
@@ -361,12 +369,18 @@ def process_item(self, item_id: str):
                 item.status = "ready" if item.summary and item.needs_retry else "failed"
                 item.failure_reason = str(e)[:1000]
                 db.commit()
+        except AttemptLost:
+            db.rollback()
+            return {"id": item_id, "status": "skipped", "reason": "attempt superseded"}
         except Exception: pass
         # Phase 6: a retryable failure keeps the job active, counts the attempt
         # and records why, instead of silently disappearing.
         if job is not None:
             try:
                 record_failure(db, job.id, f"{type(e).__name__}: {e}")
+            except AttemptLost:
+                db.rollback()
+                return {"id": item_id, "status": "skipped", "reason": "attempt superseded"}
             except Exception:  # noqa: BLE001
                 db.rollback()
         # Phase 18: the reason goes to the log BY TYPE AND LENGTH only, while the

@@ -99,3 +99,10 @@ def test_the_worker_and_the_dispatcher_agree_on_the_broker():
     assert dispatcher is not None
     assert worker["REDIS_URL"] == dispatcher["REDIS_URL"]
     assert worker["DATABASE_URL"] == dispatcher["DATABASE_URL"]
+
+
+def test_postgres_host_port_does_not_conflict_with_host_postgresql():
+    services = yaml.safe_load(COMPOSE.read_text(encoding='utf-8'))['services']
+    assert services['postgres']['ports'] == ['127.0.0.1:55433:5432']
+    for name in ('api', 'worker', 'outbox'):
+        assert services[name]['environment']['DATABASE_URL'].endswith('@postgres:5432/findback')

@@ -26,7 +26,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _input = TextEditingController();
   late final SearchController _search;
 
@@ -36,10 +36,17 @@ class _HomeScreenState extends State<HomeScreen> {
   List<String> _categories = const ['All'];
   String _recentCategory = 'All';
   int _recentRequestId = 0;
+  late int _pendingCount;
+  String? _nextCursor;
+  bool _loadingMore = false;
+  String? _moreError;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _pendingCount = widget.services.pending.value;
+    widget.services.pending.addListener(_onQueueChanged);
     _search = SearchController.of(
       api: widget.services.api,
       local: widget.services.db.localSearch,
@@ -50,8 +57,26 @@ class _HomeScreenState extends State<HomeScreen> {
           if (!_search.hasQuery && _recentCategory != _search.category) _loadRecent();
         }
       });
+    widget.services.sharedCapture.addListener(_onSharedCapture);
+    _onSharedCapture();
     _loadCategories();
     _loadRecent();
+  }
+
+  void _onQueueChanged() {
+    final count = widget.services.pending.value;
+    if (count < _pendingCount && mounted) _loadRecent();
+    _pendingCount = count;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _retryQueued();
+  }
+
+  Future<void> _retryQueued() async {
+    await widget.services.sync.flush(force: true);
+    if (mounted) await _refreshAll();
   }
 
   Future<void> _loadCategories() async {
@@ -61,6 +86,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    widget.services.sharedCapture.removeListener(_onSharedCapture);
+    WidgetsBinding.instance.removeObserver(this);
+    widget.services.pending.removeListener(_onQueueChanged);
     _search.dispose();
     _input.dispose();
     super.dispose();
@@ -69,13 +97,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadRecent() async {
     final requestId = ++_recentRequestId;
     _recentCategory = _search.category;
-    setState(() => _loadingRecent = true);
+    setState(() {
+      _loadingRecent = true;
+      _loadingMore = false;
+      _moreError = null;
+    });
     try {
-      final List<SearchResult> recent = await widget.services.items.recent(
+      final page = await widget.services.items.recentPage(
         limit: HomeScreen.recentLimit, category: _recentCategory);
       if (!mounted || requestId != _recentRequestId) return;
       setState(() {
-        _recent = recent;
+        _recent = page.items;
+        _nextCursor = page.nextCursor;
         _loadingRecent = false;
         _recentError = null;
       });
@@ -85,6 +118,28 @@ class _HomeScreenState extends State<HomeScreen> {
         _loadingRecent = false;
         _recentError = error.message;
       });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || _loadingRecent || _nextCursor == null) return;
+    final requestId = _recentRequestId;
+    final cursor = _nextCursor;
+    setState(() { _loadingMore = true; _moreError = null; });
+    try {
+      final page = await widget.services.items.recentPage(
+          limit: HomeScreen.recentLimit, category: _recentCategory,
+          cursor: cursor, loadedCount: _recent.length);
+      if (!mounted || requestId != _recentRequestId) return;
+      setState(() {
+        final ids = _recent.map((item) => item.id).toSet();
+        _recent = [..._recent, ...page.items.where((item) => ids.add(item.id))];
+        _nextCursor = page.nextCursor;
+        _loadingMore = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted || requestId != _recentRequestId) return;
+      setState(() { _loadingMore = false; _moreError = error.message; });
     }
   }
 
@@ -107,26 +162,76 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _onSharedCapture() {
+    final outcome = widget.services.sharedCapture.value;
+    if (outcome == null) return;
+    widget.services.sharedCapture.value = null;
+    _handleSaved(outcome);
+  }
+
+  void _handleSaved(CaptureOutcome outcome) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _refreshAll();
+      if (!mounted) return;
+      if (outcome.alreadyExists) {
+        await _showExisting(outcome.reference);
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          outcome.isQueued
+              ? 'Saved on this device — it uploads when you reconnect.'
+              : 'Saved. FindBack will summarise it shortly.')));
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
   Future<void> _saveLink() async {
-    await CaptureSheet.show(
-      context,
-      capture: widget.services.capture,
-      onSaved: (CaptureOutcome outcome) {
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          await _refreshAll();
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                outcome.isQueued
-                    ? 'Saved on this device — it uploads when you reconnect.'
-                    : 'Saved. FindBack will summarise it shortly.',
+    await CaptureSheet.show(context, capture: widget.services.capture, onSaved: _handleSaved);
+  }
+
+  Future<void> _showExisting(String id) async {
+    try {
+      final item = await widget.services.items.getItem(id);
+      if (!mounted) return;
+      final open = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Already exists'),
+          content: SingleChildScrollView(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).colorScheme.outline),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item?.bestTitle ?? 'This link is already saved.',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  if (item != null && item.briefText.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(item.briefText),
+                  ],
+                ],
               ),
             ),
-          );
-        });
-      },
-    );
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Close')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Open memory')),
+          ],
+        ),
+      );
+      if (open == true && mounted) await _openDetail(id);
+    } on ApiException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Already exists')));
+      }
+    }
   }
 
   @override
@@ -137,7 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('FindBack'),
         actions: <Widget>[
           _QueueBadge(pending: widget.services.pending),
-          IconButton(tooltip: 'Refresh', onPressed: _refreshAll, icon: const Icon(Icons.refresh)),
+          IconButton(tooltip: 'Refresh', onPressed: _retryQueued, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: SafeArea(
@@ -192,6 +297,24 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            ValueListenableBuilder<int>(
+              valueListenable: widget.services.pending,
+              builder: (context, count, _) => count == 0 ? const SizedBox.shrink()
+                  : ValueListenableBuilder<ApiException?>(
+                      valueListenable: widget.services.sync.lastError,
+                      builder: (context, error, _) => error == null ? const SizedBox.shrink()
+                          : Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: Row(children: [
+                                Expanded(child: Text(error.kind == ApiFailureKind.unauthorized
+                                    ? 'Sign in to upload your saved links.'
+                                    : 'Waiting for the backend. Your links are saved on this device.',
+                                    style: theme.textTheme.bodySmall)),
+                                TextButton(onPressed: _retryQueued, child: const Text('Retry upload')),
+                              ]),
+                            ),
+                    ),
+            ),
             if (_search.offline)
               Material(
                 color: theme.colorScheme.secondaryContainer,
@@ -232,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return RefreshIndicator(
-      onRefresh: _refreshAll,
+      onRefresh: _retryQueued,
       child: ListView.builder(
         padding: const EdgeInsets.only(bottom: 96, top: 4),
         itemCount: _search.results.length,
@@ -264,11 +387,24 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return RefreshIndicator(
-      onRefresh: _refreshAll,
+      onRefresh: _retryQueued,
       child: ListView.builder(
         padding: const EdgeInsets.only(bottom: 96, top: 4),
-        itemCount: _recent.length,
+        itemCount: _recent.length + (_nextCursor == null ? 0 : 1),
         itemBuilder: (BuildContext context, int index) {
+          if (index == _recent.length) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(children: [
+                if (_moreError != null) Text(_moreError!, textAlign: TextAlign.center),
+                if (_loadingMore)
+                  const CircularProgressIndicator()
+                else
+                  OutlinedButton(onPressed: _loadMore,
+                      child: Text(_moreError == null ? 'Load more' : 'Try again')),
+              ]),
+            );
+          }
           final SearchResult item = _recent[index];
           return ResultCard(result: item, onTap: () => _openDetail(item.id));
         },

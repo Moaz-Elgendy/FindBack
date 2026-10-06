@@ -39,7 +39,7 @@ class SearchResult {
         title: (row['title_clean'] as String?)?.isNotEmpty == true
             ? row['title_clean'] as String
             : ((row['title'] as String?)?.isNotEmpty == true ? row['title'] as String : row['url'] as String? ?? ''),
-        summary: row['summary'] as String? ?? '',
+        summary: ItemDetail.fromLocalRow(row).briefText,
         tags: decodeTags(row['tags']),
         category: row['category'] as String? ?? 'other',
         score: 0.5,
@@ -64,7 +64,7 @@ class SearchResult {
   factory SearchResult.fromItem(ItemDetail item) => SearchResult(
         id: item.id,
         title: item.bestTitle,
-        summary: item.summary ?? '',
+        summary: item.briefText,
         tags: item.tags,
         category: item.category ?? 'other',
         score: 1,
