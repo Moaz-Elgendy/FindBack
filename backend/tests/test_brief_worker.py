@@ -248,3 +248,23 @@ def test_fallback_excluded_from_all_live_candidate_paths(db,sessions,monkeypatch
         assert search.chunk_lexical_search(session,owner,'claude',['claude'])==[]
         assert asyncio.run(search.chunk_search(session,owner,'claude',q_emb=[0.01]*1536))==[]
         assert search.correct_tag_terms(session,owner,['calude'])==['calude']
+
+
+def test_fallback_retries_past_attempt_cap_until_real_brief_succeeds(db, sessions, monkeypatch):
+    from app.services.brief_retry import schedule
+    monkeypatch.setenv('MEDIA_RETRY_MAX_ATTEMPTS', '3')
+    item_id, _, job_id = _seed(sessions)
+    with sessions() as session:
+        item, job = session.get(Item, item_id), session.get(ProcessingJob, job_id)
+        item.status = 'ready'
+        item.evidence_bundle = {'evidence_level': 'full_transcript'}
+        item.brief_v2 = {'brief_source': 'fallback'}
+        item.processing_metadata = {'brief_attempts': 99, 'media_attempts': 99}
+        assert schedule(session, item, job)
+        session.refresh(item)
+        session.refresh(job)
+        assert item.needs_retry and job.status == 'PENDING'
+        assert job.last_stage == 'NORMALIZE' and job.available_at > item.created_at
+        item.brief_v2 = {'brief_source': 'llm'}
+        assert not schedule(session, item, job)
+        assert not item.needs_retry

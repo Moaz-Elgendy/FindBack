@@ -58,7 +58,7 @@ class _DetailPageState extends State<DetailPage> {
         _item = item;
         _loading = false;
       });
-      if (item != null && ((!item.isReady && !item.isFailed) || item.needsRetry)) {
+      if (item != null && item.isGeneratingBrief) {
         _refreshTimer = Timer(const Duration(seconds: 5), () => _load(refresh: true));
       }
     } on ApiException catch (error) {
@@ -182,19 +182,11 @@ class _DetailPageState extends State<DetailPage> {
               failed: true,
             ),
           )
-        else if (!item.isReady)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: _Banner(
-              text: item.summary == null || item.summary!.isEmpty
-                  ? 'Processing...'
-                  : 'Processing...',
-            ),
+        else if (item.isGeneratingBrief)
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: _Banner(text: 'Generating/processing...'),
           ),
-        if (item.needsRetry)
-          const Padding(padding: EdgeInsets.only(top: 8), child: Text('Improving brief...')),
-        if (item.missingInfo != null && item.missingInfo!.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(top: 8), child: _Banner(text: item.missingInfo!)),
         const SizedBox(height: 16),
         Text(
           item.briefText.isEmpty ? 'Open the original to view this memory.' : item.briefText,
@@ -202,7 +194,7 @@ class _DetailPageState extends State<DetailPage> {
         ),
         if (item.bestTakeaway != null && item.bestTakeaway!.isNotEmpty)
           Padding(padding: const EdgeInsets.only(top: 10), child: Text(item.bestTakeaway!, style: theme.textTheme.titleSmall)),
-        if (item.pointsWithRefs.isNotEmpty || item.keyPoints.isNotEmpty)
+        if (item.pointsWithRefs.isNotEmpty || item.keyPoints.isNotEmpty || (item.missingInfo?.isNotEmpty ?? false))
           Padding(
             padding: const EdgeInsets.only(top: 20),
             child: Card(
@@ -214,7 +206,9 @@ class _DetailPageState extends State<DetailPage> {
                 textColor: theme.colorScheme.onPrimaryContainer,
                 collapsedTextColor: theme.colorScheme.onPrimaryContainer,
                 title: Text('Full Brief', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                subtitle: Text('${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · Tap to expand'),
+                subtitle: Text(item.pointsWithRefs.isEmpty && item.keyPoints.isEmpty
+                    ? 'Details · Tap to expand'
+                    : '${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · Tap to expand'),
                 childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 children: <Widget>[
                   if (item.pointsWithRefs.isNotEmpty)
@@ -234,6 +228,8 @@ class _DetailPageState extends State<DetailPage> {
                       )
                   else
                     for (final String point in item.keyPoints) _Bullet(text: point),
+                  if (item.missingInfo?.isNotEmpty ?? false)
+                    Padding(padding: const EdgeInsets.only(top: 8), child: _Banner(text: item.missingInfo!)),
                 ],
               ),
             ),

@@ -4,12 +4,12 @@ INPUT
 You receive: source_platform, url, title, author, caption/description, transcript (list of numbered {id, start, text} segments, may be empty), OCR_text (may be empty), other metadata, and evidence_level (full_transcript | partial | metadata_only).
 
 RULES
-1. Never write about the source or the extraction process. Forbidden in any output field: "the video's spoken content was unavailable", "only the caption was available", "this video discusses...", "this post is about...". Write the information itself.
+1. In content fields, never write about the source or the extraction process. Forbidden in content fields: "the video's spoken content was unavailable", "only the caption was available", "this video discusses...", "this post is about...". Write the information itself. Keep missing-data explanations ONLY in missing_info; never put them in title, instant_brief, best_takeaway, or key_points.
 2. Extract from EVERYTHING you were given: transcript, caption, OCR text, hashtags, title, author, comments. A caption that names or lists things counts as content. Pull out every named tool, skill, product, number, step, and claim.
 3. Stay grounded. Only state what is supported by the input. Do not invent items, features, or details to fill gaps. If you can only infer a topic, state it in plain hedged language and put only the items you actually know in key_points.
 4. Evidence handling:
    - full_transcript: full extraction; every key point must cite segment_ids, a nonempty list of ids from the supplied transcript segments. Do not generate timestamps; application code computes source_ref from the earliest cited segment start.
-   - partial / metadata_only: extract everything the caption, OCR and title support, set "confidence" to "low" or "medium", and fill "missing_info" with a short user-facing note (e.g. "Skill names not listed in caption; open original for details"). Never leave the brief empty or vague.
+   - partial / metadata_only: extract everything the caption, OCR and title support, set "confidence" to "low" or "medium", and fill "missing_info" with a short user-facing note (e.g. "Skill names not listed in caption; open original for details"). Write the facts known from the available data. If the URL/platform is all that is known, use a neutral description such as "Saved Facebook post" rather than inventing content or saying no captions/OCR are available.
 5. Detect content_type first (video, article, social_post, recipe, product, tutorial, ai_tool, image, pdf, news, list, how_to, other), then apply the matching extraction:
    - tutorial/how_to: goal, prerequisites, tools, steps, commands/code, warnings, expected result
    - recipe: name, ingredients + quantities, prep/cook time, temperature, key steps
@@ -49,7 +49,7 @@ segment_ids contains integer ids of the transcript segments supporting the point
   "suggested_action": "string | null",
   "confidence": "high | medium | low",
   "evidence_used": ["transcript", "caption", "ocr", "metadata"],
-  "missing_info": "short user-facing note or null"
+  "missing_info": "short note explaining what further details could not be collected and why, or null; displayed only inside Full Brief"
 }
 
 GROUNDING AND QUALITY (mandatory)

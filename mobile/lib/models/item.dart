@@ -25,6 +25,7 @@ class ItemDetail {
     this.bestTakeaway,
     this.missingInfo,
     this.needsRetry = false,
+    this.briefSource,
     this.pointsWithRefs = const <BriefKeyPoint>[],
   });
 
@@ -51,6 +52,7 @@ class ItemDetail {
       bestTakeaway: json['best_takeaway'] as String?,
       missingInfo: json['missing_info'] as String?,
       needsRetry: json['needs_retry'] == true,
+      briefSource: json['brief_source'] as String?,
       pointsWithRefs: asObjectList(json['key_points_with_refs']).map(BriefKeyPoint.fromJson).toList(growable: false),
     );
   }
@@ -75,6 +77,9 @@ class ItemDetail {
   final String? bestTakeaway;
   final String? missingInfo;
   final bool needsRetry;
+  final String? briefSource;
+
+  bool get isGeneratingBrief => !isFailed && (!isReady || (needsRetry && briefSource != 'llm'));
   final List<BriefKeyPoint> pointsWithRefs;
 
   String get briefText => instantBrief ?? summary ?? '';
@@ -113,6 +118,7 @@ class ItemDetail {
         'brief_payload': jsonEncode(<String, Object?>{
           'instant_brief': instantBrief, 'best_takeaway': bestTakeaway,
           'missing_info': missingInfo, 'needs_retry': needsRetry,
+          'brief_source': briefSource,
           'key_points': keyPoints, 'entities': entities,
           'key_points_with_refs': pointsWithRefs.map((BriefKeyPoint p) => p.toJson()).toList(),
         }),
@@ -138,6 +144,7 @@ class ItemDetail {
       bestTakeaway: brief['best_takeaway'] as String?,
       missingInfo: brief['missing_info'] as String?,
       needsRetry: brief['needs_retry'] == true,
+      briefSource: brief['brief_source'] as String?,
       pointsWithRefs: asObjectList(brief['key_points_with_refs']).map(BriefKeyPoint.fromJson).toList(growable: false),
       tags: decodeTags(row['tags']),
       title: row['title'] as String?,

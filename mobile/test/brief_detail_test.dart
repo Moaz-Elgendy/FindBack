@@ -5,7 +5,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('processing polls, then swaps in Brief and shows improvement badge', (WidgetTester tester) async {
+  testWidgets('generated Brief hides loading during media retries and keeps limitations in Full Brief', (tester) async {
+    int calls = 0;
+    final service = ItemsService(
+      remoteItem: (_) async {
+        calls++;
+        return ItemDetail.fromJson({
+          'id': '2', 'url': 'https://facebook.com/post/x', 'title': 'Known facts',
+          'status': 'ready', 'instant_brief': 'A tool organizes saved links.',
+          'brief_source': 'llm', 'needs_retry': true,
+          'missing_info': 'More details could not be collected because the caption is missing.',
+        });
+      },
+      localItem: (_) async => null,
+      remoteRecent: (_, {String? category, String? cursor}) async => const ItemPage(items: []),
+      localRecent: (_, {String? category}) async => [],
+      cache: (_) async {}, remoteDelete: (_) async {},
+      localDelete: (_) async => 0, dropQueued: (_) async => 0, isOnline: () async => true,
+    );
+    await tester.pumpWidget(MaterialApp(home: DetailPage(itemId: '2', items: service)));
+    await tester.pump();
+    expect(find.text('Generating/processing...'), findsNothing);
+    expect(find.textContaining('caption is missing'), findsNothing);
+    expect(find.text('A tool organizes saved links.'), findsOneWidget);
+    await tester.tap(find.text('Full Brief'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('caption is missing'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+    expect(calls, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('processing polls, then swaps in Brief and stops generating and polling after success', (WidgetTester tester) async {
     int calls = 0;
     final service = ItemsService(
       remoteItem: (_) async {
@@ -16,6 +47,7 @@ void main() {
           'instant_brief': calls == 1 ? null : 'Concrete skill facts.',
           'best_takeaway': calls == 1 ? null : 'Use the testing skill.',
           'needs_retry': calls == 2,
+          'brief_source': calls == 2 ? 'fallback' : 'llm',
           'missing_info': calls == 2 ? 'Open original for remaining steps.' : null,
           'key_points_with_refs': calls == 1 ? <Object>[] : <Map<String, Object?>>[
             {'point': 'Testing skill', 'source_ref': '01:30'},
@@ -30,21 +62,24 @@ void main() {
     );
     await tester.pumpWidget(MaterialApp(home: DetailPage(itemId: '1', items: service)));
     await tester.pump();
-    expect(find.text('Processing...'), findsOneWidget);
+    expect(find.text('Generating/processing...'), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
     await tester.pump();
     expect(find.text('Concrete skill facts.'), findsOneWidget);
     expect(find.text('Use the testing skill.'), findsOneWidget);
-    expect(find.text('Improving brief...'), findsOneWidget);
-    expect(find.text('Open original for remaining steps.'), findsOneWidget);
+    expect(find.text('Generating/processing...'), findsOneWidget);
+    expect(find.text('Open original for remaining steps.'), findsNothing);
     await tester.tap(find.text('Full Brief'));
     await tester.pumpAndSettle();
     expect(find.text('Testing skill'), findsOneWidget);
+    expect(find.text('Open original for remaining steps.'), findsOneWidget);
     expect(find.text('01:30'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '01:30'), findsNothing);
     await tester.pump(const Duration(seconds: 5));
     await tester.pump();
-    expect(find.text('Improving brief...'), findsNothing);
+    expect(find.text('Generating/processing...'), findsNothing);
+    await tester.pump(const Duration(seconds: 30));
+    expect(calls, 3);
     await tester.pumpWidget(const SizedBox());
   });
 }

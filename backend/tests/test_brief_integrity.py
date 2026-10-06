@@ -105,3 +105,19 @@ def test_supported_phrase_tags_and_underscore_noise():
     result=brief_v2.validate(dict(payload(),tags=payload()['tags']+['how_to']),ev)
     assert 'claude skills' in result.tags
     assert 'agent skills' not in result.tags and 'how_to' not in result.tags
+
+
+@pytest.mark.parametrize('commentary', [
+    'A Facebook post that contains no caption, transcript, or OCR text, only the shared URL is available.',
+    'No captions or OCR are available.',
+    'The caption is unavailable.',
+])
+def test_short_brief_rejects_missing_data_commentary(commentary):
+    with pytest.raises(ValueError, match='extraction commentary'):
+        brief_v2.validate(dict(payload(), instant_brief=commentary), evidence())
+
+
+def test_missing_data_commentary_is_allowed_only_in_missing_info():
+    result = brief_v2.validate(dict(payload(), missing_info="The video's spoken content was unavailable; open the original for details."), evidence())
+    assert result.instant_brief == payload()['instant_brief']
+    assert result.missing_info

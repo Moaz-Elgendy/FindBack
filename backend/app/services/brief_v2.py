@@ -11,7 +11,7 @@ from app import env
 from app.schemas import BriefV2
 from app.services.ai_gateway import get_gateway
 
-PROMPT_VERSION = 'brief_v3.2'
+PROMPT_VERSION = 'brief_v3.3'
 SYSTEM_PROMPT = (Path(__file__).parent.parent / 'prompts' / 'brief_v3.txt').read_text()
 FORBIDDEN = ("the video's spoken content was unavailable", 'only the caption was available',
              'this video discusses', 'this post is about')
@@ -213,8 +213,9 @@ def validate(data: dict, evidence: dict) -> BriefV2:
                 raise ValueError('Skill phrase tag is unsupported')
             if tag=='agent skills' and not ({'agent','skills'} <= words or bool({'مهارات','مهارة'} & words) and bool({'وكلاء','وكيل'} & words)):
                 raise ValueError('Agent skill phrase tag is unsupported')
-    encoded = json.dumps(brief.model_dump(), ensure_ascii=False).lower()
-    if any(phrase in encoded for phrase in FORBIDDEN):
+    prose = prose_text(brief.model_dump())
+    if any(normalized(phrase) in prose for phrase in FORBIDDEN) or re.search(
+            r'\bno (?:captions?|transcripts?|ocr)\b|\b(?:captions?|transcripts?|ocr) (?:text )?(?:is |are |was |were )?(?:unavailable|missing|not available)\b', prose):
         raise ValueError('Forbidden extraction commentary')
     if brief.likely_intent and not (brief.likely_intent.startswith('You may have saved this to')
                                   or re.match(r'^(قد|ربما|لعل)', brief.likely_intent)):

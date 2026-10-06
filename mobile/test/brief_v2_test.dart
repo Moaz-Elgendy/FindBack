@@ -7,6 +7,7 @@ void main() {
       'id': '1', 'url': 'https://youtube.com/watch?v=x', 'status': 'ready',
       'summary': 'Legacy summary', 'instant_brief': 'Concrete facts', 'best_takeaway': 'Use the skill',
       'missing_info': 'Open original for details', 'needs_retry': true,
+      'brief_source': 'llm',
       'key_points': <String>['One skill'],
       'key_points_with_refs': <Map<String, Object?>>[{'point': 'One skill', 'source_ref': '01:30'}],
     });
@@ -15,6 +16,7 @@ void main() {
     expect(cached.bestTakeaway, 'Use the skill');
     expect(cached.missingInfo, 'Open original for details');
     expect(cached.needsRetry, isTrue);
+    expect(cached.isGeneratingBrief, isFalse);
     expect(cached.pointsWithRefs.single.sourceRef, '01:30');
     expect(cached.keyPoints, <String>['One skill']);
   });
