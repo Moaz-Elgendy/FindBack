@@ -7,7 +7,7 @@ from app.models import (
     Chunk, ContentAsset, Item, ProcessingJob,
 )
 from app.services import embedder, observability, retention
-from app.services.outbox import claim_job, complete_job, record_failure
+from app.services.outbox import JobHeartbeat, claim_job, complete_job, record_failure
 import datetime
 import asyncio
 import logging
@@ -246,6 +246,7 @@ def _reuse_derived_data(db, item, source) -> int:
 def process_item(self, item_id: str):
     db = SessionLocal()
     job = None
+    heartbeat = None
     # Phase 18. `started` is taken before anything can fail, so the duration is
     # reported for failures too -- a pipeline that always dies at minute four is
     # the case worth seeing. The counters are NOT incremented here: success and
@@ -286,6 +287,10 @@ def process_item(self, item_id: str):
                                 job_type=JOB_TYPE_PROCESS)
             db.add(job)
             db.commit()
+
+        # From here until the worker is done the lock is refreshed, so the
+        # dispatcher can tell a busy worker from a dead one (see JobHeartbeat).
+        heartbeat = JobHeartbeat(job.id).start()
 
         if not (item.summary and item.needs_retry):
             item.status = "processing"
@@ -345,6 +350,8 @@ def process_item(self, item_id: str):
             duration_ms=int(round((time.monotonic() - began) * 1000)))
         return {"id": str(item.id), "status": "ready"}
     except Exception as e:
+        if heartbeat is not None:
+            heartbeat.stop()  # before the job is rescheduled, not after
         db.rollback()
         content_id = None
         try:
@@ -376,4 +383,6 @@ def process_item(self, item_id: str):
                     observability.describe_exc(e))
         raise self.retry(exc=e, countdown=10)
     finally:
+        if heartbeat is not None:
+            heartbeat.stop()
         db.close()

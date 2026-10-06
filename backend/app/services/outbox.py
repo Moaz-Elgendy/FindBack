@@ -25,6 +25,7 @@ the dispatcher retries with a delay instead of hammering a dead queue.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import timedelta
 
@@ -310,6 +311,107 @@ def recover_briefs(db, limit: int = 50) -> None:
     db.commit()
 
 
+WORKER_LOST = "worker lost: its lock expired before the job finished"
+
+
+def heartbeat_interval() -> int:
+    """Seconds between lock refreshes. Far below LOCK_TIMEOUT on purpose."""
+    return _env_int("JOB_HEARTBEAT_SECONDS", 30)
+
+
+class JobHeartbeat:
+    """Keeps a running job's `locked_at` fresh from a background thread.
+
+    `locked_at` is stamped once, when the worker claims the job. Without a
+    refresh, "the lock is old" cannot tell a worker that is busy with a long
+    stage (a transcription, a slow provider) from one that died, so a recovery
+    that trusted it would run a second worker on live work. The beat uses its
+    own short session because the worker's session is busy inside the pipeline.
+    It only touches a job that is still PROCESSING, so once the worker finishes,
+    fails or reschedules the job, a late beat changes nothing.
+    """
+
+    def __init__(self, job_id, interval: float | None = None):
+        self.job_id = str(job_id)
+        self.interval = heartbeat_interval() if interval is None else interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def beat(self) -> None:
+        from app.database import SessionLocal  # looked up late: tests swap the engine
+
+        db = SessionLocal()
+        try:
+            db.execute(text("UPDATE processing_jobs SET locked_at = now() "
+                            "WHERE id = :id AND status = 'PROCESSING'"),
+                       {"id": self.job_id})
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 - a missed beat must not kill the job
+            db.rollback()
+            log.warning("[outbox] heartbeat for job %s failed: %s", self.job_id,
+                        type(exc).__name__)
+        finally:
+            db.close()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.beat()
+
+    def start(self) -> "JobHeartbeat":
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"job-heartbeat-{self.job_id[:8]}")
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+
+def recover_lost_jobs(db, limit: int = 50) -> int:
+    """Take back jobs whose worker died. Returns how many were recovered.
+
+    A PROCESSING job whose `locked_at` has stopped being refreshed has no live
+    worker. `claim_batch` cannot see it: it reclaims a PROCESSING job only if no
+    worker ever claimed it. And even if it could, `_pending_item_ids` skips
+    items that are `processing`, so nothing would be published. So the lost run
+    is recorded as one failed attempt (which backs off, and ends in FAILED at
+    the cap, so a job that kills its worker cannot loop forever), and its
+    `processing` items go back to `pending` (or `failed` at the cap). The normal
+    dispatch path then republishes them.
+
+    One job per transaction: `record_failure` commits, which would release the
+    row locks of any further jobs selected in the same transaction.
+    """
+    recovered = 0
+    for _ in range(limit):
+        job = db.execute(text("""
+            SELECT id, content_id, attempt_count FROM processing_jobs
+            WHERE status = 'PROCESSING' AND locked_at IS NOT NULL
+              AND locked_at < now() - make_interval(secs => :lock_secs)
+            ORDER BY locked_at
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        """), {"lock_secs": LOCK_TIMEOUT.total_seconds()}).mappings().first()
+        if job is None:
+            break
+        gives_up = (job["attempt_count"] or 0) + 1 >= max_attempts()
+        db.execute(text("""
+            UPDATE items
+            SET status = :status,
+                failure_reason = CASE WHEN :gives_up THEN :why ELSE failure_reason END
+            WHERE content_id = :cid AND status = 'processing'
+        """), {"status": "failed" if gives_up else "pending", "gives_up": gives_up,
+               "why": WORKER_LOST, "cid": str(job["content_id"])})
+        record_failure(db, job["id"], WORKER_LOST,
+                       attempt_count=job["attempt_count"])  # commits both
+        recovered += 1
+        log.warning("[outbox] job %s lost its worker; %s", job["id"],
+                    "giving up" if gives_up else "will be retried")
+    return recovered
+
+
 def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
     """Publish one batch of due jobs. Returns a small summary for logging.
 
@@ -322,8 +424,10 @@ def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
         def publisher(item_id: str) -> None:
             process_item.delay(item_id)
 
+    recovered = recover_lost_jobs(db, limit)
     recover_briefs(db, limit)
-    stats = {"claimed": 0, "published": 0, "failed": 0, "items": 0, "skipped": 0}
+    stats = {"claimed": 0, "published": 0, "failed": 0, "items": 0, "skipped": 0,
+             "recovered": recovered}
     for job in claim_batch(db, limit=limit):
         stats["claimed"] += 1
         # Mark locked first so a concurrent dispatcher skips this job while we

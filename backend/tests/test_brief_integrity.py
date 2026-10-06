@@ -67,7 +67,11 @@ def test_eval_detects_raw_sentence_inside_a_long_segment():
 def test_stt_only_misheard_skill_name_is_not_a_named_entity():
     ev=dict(evidence(),transcript=[{'start':5,'end':15,'text':"I'm pickabla. It helps frontend work."}])
     bad=dict(payload(),entities={'tools_products':['Pickabla'],'people_orgs':[],'numbers':[]})
-    with pytest.raises(ValueError): brief_v2.validate(bad,ev)
+    # An STT-only name is dropped from the stored entities rather than failing the brief...
+    assert brief_v2.validate(bad,ev).entities.tools_products==[]
+    # ...but a brief whose prose still presents it as a name is rejected.
+    with pytest.raises(ValueError,match='STT guess'):
+        brief_v2.validate(dict(bad,instant_brief='Pickabla helps frontend work.'),ev)
     supported=dict(ev,ocr_text='PICKABLA')
     assert brief_v2.validate(bad,supported).entities.tools_products==['Pickabla']
 
@@ -85,7 +89,8 @@ def test_name_repair_lists_only_written_confirmed_entities():
         async def generate_json(self, system, user, **kwargs):
             self.calls.append(user)
             if len(self.calls)==1:
-                return dict(payload(),entities={'tools_products':['Claude Code','Pickabla'],'people_orgs':[],'numbers':[]})
+                return dict(payload(),instant_brief='Pickabla helps with frontend work.',
+                            entities={'tools_products':['Claude Code','Pickabla'],'people_orgs':[],'numbers':[]})
             assert 'Keep only these confirmed named entities: ["Claude Code"]' in user
             assert 'Pickabla' not in user
             assert '"allowed_segment_ids": [1]' in user

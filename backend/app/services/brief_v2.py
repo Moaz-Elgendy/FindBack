@@ -92,8 +92,74 @@ def model_input(evidence: dict) -> dict:
     return supplied
 
 
-def validate(data: dict, evidence: dict) -> BriefV2:
+NAME_ERROR = 'Named entity requires written-source confirmation, not an STT guess'
+TITLE_MAX = next(m.max_length for m in BriefV2.model_fields['title'].metadata
+                 if getattr(m, 'max_length', None))
+
+
+def repair_shape(data: dict) -> dict:
+    """Fix what is unambiguous before schema validation, so it cannot cost a brief.
+
+    Both repairs came from live runs that fell back to a placeholder (and so
+    vanished from search) over a cosmetic problem: the model returned numbers as
+    JSON integers, and a title a few characters over the limit.
+    """
     data = dict(data)
+    entities = data.get('entities')
+    if isinstance(entities, dict) and isinstance(entities.get('numbers'), list):
+        data['entities'] = dict(entities, numbers=[
+            str(n) if isinstance(n, (int, float)) and not isinstance(n, bool) else n
+            for n in entities['numbers']])
+    title = data.get('title')
+    if isinstance(title, str):
+        title = re.sub(r'\s+', ' ', title).strip()
+        if len(title) > TITLE_MAX:
+            clipped = title[:TITLE_MAX]
+            if title[TITLE_MAX] != ' ' and ' ' in clipped:
+                clipped = clipped.rsplit(' ', 1)[0]  # cut between words
+            title = clipped.rstrip(' ,;:-\u2013\u2014')
+        data['title'] = title
+    return data
+
+
+def drop_unconfirmed_names(data: dict, written: str) -> list[str]:
+    """Remove named entities that no WRITTEN source confirms; return what went.
+
+    Transcript text does not count as confirmation: speech-to-text mishears
+    product names ("Pickabla", "Fine skills"), and the model repeats the error.
+    Dropping the name from `entities` keeps the guarantee that matters (nothing
+    unconfirmed is stored as a named entity or tag) without discarding a good
+    brief over it.
+    """
+    entities = data.get('entities')
+    if not isinstance(entities, dict):
+        return []
+    entities = data['entities'] = dict(entities)
+    dropped = []
+    for key in ('tools_products', 'people_orgs'):
+        names = entities.get(key)
+        if not isinstance(names, list):
+            continue
+        kept = []
+        for name in names:
+            if isinstance(name, str) and normalized(name) not in written:
+                dropped.append(name)
+            else:
+                kept.append(name)
+        entities[key] = kept
+    return dropped
+
+
+def prose_text(data: dict) -> str:
+    fields = [data.get(k) for k in ('title', 'instant_brief', 'best_takeaway',
+                                    'likely_intent', 'suggested_action')]
+    fields += [p.get('point') for p in data.get('key_points') or [] if isinstance(p, dict)]
+    fields += list(data.get('search_phrases') or []) + list(data.get('topics') or [])
+    return normalized(' '.join(str(f) for f in fields if f))
+
+
+def validate(data: dict, evidence: dict) -> BriefV2:
+    data = repair_shape(data)
     segments = {s['id']: s for s in numbered_segments(evidence)}
     points = [dict(point) for point in data.get('key_points', [])]
     for point in points:
@@ -108,12 +174,23 @@ def validate(data: dict, evidence: dict) -> BriefV2:
             point['source_ref'] = timestamp(min(segments[i]['start'] for i in ids))
     data['key_points'] = points
     corpus = evidence_text(evidence)
+    written = evidence_text(dict(evidence, transcript=[]))
+    dropped = drop_unconfirmed_names(data, written)
+    if dropped:
+        gone = {normalized(name) for name in dropped}
+        if isinstance(data.get('tags'), list):
+            data['tags'] = [t for t in data['tags'] if not isinstance(t, str) or normalized(t) not in gone]
+        # A guessed name the prose still states as a name is the real defect.
+        # A lowercase phrase ("skill library") is a description, not a claim.
+        prose = f' {prose_text(data)} '
+        if any(not name[:1].islower() and f' {normalized(name)} ' in prose for name in dropped):
+            raise ValueError(NAME_ERROR)
+        log.info('Brief validation dropped %d unconfirmed entity name(s)', len(dropped))
     phrases = [phrase for phrase in ('claude skills', 'agent skills') if phrase in corpus]
     data['tags'] = clean_tags(phrases + data.get('tags', []))
     brief = BriefV2.model_validate(data)
     if copied_points(data.get('key_points', []), evidence):
         raise ValueError('Points must synthesize facts, not copy transcript sentences')
-    written = evidence_text(dict(evidence, transcript=[]))
     output_text = normalized(json.dumps(data, ensure_ascii=False))
     if 'built in' in output_text and 'built in' not in corpus:
         raise ValueError('Built-in availability is not established by source evidence')
@@ -124,7 +201,7 @@ def validate(data: dict, evidence: dict) -> BriefV2:
         raise ValueError('Comment action is absent from source evidence')
     for name in [*brief.entities.tools_products, *brief.entities.people_orgs]:
         if normalized(name) not in written:
-            raise ValueError('Named entity requires written-source confirmation, not an STT guess')
+            raise ValueError(NAME_ERROR)
     for tag in brief.tags:
         if tag in {'anthropic','github','github repos','telegram','openai','claude mem','superpowers','impeccable','task observer'} and normalized(tag) not in corpus:
             raise ValueError('Named tag is not supported by evidence')
@@ -197,7 +274,7 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
             error = 'Validation failed [' + reason + ']; check required fields, tag counts, confidence, hedging, segment ids, grounded names/tags and synthesized points.'
             if type(exc) is ValueError:
                 error += ' ' + str(exc)
-                if str(exc) == 'Named entity requires written-source confirmation, not an STT guess':
+                if str(exc) == NAME_ERROR:
                     written = evidence_text(dict(evidence, transcript=[]))
                     confirmed = [name for key in ('tools_products', 'people_orgs')
                                  for name in data.get('entities', {}).get(key, []) if normalized(name) in written]
