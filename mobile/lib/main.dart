@@ -1,19 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
-import 'app_services.dart';
+import 'services/account_coordinator.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    final AppServices services = await AppServices.create();
-    runApp(FindBackApp(services: services));
-    // Queue draining starts after the first frame: opening SQLite or reaching
-    // the API must never delay the search box.
-    await services.startSync();
-    // A share that launched the app is saved here, through the same capture
-    // path, so it is queued offline exactly like a typed save would be.
-    await services.startShareHandling();
+    final accounts = await AccountCoordinator.create();
+    runApp(FindBackApp(services: accounts.services, accounts: accounts));
+    await accounts.start();
   } catch (error) {
     // A broken database or keystore is unrecoverable at runtime, but the user
     // deserves to know that rather than seeing a white screen.

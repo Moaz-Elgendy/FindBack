@@ -12,13 +12,18 @@ import 'capture_sheet.dart';
 import 'detail_page.dart';
 import 'search_controller.dart';
 import 'widgets/result_card.dart';
+import 'widgets/status_slots.dart';
+import 'widgets/refresh_hint.dart';
+import '../../services/auth_service.dart';
+import '../account/account_page.dart';
 
 /// The one screen of the MVP: search box, intelligence filters, results (or the
 /// offline answer set), recent captures, and the save-a-link sheet.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.services});
+  const HomeScreen({super.key, required this.services, this.auth});
 
   final AppServices services;
+  final AuthService? auth;
 
   static const int recentLimit = 20;
 
@@ -43,18 +48,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loadingMore = false;
   bool _wasSearching = false;
   Timer? _processingRefresh;
+  bool _atTop = true;
   String? _moreError;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _recent = widget.services.initialLibrary;
     _pendingCount = widget.services.pending.value;
     widget.services.pending.addListener(_onQueueChanged);
-    _search = SearchController.of(
-      api: widget.services.api,
-      local: widget.services.db.localSearch,
-    )..addListener(() {
+    _search = (widget.services.guest ? SearchController(
+      remote: (query, category, filters) async => SearchResponse(
+        results: await widget.services.db.localSearch(query, category: category, filters: filters), tookMs: 0),
+      local: widget.services.db.localSearch, isOnline: () async => true,
+    ) : SearchController.of(api: widget.services.api, local: widget.services.db.localSearch))
+      ..addListener(() {
         // The offline banner and the queue badge both live in the app bar.
         if (mounted) {
           setState(() {});
@@ -65,7 +74,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widget.services.sharedCapture.addListener(_onSharedCapture);
     _onSharedCapture();
     _loadIntelligence();
-    _loadRecent();
+    _loadRecent(background: _recent.isNotEmpty);
+    if (widget.services.guest) {
+      unawaited(widget.services.refreshGuest().then((_) {
+        if (mounted) { _loadIntelligence(); _loadRecent(background: true); }
+      }).catchError((Object _) {}));
+    }
   }
 
   void _onQueueChanged() {
@@ -227,16 +241,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  int get _processingCount {
-    final server = _intelligenceItems.where((item) => !item.isLocalOnly && item.isGeneratingBrief).length;
+  int get _processingCount => _intelligenceItems
+      .where((item) => !item.isLocalOnly && item.isGeneratingBrief).length;
+
+  int get _queuedCount {
     final local = _intelligenceItems.where((item) => item.isLocalOnly && item.isGeneratingBrief).length;
-    final queued = widget.services.pending.value;
-    return server + (local > queued ? local : queued);
+    final count = widget.services.pending.value;
+    return local > count ? local : count;
   }
 
   void _scheduleProcessingRefresh() {
     _processingRefresh?.cancel();
-    if (mounted && _processingCount > 0 &&
+    if (mounted && (_processingCount + _queuedCount) > 0 &&
         (WidgetsBinding.instance.lifecycleState == null ||
          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed)) {
       _processingRefresh = Timer(const Duration(seconds: 5),
@@ -246,6 +262,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _refreshAll({bool background = false}) async {
     await widget.services.refreshPending();
+    await widget.services.refreshGuest();
     await _loadIntelligence();
     if (!mounted) return;
     await _loadRecent(background: background);
@@ -349,11 +366,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         actions: <Widget>[
           ValueListenableBuilder<int>(
             valueListenable: widget.services.pending,
-            builder: (context, _, child) => _processingCount == 0
-                ? const SizedBox.shrink()
-                : Padding(padding: const EdgeInsets.only(right: 16),
-                    child: Text('Processing $_processingCount',
-                        style: theme.textTheme.labelMedium)),
+            builder: (context, _, child) => TopBarStatus(
+              queued: _queuedCount, processing: _processingCount,
+              signedIn: widget.auth?.currentSession != null, onAccount: _openAccount),
           ),
         ],
       ),
@@ -466,7 +481,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             : 'Try fewer words, or a phrase you remember from the page.',
       ));
     }
-    return RefreshIndicator(
+    return NotificationListener<ScrollNotification>(
+      onNotification: _trackTop, child: RefreshIndicator(
       onRefresh: _retryQueued,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -478,7 +494,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           return ResultCard(result: result, onTap: () => _openDetail(result.id));
         },
       ),
-    );
+    ));
   }
 
   Widget _buildRecent(ThemeData theme) {
@@ -500,7 +516,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         hint: 'Save a link and FindBack keeps it findable by vague memory.',
       ));
     }
-    return RefreshIndicator(
+    return NotificationListener<ScrollNotification>(
+      onNotification: _trackTop, child: RefreshIndicator(
       onRefresh: _retryQueued,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -525,39 +542,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           return ResultCard(result: item, onTap: () => _openDetail(item.id));
         },
       ),
-    );
+    ));
   }
 
   Widget _refreshableEmpty(Widget child) => LayoutBuilder(
-    builder: (context, bounds) => RefreshIndicator(
+    builder: (context, bounds) => NotificationListener<ScrollNotification>(
+      onNotification: _trackTop, child: RefreshIndicator(
       onRefresh: _retryQueued,
       child: ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
         _refreshCue(Theme.of(context)),
         SizedBox(height: (bounds.maxHeight - 64).clamp(0, double.infinity), child: child),
       ]),
-    ),
+    )),
   );
 
-  Widget _refreshCue(ThemeData theme) => Semantics(
-    button: true, label: 'Refresh memories', onTap: _retryQueued,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        TweenAnimationBuilder<double>(
-          tween: Tween(begin: -3, end: 0),
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero : const Duration(milliseconds: 900),
-          builder: (context, offset, child) => Transform.translate(
-              offset: Offset(0, offset), child: child),
-          child: Icon(Icons.arrow_downward, size: 14,
-              color: theme.colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(width: 6),
-        Flexible(child: Text('Pull down to refresh', style: theme.textTheme.labelSmall
-            ?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
-      ]),
-    ),
-  );
+  Future<void> _openAccount() async {
+    final auth = widget.auth ?? AuthService();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => AccountPage(auth: auth)));
+    if (widget.auth == null) await auth.dispose();
+  }
+
+  bool _trackTop(ScrollNotification notification) {
+    if (notification.depth == 0 && notification.metrics.axis == Axis.vertical) {
+      final atTop = notification.metrics.pixels <= notification.metrics.minScrollExtent + .5;
+      if (mounted && atTop != _atTop) setState(() => _atTop = atTop);
+    }
+    return false;
+  }
+
+  Widget _refreshCue(ThemeData theme) => RefreshHint(atTop: _atTop, onRefresh: _retryQueued);
 
 }
 

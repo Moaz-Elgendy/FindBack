@@ -1,0 +1,8 @@
+aws_region       = "eu-west-1"
+project_name     = "findback"
+instance_type    = "c7i-flex.large"
+vpc_cidr         = "10.42.0.0/16"
+subnet_cidr      = "10.42.1.0/24"
+disk_size_gb     = 30
+ssh_allowed_cidr = "192.0.2.1/32" # Replace with your public IPv4 address.
+ssh_public_key   = "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY"

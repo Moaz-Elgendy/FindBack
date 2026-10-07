@@ -20,6 +20,7 @@ class ShareIntentService {
   static const String channelName = 'findback/share';
 
   final MethodChannel _channel;
+  bool _disposed = false;
 
   // A MethodChannel has no stream of its own, so the platform calls a handler
   // and this re-broadcasts. Broadcast, not single-subscription: the Home screen
@@ -37,8 +38,20 @@ class ShareIntentService {
   /// The raw shared text. Deciding what the user meant by a share is the
   /// caller's business, so nothing is filtered out here beyond the empty.
   Stream<String> get shares => _incoming.stream;
+  final _authIncoming = StreamController<String>.broadcast();
+  Stream<String> get authLinks => _authIncoming.stream;
+  Future<String?> readInitialAuthLink() async {
+    try { return await _channel.invokeMethod<String>('getInitialAuthLink'); }
+    on MissingPluginException { return null; }
+    on PlatformException { return null; }
+  }
 
   Future<Object?> _onPlatformCall(MethodCall call) async {
+    if (call.method == 'onAuthLink') {
+      final link = call.arguments;
+      if (link is String && link.isNotEmpty) _authIncoming.add(link);
+      return null;
+    }
     if (call.method != 'onShare') return null;
     final Object? text = call.arguments;
     if (text is String && text.isNotEmpty) _incoming.add(text);
@@ -46,9 +59,18 @@ class ShareIntentService {
   }
 
   /// Stops listening. Without this the handler outlives the service.
+  Future<void> pauseDelivery() async {
+    try { await _channel.invokeMethod<void>('pauseDelivery'); }
+    on MissingPluginException { return; }
+    on PlatformException { return; }
+  }
+
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     _channel.setMethodCallHandler(null);
-    await _incoming.close();
+    unawaited(_incoming.close());
+    unawaited(_authIncoming.close());
   }
 
   /// The URL inside a share payload, or null when it is not a link.

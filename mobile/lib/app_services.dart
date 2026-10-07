@@ -4,6 +4,10 @@ import 'package:flutter/foundation.dart';
 
 import 'data/api_client.dart';
 import 'data/local_db.dart';
+import 'data/token_store.dart';
+import 'models/item.dart';
+import 'models/search_result.dart';
+import 'services/guest_library.dart';
 import 'services/capture_service.dart';
 import 'services/items_service.dart';
 import 'services/share_intent_service.dart';
@@ -19,22 +23,44 @@ class AppServices {
     required this.capture,
     required this.items,
     required this.share,
+    this.guest = false,
+    this.guestLibrary,
+    this.initialLibrary = const [],
   });
 
-  static Future<AppServices> create({LocalDb? database}) async {
+  static Future<AppServices> create({LocalDb? database, TokenStore? tokens, bool guest = false}) async {
     final LocalDb db = database ?? await LocalDb.open();
-    final ApiClient api = ApiClient();
-    final CaptureService capture = CaptureService.of(db: db, api: api);
+    final ApiClient api = ApiClient(tokens: tokens);
+    final CaptureService capture = guest ? CaptureService(
+      ingest: (url, preview, hint) async {
+        final saved = await db.localItemForUrl(url);
+        if (saved != null && !saved.id.startsWith('local-')) {
+          return IngestResult(id: saved.id, status: saved.status,
+              canonicalUrl: saved.canonicalUrl, alreadyExists: true);
+        }
+        return api.ingestUrl(url, preview: preview, titleHint: hint);
+      },
+      queue: (url, preview, hint) => db.queueSave(url: url, preview: preview, titleHint: hint),
+      existingItem: db.localItemForUrl,
+    ) : CaptureService.of(db: db, api: api);
+    final guestStore = guest ? GuestLibrary(db, api) : null;
     return AppServices(
       db: db,
       api: api,
       sync: SyncService.of(db: db, api: api),
       capture: capture,
-      items: ItemsService.of(db: db, api: api),
+      items: guestStore?.items ?? ItemsService.of(db: db, api: api),
+      guestLibrary: guestStore,
+      guest: guest,
+      initialLibrary: await db.recentLocalItems(limit: 20),
       share: ShareIntentService(),
     );
   }
 
+  final bool guest;
+  final List<SearchResult> initialLibrary;
+  final GuestLibrary? guestLibrary;
+  bool _accountWorkStopped = false;
   final LocalDb db;
   final ApiClient api;
   final SyncService sync;
@@ -57,6 +83,13 @@ class AppServices {
   }
 
   /// Starts the queue drainer and keeps the badge in step with it.
+  Future<void> refreshGuest() async {
+    try { await guestLibrary?.refresh(); }
+    on ApiException catch (failure) {
+      if (!failure.isRetryableOffline) rethrow;
+    }
+  }
+
   Future<void> startSync() async {
     await refreshPending();
     sync.start(onFlushed: (int flushed) => refreshPending());
@@ -67,39 +100,42 @@ class AppServices {
   /// A share is just another way to press Save, so it goes through the same
   /// capture path -- including the offline path. That is the whole reason a
   /// capture cannot be lost without internet: sharing adds no new failure mode.
-  Future<void> startShareHandling() async {
-    _shareSubscription ??= share.shares.listen((String payload) async {
-      try {
-        final CaptureBatch? outcome =
-            await share.captureShared(payload, capture);
-        // A share that had to wait for the network changes the pending count.
-        if (outcome?.isQueued ?? false) await refreshPending();
-        if (outcome != null) sharedCapture.value = outcome;
-      } catch (error) {
-        // The user shared a link the server actively refused. Swallowing it
-        // would be a lie, but crashing the app over it is worse; the capture
-        // path already logs it.
-        debugPrint('[services] share could not be saved: $error');
-      }
-    });
-    // The share that started this launch.
+  Future<void> _captureShare(String payload) async {
     try {
-      final CaptureBatch? outcome =
-          await share.captureInitialShare(capture);
+      final outcome = await share.captureShared(payload, capture);
       if (outcome?.isQueued ?? false) await refreshPending();
       if (outcome != null) sharedCapture.value = outcome;
     } catch (error) {
-      debugPrint('[services] initial share could not be saved: $error');
+      debugPrint('[services] share could not be saved: $error');
     }
   }
 
+  Future<void> startShareHandling() async {
+    _shareSubscription ??= share.shares.listen((payload) {
+      _shareWork = (_shareWork ?? Future<void>.value()).then((_) => _captureShare(payload));
+    });
+    final initial = await share.readInitialShare();
+    if (initial != null) _shareWork = (_shareWork ?? Future<void>.value()).then((_) => _captureShare(initial));
+    await _shareWork;
+  }
+
+  Future<void>? _shareWork;
+
   StreamSubscription<String>? _shareSubscription;
 
-  Future<void> dispose() async {
+  Future<void> stopAccountWork() async {
+    if (_accountWorkStopped) return;
+    _accountWorkStopped = true;
+    await share.pauseDelivery();
     await _shareSubscription?.cancel();
     _shareSubscription = null;
-    await share.dispose();
     await sync.stop();
+    await _shareWork;
+  }
+
+  Future<void> dispose() async {
+    await stopAccountWork();
+    await share.dispose();
     api.close();
     await db.close();
     pending.dispose();

@@ -455,6 +455,9 @@ def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
         def publisher(item_id: str) -> None:
             process_item.delay(item_id)
 
+    from app.services.retention import purge_expired_guest_staging
+    purge_expired_guest_staging(db, limit)
+
     recovered = recover_lost_jobs(db, limit)
     recover_briefs(db, limit)
     stats = {"claimed": 0, "published": 0, "failed": 0, "items": 0, "skipped": 0,

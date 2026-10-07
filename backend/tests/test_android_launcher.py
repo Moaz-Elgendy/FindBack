@@ -13,7 +13,7 @@ def run_launcher(tmp_path, devices="phone device", api_ok=True, reverse_ok=True,
     binary.mkdir()
     log = tmp_path / "calls"
     stubs = {
-        "adb": 'if [ "$1" = devices ]; then printf "List of devices attached\\n%s\\n" "$MOCK_DEVICES"; else echo "adb $*" >> "$MOCK_LOG"; [ "$REVERSE_OK" = 1 ]; fi',
+        "adb": 'if [ "$1" = devices ]; then printf "List of devices attached\\n%s\\n" "$MOCK_DEVICES"; elif [ "$3" = shell ]; then echo mock-phone-serial; elif [ "$4" = --list ]; then printf "phone tcp:8000 tcp:8000\\n"; else echo "adb $*" >> "$MOCK_LOG"; [ "$REVERSE_OK" = 1 ]; fi',
         "curl": '[ "$API_OK" = 1 ]',
         "flutter": 'echo "flutter $* cwd=$PWD" >> "$MOCK_LOG"',
     }

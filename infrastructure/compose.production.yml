@@ -1,0 +1,63 @@
+x-app: &app
+  image: ${BACKEND_IMAGE:-findback-backend:production}
+  env_file: ../.env
+  environment:
+    DATABASE_URL: ${TARGET_DATABASE_URL:?Configure TARGET_DATABASE_URL}
+    REDIS_URL: redis://redis:6379/0
+    DEV_AUTH_ENABLED: "false"
+    SCHEMA_BOOTSTRAP: none
+    HF_HOME: /root/.cache/huggingface
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --appendfsync everysec
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+  api:
+    <<: *app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
+    expose: ["8000"]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8000/health]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+  worker:
+    <<: *app
+    command: celery -A app.celery_app.celery worker --loglevel=info --concurrency=1
+    stop_grace_period: 5m
+    volumes:
+      - model_cache:/root/.cache/huggingface
+  outbox:
+    <<: *app
+    command: python -m scripts.dispatch_outbox
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Configure API_DOMAIN}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  redis_data:
+  model_cache:
+  caddy_data:
+  caddy_config:

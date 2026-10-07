@@ -28,7 +28,21 @@ Map<String, dynamic> _item(String id, String category) => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(() { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi; });
+  setUpAll(() { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel(ShareIntentService.channelName), (_) async => null);
+  });
+
+  Future<void> drive(WidgetTester tester, Future<void> work) async {
+    var done = false;
+    final closing = work.then((_) => done = true);
+    for (var i = 0; i < 100 && !done; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+      await tester.pump();
+    }
+    expect(done, isTrue, reason: 'Services close after platform and SQLite callbacks');
+    await closing;
+  }
 
   Future<AppServices> setup(WidgetTester tester, {
     required RemoteRecentFetch recent, bool duplicate = false, SyncService? syncService, ApiClient? searchApi,
@@ -67,23 +81,23 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byTooltip('Refresh'), findsNothing);
-    expect(find.text('Processing 1'), findsOneWidget);
+    expect(find.text('P 1'), findsOneWidget);
     expect(find.text('Pull down to refresh'), findsOneWidget);
     final list = tester.widget<ListView>(find.byType(ListView).last);
     expect(list.physics, isA<AlwaysScrollableScrollPhysics>());
     finalized = true;
+    await tester.pump(const Duration(seconds: 5));
     await tester.runAsync(() async {
-      await tester.pump(const Duration(seconds: 5));
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
     await tester.pumpAndSettle();
-    expect(find.text('Processing 1'), findsNothing);
+    expect(find.text('P 1'), findsNothing);
     expect(find.byKey(const ValueKey('processing-border')), findsNothing);
     final afterFinal = requests;
     await tester.pump(const Duration(seconds: 10));
     expect(requests, afterFinal, reason: 'Polling stops after finalization');
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(() => services.dispose());
+    await drive(tester, services.dispose());
   });
 
   testWidgets('offline queue and local memory are counted once', (tester) async {
@@ -98,10 +112,11 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('Processing 2'), findsOneWidget);
+    expect(find.text('P 1'), findsOneWidget);
+    expect(find.text('Q 1'), findsOneWidget);
     expect(find.byKey(const ValueKey('processing-border')), findsNWidgets(2));
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(() => services.dispose());
+    await drive(tester, services.dispose());
   });
 
   testWidgets('empty library still supports pull-to-refresh', (tester) async {
@@ -115,12 +130,20 @@ void main() {
     expect(find.text('Nothing saved yet'), findsOneWidget);
     expect(find.text('Pull down to refresh'), findsOneWidget);
     final before = requests;
-    await tester.runAsync(() => tester.widget<RefreshIndicator>(
-        find.byType(RefreshIndicator)).onRefresh());
+    final refreshing = tester.widget<RefreshIndicator>(
+        find.byType(RefreshIndicator)).onRefresh();
+    var refreshed = false;
+    refreshing.then((_) => refreshed = true);
+    for (var i = 0; i < 100 && !refreshed; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+      await tester.pump();
+    }
+    expect(refreshed, isTrue);
+    await refreshing;
     await tester.pumpAndSettle();
     expect(requests, greaterThan(before));
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(() => services.dispose());
+    await drive(tester, services.dispose());
   });
 
   testWidgets('topic selector hides generated phrases and refreshes its groups', (tester) async {
@@ -145,11 +168,12 @@ void main() {
     Navigator.of(tester.element(find.text('Content intelligence'))).pop();
     await tester.pumpAndSettle();
     records.removeWhere((item) => item.id == 'food');
-    await tester.runAsync(() => tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh());
+    final refreshed = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh();
+    await drive(tester, refreshed);
     await tester.pumpAndSettle();
     expect(find.widgetWithText(FilterChip, 'Food'), findsNothing);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
   testWidgets('topic filters remain readable and have 48px targets at double text size', (tester) async {
@@ -171,7 +195,7 @@ void main() {
     expect(tester.getSize(find.widgetWithText(ActionChip, 'Filters')).height, greaterThanOrEqualTo(48));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
   testWidgets('topic beyond page 20 and content-type sheet filter reach the whole library', (tester) async {
     const connectivity = MethodChannel('dev.fluttercommunity.plus/connectivity');
@@ -225,7 +249,7 @@ void main() {
     expect(requested.last, isEmpty);
     expect(find.text('0 title'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
   testWidgets('library loads items past 20 and stops at the last page', (tester) async {
@@ -249,7 +273,7 @@ void main() {
     expect(find.text('Load more'), findsNothing);
     expect(asked, [null, '20', '40']);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
   testWidgets('duplicate outside loaded page appears centered in a neutral dialog', (tester) async {
@@ -276,7 +300,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
   testWidgets('repeat from phone sharing uses the same existing-memory dialog', (tester) async {
     final services = await setup(tester,
@@ -294,7 +318,7 @@ void main() {
     expect(find.text('Existing useful Brief.'), findsOneWidget);
     expect(find.text('Open Original'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
   testWidgets('failed uploads explain the connection and allow an immediate retry', (tester) async {
@@ -320,7 +344,7 @@ void main() {
     expect(sync.lastError.value, isNull);
     expect(find.text('Waiting for the backend. Your links are saved on this device.'), findsNothing);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
   testWidgets('successful sync replaces the queued card without manual refresh', (tester) async {
@@ -338,7 +362,7 @@ void main() {
     expect(find.text('server title'), findsOneWidget);
     expect(find.text('local-1 title'), findsNothing);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
   testWidgets('resume retries queued uploads after the backend returns', (tester) async {
@@ -369,7 +393,7 @@ void main() {
     expect(sends, 2);
     expect(queue, isEmpty);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(services.dispose);
+    await drive(tester, services.dispose());
   });
 
 }

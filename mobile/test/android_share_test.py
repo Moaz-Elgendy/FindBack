@@ -22,14 +22,23 @@ stdlib = next(cache.glob('org.jetbrains.kotlin/kotlin-stdlib/2.2.21/*/*.jar'))
 sources = {
     'Intent.kt': '''package android.content
 class Intent(val action: String? = null, val text: CharSequence? = null,
-    val texts: ArrayList<CharSequence>? = null) {
+    val texts: ArrayList<CharSequence>? = null, val data: android.net.Uri? = null) {
     fun getCharSequenceExtra(key: String): CharSequence? = text
     fun getCharSequenceArrayListExtra(key: String): ArrayList<CharSequence>? = texts
     companion object {
+        const val ACTION_VIEW = "android.intent.action.VIEW"
         const val ACTION_SEND = "android.intent.action.SEND"
         const val ACTION_SEND_MULTIPLE = "android.intent.action.SEND_MULTIPLE"
         const val EXTRA_TEXT = "android.intent.extra.TEXT"
     }
+}''',
+    'Uri.kt': '''package android.net
+class Uri(private val value: String) {
+    private val parsed = java.net.URI(value)
+    val scheme = parsed.scheme
+    val host = parsed.host
+    val path = parsed.path
+    override fun toString() = value
 }''',
     'FlutterEngine.kt': '''package io.flutter.embedding.engine
 class FlutterEngine {
@@ -55,9 +64,9 @@ class MethodChannel(messenger: Any, name: String) {
     companion object {
         lateinit var receiver: (MethodCall, Result) -> Unit
         val emitted = mutableListOf<Any?>()
-        fun initial(): Any? {
+        fun initial(method: String = "getInitialShare"): Any? {
             var answer: Any? = null
-            receiver(MethodCall("getInitialShare"), object: Result {
+            receiver(MethodCall(method), object: Result {
                 override fun success(value: Any?) { answer = value }
                 override fun notImplemented() { error("Missing initial share handler") }
             })
@@ -84,7 +93,27 @@ fun main() {
     check(MethodChannel.emitted.last() == links.joinToString("\\n"))
     activity.onNewIntent(Intent("unrelated", "https://example.test/ignored"))
     check(MethodChannel.emitted.size == 2)
-    println("PASS: startup buffering, consume-once, warm share, twenty links, unrelated intent")
+    val recovery = "findback://auth/recovery#access_token=x&refresh_token=y&type=recovery"
+    activity.onNewIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(recovery)))
+    check(MethodChannel.emitted.size == 2)
+    check(MethodChannel.initial("getInitialAuthLink") == recovery)
+    check(MethodChannel.initial("getInitialAuthLink") == null)
+    activity.onNewIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(recovery)))
+    check(MethodChannel.emitted.last() == recovery)
+    MethodChannel.initial("pauseDelivery")
+    val emittedBeforePause = MethodChannel.emitted.size
+    activity.onNewIntent(Intent(Intent.ACTION_SEND, "https://example.test/paused"))
+    activity.onNewIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(recovery)))
+    check(MethodChannel.emitted.size == emittedBeforePause)
+    check(MethodChannel.initial("getInitialAuthLink") == recovery)
+    check(MethodChannel.initial() == "https://example.test/paused")
+    val cold = MainActivity()
+    cold.setIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(recovery)))
+    cold.configureFlutterEngine(FlutterEngine())
+    cold.onNewIntent(Intent(Intent.ACTION_SEND, "https://example.test/preserved"))
+    check(MethodChannel.initial("getInitialAuthLink") == recovery)
+    check(MethodChannel.initial() == "https://example.test/preserved")
+    println("PASS: pause/resume buffering, auth cold/warm buffering, independent share queue, startup buffering, consume-once, warm share, twenty links, unrelated intent")
 }''',
 }
 with tempfile.TemporaryDirectory(prefix='findback-native-share-') as tmp:
@@ -106,3 +135,8 @@ for action in ['android.intent.action.SEND', 'android.intent.action.SEND_MULTIPL
     assert any(any(a.get(android + 'name') == action for a in f.findall('action'))
                and any(d.get(android + 'mimeType') == 'text/plain' for d in f.findall('data')) for f in filters)
 print('PASS: FindBack label and single/multiple text intent registration')
+
+assert any(any(a.get(android + 'name') == 'android.intent.action.VIEW' for a in f.findall('action'))
+           and any(d.get(android + 'scheme') == 'findback' and d.get(android + 'host') == 'auth'
+                   and d.get(android + 'path') == '/recovery' for d in f.findall('data')) for f in filters)
+print('PASS: native recovery link registration')

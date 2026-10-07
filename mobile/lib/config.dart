@@ -17,7 +17,8 @@ class AppConfig {
   static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 
   /// Supabase public anon key (never the service role key).
-  static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY',
+      defaultValue: String.fromEnvironment('SUPABASE_ANON_KEY'));
 
   /// Optional bearer token for pointing the app at a backend that runs with
   /// `DEV_AUTH_ENABLED=false`. Ignored when a token is already in secure storage.

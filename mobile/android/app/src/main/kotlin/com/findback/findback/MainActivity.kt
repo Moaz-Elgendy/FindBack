@@ -8,10 +8,13 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
     private var dartReady = false
+    private var authReady = false
+    private var pendingAuthLink: String? = null
     private val pendingShares = mutableListOf<String>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        pendingAuthLink = authLink(intent)
         sharedText(intent)?.let { pendingShares.add(it) }
         setIntent(Intent())
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "findback/share")
@@ -21,6 +24,14 @@ class MainActivity : FlutterActivity() {
                 pendingShares.clear()
                 dartReady = true
                 result.success(initial)
+            } else if (call.method == "pauseDelivery") {
+                dartReady = false
+                authReady = false
+                result.success(null)
+            } else if (call.method == "getInitialAuthLink") {
+                authReady = true
+                result.success(pendingAuthLink)
+                pendingAuthLink = null
             } else {
                 result.notImplemented()
             }
@@ -30,6 +41,11 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        authLink(intent)?.let { link ->
+            if (authReady) channel?.invokeMethod("onAuthLink", link) else pendingAuthLink = link
+            setIntent(Intent())
+            return
+        }
         val text = sharedText(intent) ?: return
         if (dartReady) {
             channel?.invokeMethod("onShare", text)
@@ -37,6 +53,12 @@ class MainActivity : FlutterActivity() {
             pendingShares.add(text)
         }
         setIntent(Intent())
+    }
+
+    private fun authLink(intent: Intent): String? {
+        if (intent.action != Intent.ACTION_VIEW) return null
+        val uri = intent.data ?: return null
+        return if (uri.scheme == "findback" && uri.host == "auth" && uri.path == "/recovery") uri.toString() else null
     }
 
     private fun sharedText(intent: Intent): String? {

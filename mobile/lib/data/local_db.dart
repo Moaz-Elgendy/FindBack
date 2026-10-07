@@ -45,8 +45,26 @@ class LocalDb {
       );
 
   /// Opens the default app-scoped database. Native-only: needs path_provider.
-  static Future<LocalDb> open() async =>
-      openAt(p.join(await getDatabasesPath(), fileName));
+  static Future<LocalDb> open({String? scope}) async {
+    if (scope != null && !RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(scope)) {
+      throw ArgumentError('Invalid account cache scope');
+    }
+    return openAt(p.join(await getDatabasesPath(), scope == null ? fileName : 'findback-$scope.db'));
+  }
+
+  /// Copy guest memories without moving or deleting the original database.
+  Future<void> importGuest(LocalDb guest) async {
+    for (final row in await guest.db.query('items')) {
+      final item = ItemDetail.fromLocalRow(row);
+      final existing = await localItemForUrl(item.url);
+      if (existing != null && !existing.id.startsWith('local-')) continue;
+      final client = existing?.id.substring('local-'.length) ?? await queueSave(
+          url: item.url, preview: item.briefText, titleHint: item.bestTitle, capturedAt: item.createdAt);
+      final cached = Map<String, Object?>.from(row)
+        ..['id'] = 'local-$client'..['status'] = 'pending';
+      await db.insert('items', cached, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
 
   static Future<void> _onCreate(Database db) async {
     await db.execute('''

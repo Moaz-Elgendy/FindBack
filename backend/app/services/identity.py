@@ -162,6 +162,12 @@ def resolve_user(db: Session, claims: dict) -> tuple[User, str]:
     subject = claims.get("sub")
     if not subject:
         raise HTTPException(status_code=401, detail="Token subject missing")
+    # Guest identity is server-issued and cannot bind an existing email row.
+    from app.services.auth_tokens import GUEST_ISSUER, GUEST_PREFIX
+    if subject.startswith(GUEST_PREFIX):
+        if claims.get("iss") != GUEST_ISSUER or claims.get("purpose") != "guest":
+            raise HTTPException(status_code=401, detail="Invalid guest identity")
+        claims = {"sub": subject, "iss": GUEST_ISSUER}
     email = claims.get("email") or f"{subject}@findback.local"
     provider = claims.get("iss", "jwt")
 

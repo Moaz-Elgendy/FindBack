@@ -99,6 +99,25 @@ def delete_save(db: Session, user_id, content_id=None,
             "DELETE FROM user_memories WHERE user_id = :u AND content_id = :c"),
             {"u": str(user_id), "c": str(content_id)})
         counts["user_memories"] = result.rowcount or 0
+    # Account-owned/shared assets retain the existing lifetime. Guest copies
+    # are temporary and may go once their last save and worker are gone.
+    if content_id is not None:
+        guest_asset = db.execute(text("""SELECT a.id FROM content_assets a JOIN users u ON u.id=a.owner_user_id
+            WHERE a.id=:c AND a.owner_user_id=:u AND a.visibility <> 'PUBLIC' AND u.auth_subject LIKE 'guest:%'
+            FOR UPDATE OF a SKIP LOCKED"""), {"c": content_id, "u": user_id}).first()
+        jobs = db.execute(text("SELECT id FROM processing_jobs WHERE content_id=:c FOR UPDATE SKIP LOCKED"),
+                          {"c": content_id}).all() if guest_asset else []
+        total = db.execute(text("SELECT count(*) FROM processing_jobs WHERE content_id=:c"),
+                           {"c": content_id}).scalar() if guest_asset else -1
+        if guest_asset and len(jobs) == total:
+            db.execute(text("""DELETE FROM content_assets a USING users u
+            WHERE a.id=:c AND a.owner_user_id=:u AND a.visibility <> 'PUBLIC' AND u.id=a.owner_user_id
+              AND u.auth_subject LIKE 'guest:%'
+              AND NOT EXISTS (SELECT 1 FROM items WHERE content_id=a.id)
+              AND NOT EXISTS (SELECT 1 FROM user_memories WHERE content_id=a.id)
+              AND NOT EXISTS (SELECT 1 FROM processing_jobs WHERE content_id=a.id
+                              AND (status='PROCESSING' OR locked_at IS NOT NULL))"""),
+                       {"c": content_id, "u": user_id})
     db.commit()
     log.info("[retention] deleted a save for user %s: %s", user_id, counts)
     return counts
@@ -124,3 +143,63 @@ def purge_expired_raw_text(db: Session,
     if count:
         log.info("[retention] dropped expired raw text for %d item(s)", count)
     return count
+
+def purge_expired_guest_staging(db: Session, limit: int = 50) -> int:
+    """Expire only guest staging, preserving assets referenced by other saves.
+
+    Active workers finish before cleanup; their PROCESSING job prevents a
+    deletion race. Asset/job locks fence concurrent saves and dispatchers.
+    """
+    from app.services.auth_tokens import guest_retention_hours
+    rows = db.execute(text("""
+        SELECT i.id, i.user_id, i.content_id FROM items i JOIN users u ON u.id=i.user_id
+        WHERE u.auth_subject LIKE 'guest:%'
+          AND i.created_at < now() - make_interval(hours => :hours)
+        ORDER BY i.created_at LIMIT :limit FOR UPDATE OF i SKIP LOCKED
+    """), {"hours": guest_retention_hours(), "limit": limit}).all()
+    removed = 0
+    for item_id, user_id, content_id in rows:
+        if content_id is not None:
+            asset = db.execute(text("SELECT id, owner_user_id FROM content_assets WHERE id=:id FOR UPDATE SKIP LOCKED"),
+                               {"id": content_id}).first()
+            if asset is None:
+                continue
+            jobs = db.execute(text("SELECT id, status, locked_at FROM processing_jobs WHERE content_id=:id FOR UPDATE SKIP LOCKED"),
+                              {"id": content_id}).all()
+            total = db.execute(text("SELECT count(*) FROM processing_jobs WHERE content_id=:id"),
+                               {"id": content_id}).scalar()
+            if len(jobs) != total or any(j.status == "PROCESSING" or j.locked_at is not None for j in jobs):
+                continue
+        db.execute(text("DELETE FROM items WHERE id=:id AND user_id=:u"), {"id": item_id, "u": user_id})
+        if content_id is not None:
+            db.execute(text("""DELETE FROM user_memories WHERE user_id=:u AND content_id=:c
+                AND NOT EXISTS (SELECT 1 FROM items WHERE user_id=:u AND content_id=:c)"""),
+                       {"u": user_id, "c": content_id})
+            # Only an asset owned by this guest may be garbage collected.
+            db.execute(text("""DELETE FROM content_assets WHERE id=:c AND owner_user_id=:u AND visibility <> 'PUBLIC'
+                AND NOT EXISTS (SELECT 1 FROM items WHERE content_id=:c)
+                AND NOT EXISTS (SELECT 1 FROM user_memories WHERE content_id=:c)"""),
+                       {"u": user_id, "c": content_id})
+        removed += 1
+    # A save deleted during processing leaves its asset until the worker ends.
+    # Collect that temporary copy too; it no longer has an item to drive expiry.
+    orphans = db.execute(text("""
+        SELECT a.id FROM content_assets a JOIN users u ON u.id=a.owner_user_id
+        WHERE u.auth_subject LIKE 'guest:%' AND a.visibility <> 'PUBLIC'
+          AND a.created_at < now() - make_interval(hours => :hours)
+          AND NOT EXISTS (SELECT 1 FROM items WHERE content_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM user_memories WHERE content_id=a.id)
+        ORDER BY a.created_at LIMIT :limit FOR UPDATE OF a SKIP LOCKED
+    """), {"hours": guest_retention_hours(), "limit": limit}).all()
+    for (content_id,) in orphans:
+        jobs = db.execute(text("SELECT id, status, locked_at FROM processing_jobs WHERE content_id=:id FOR UPDATE SKIP LOCKED"),
+                          {"id": content_id}).all()
+        total = db.execute(text("SELECT count(*) FROM processing_jobs WHERE content_id=:id"),
+                           {"id": content_id}).scalar()
+        if len(jobs) != total or any(j.status == "PROCESSING" or j.locked_at is not None for j in jobs):
+            continue
+        db.execute(text("""DELETE FROM content_assets WHERE id=:id AND visibility <> 'PUBLIC'
+            AND NOT EXISTS (SELECT 1 FROM items WHERE content_id=:id)
+            AND NOT EXISTS (SELECT 1 FROM user_memories WHERE content_id=:id)"""), {"id": content_id})
+    db.commit()
+    return removed

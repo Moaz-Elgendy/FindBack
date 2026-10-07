@@ -109,18 +109,10 @@ cd mobile && flutter test
 | `test/search_controller_test.dart` | Debounce, offline results, stale-response discard, fallback labelling |
 | `test/models_test.dart`, `test/share_text_test.dart` | Wire/row parsing tolerance and share-sheet text extraction |
 
-## Not done yet
+## Platform and account status
 
-- **Native share intake.** The Android `ACTION_SEND` intent-filter and the iOS
-  Share Extension target are native work on top of the generated projects: the
-  extension should write `{url, title, preview, timestamp, client_id}` into the
-  shared container and exit without touching the network — exactly the shape
-  `sync_queue` already accepts. The deleted RN config plugin
-  (`plugins/withFindBackShare.js`) and `docs/OPERATIONS.md` are the reference for
-  signing and App Group setup, and neither path has been verified on a device.
-- **Auth UI.** `AppConfig.supabaseUrl` / `supabaseAnonKey` and
-  `AppConfig.authConfigured` are in place, but no sign-in flow writes a token
-  yet; the app runs on the dev token path.
+- **Native share intake.** Android single/multiple text sharing and recovery links are implemented and verified. iOS Share Extension behavior has not been verified. See `docs/NATIVE_SHARE.md`.
+- **Optional accounts.** Supabase email/password authentication opens from the top-right account icon. Guests open the library directly. Build with public `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` Dart defines (legacy `SUPABASE_ANON_KEY` is also accepted). Never pass a secret/service-role key. Allow `findback://auth/recovery` in Supabase redirect URLs for password reset. Guest Briefs stay on the device after temporary processing; sign-in imports them through the normal queue. Account caches and queues are isolated; logout starts a fresh guest scope. See `docs/PHASE7_VERIFICATION.md` for tested behavior and deployment limits.
 - `docs/ARCHITECTURE.md` and `docs/OPERATIONS.md` still describe the Expo
   client. The data model, queue contract and API surface they document are
   unchanged; only the client stack is.

@@ -69,6 +69,7 @@ class SyncService {
   final Duration _retryBase;
 
   bool _flushing = false;
+  Completer<void>? _flushDone;
   Duration _retryIn = Duration.zero;
   DateTime _nextAttemptAt = DateTime.fromMillisecondsSinceEpoch(0);
   StreamSubscription<bool>? _subscription;
@@ -84,6 +85,7 @@ class SyncService {
     if (_flushing) return 0;
     if (!force && DateTime.now().isBefore(_nextAttemptAt)) return 0;
     _flushing = true;
+    _flushDone = Completer<void>();
     try {
       if (!await _isOnline()) return 0;
       final queue = await _pending();
@@ -113,6 +115,8 @@ class SyncService {
       return 0;
     } finally {
       _flushing = false;
+      _flushDone?.complete();
+      _flushDone = null;
     }
   }
 
@@ -132,6 +136,7 @@ class SyncService {
     _heartbeat?.cancel();
     _heartbeat = null;
     _onFlushed = null;
+    await _flushDone?.future;
   }
 
   /// Doubling from 1s to 5min. The RN client computed this backoff but the 30s

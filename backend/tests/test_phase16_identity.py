@@ -436,8 +436,10 @@ def test_a_token_without_a_subject_is_rejected(sessions, env):
     """`sub` is the only stable identifier; without it there is no identity."""
     from fastapi import HTTPException
 
-    with pytest.raises(HTTPException) as refused:
-        _login(sessions, _token(email="nosub@example.test"))
+    from app.auth import get_current_user
+
+    with sessions() as db, pytest.raises(HTTPException) as refused:
+        get_current_user(authorization="Bearer " + _token(email="nosub@example.test"), db=db)
     assert refused.value.status_code == 401
 
 
