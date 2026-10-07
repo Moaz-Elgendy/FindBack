@@ -33,6 +33,8 @@ from app.services import embedder
 
 log = logging.getLogger("findback.search")
 
+MIN_COSINE = float(os.getenv("SEARCH_MIN_COSINE", "0.60"))
+
 RRF_K = int(os.getenv("RRF_K", "60"))
 W_VEC = float(os.getenv("VECTOR_WEIGHT", "0.7"))
 W_BM25 = float(os.getenv("BM25_WEIGHT", "0.3"))
@@ -542,6 +544,10 @@ def _rank_candidates(db: Session, user_id, query: str, q_emb, category,
         took = int((time.time() - t0) * 1000)
         return [], took
 
+    # Keep fusion ranks intact; require textual evidence or a strong semantic match.
+    relevant_ids = {str(row[0]) for rows in (lex_rows, chunk_lex_rows, note_rows) for row in rows}
+    relevant_ids.update(str(row[0]) for rows in (vec_rows, chunk_vec_rows)
+                        for row in rows if row[9] is not None and float(row[9]) >= MIN_COSINE)
     rows_by_id: dict[str, tuple] = {}
     # The best chunk per item, per list: several chunks of one video are one
     # memory to the user, not several results.
@@ -550,6 +556,8 @@ def _rank_candidates(db: Session, user_id, query: str, q_emb, category,
                  note_rows):
         for row in rows:
             key = str(row[0])
+            if key not in relevant_ids:
+                continue
             rows_by_id.setdefault(key, tuple(row[:9]))
             if len(row) > 13:
                 chunk_by_id.setdefault(key, row)

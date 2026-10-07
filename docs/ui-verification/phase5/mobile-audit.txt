@@ -1,0 +1,32 @@
+
+[MOBILE AUDIT] 56 mobile files checked
+--------------------------------------------------
+[!] ISSUES (24):
+  - [Touch Target] main.dart: Touch target size 12px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 16px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 20px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 20px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 28px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 10px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 12px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] detail_page.dart: Touch target size 12px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] home_screen.dart: Touch target size 16px < 44px minimum (iOS: 44pt, Android: 48dp)
+  - [Touch Target] home_screen.dart: Touch target size 12px < 44px minimum (iOS: 44pt, Android: 48dp)
+[*] WARNINGS (128):
+  - [Color] App.tsx: No dark mode support detected. Consider useColorScheme for system dark mode.
+  - [iOS] App.tsx: No SafeArea detected. Content may be hidden by notch/home indicator.
+  - [Android] App.tsx: React Navigation detected without BackHandler listener. Android hardware back may not work correctly.
+  - [Android] App.tsx: No Material 3 dynamic color detected. Consider Material 3 theming for personalized feel.
+  - [Testing] App.tsx: No testing framework detected. Consider Jest (unit) + Detox/Maestro (E2E) for mobile.
+  - [Debugging] App.tsx: No ErrorBoundary detected. Consider adding ErrorBoundary to prevent app crashes.
+  - [Color] app_services.dart: No dark mode support detected. Consider useColorScheme for system dark mode.
+  - [Testing] app_services.dart: No testing framework detected. Consider Jest (unit) + Detox/Maestro (E2E) for mobile.
+  - [Testing] app.dart: No testing framework detected. Consider Jest (unit) + Detox/Maestro (E2E) for mobile.
+  - [Color] main.dart: No dark mode support detected. Consider useColorScheme for system dark mode.
+  - [Testing] main.dart: No testing framework detected. Consider Jest (unit) + Detox/Maestro (E2E) for mobile.
+  - [Haptics] token_store.dart: Important actions without haptic feedback. Consider adding haptic confirmation.
+  - [Color] token_store.dart: No dark mode support detected. Consider useColorScheme for system dark mode.
+  - [Testing] token_store.dart: No testing framework detected. Consider Jest (unit) + Detox/Maestro (E2E) for mobile.
+  - [Color] share_intent_service.dart: No dark mode support detected. Consider useColorScheme for system dark mode.
+[+] PASSED CHECKS: 48
+STATUS: FAIL

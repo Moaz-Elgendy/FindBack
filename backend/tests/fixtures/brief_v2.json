@@ -42,11 +42,7 @@
         "people_orgs": [],
         "numbers": []
       },
-      "topics": [
-        "claude code",
-        "claude",
-        "agent skills"
-      ],
+      "topics": ["AI", "Programming"],
       "tags": [
         "claude code",
         "claude",
@@ -168,11 +164,7 @@
         "people_orgs": [],
         "numbers": []
       },
-      "topics": [
-        "claude code",
-        "claude",
-        "agent skills"
-      ],
+      "topics": ["AI", "Programming"],
       "tags": [
         "claude code",
         "claude",
@@ -247,11 +239,7 @@
         "people_orgs": [],
         "numbers": []
       },
-      "topics": [
-        "tool beta",
-        "project planning",
-        "planning"
-      ],
+      "topics": ["Business"],
       "tags": [
         "tool beta",
         "project planning",
@@ -329,11 +317,7 @@
         "people_orgs": [],
         "numbers": []
       },
-      "topics": [
-        "claude code",
-        "claude",
-        "مهارات"
-      ],
+      "topics": ["AI", "Programming"],
       "tags": [
         "claude code",
         "claude",
@@ -409,11 +393,7 @@
         "people_orgs": [],
         "numbers": []
       },
-      "topics": [
-        "mushroom risotto",
-        "risotto",
-        "mushrooms"
-      ],
+      "topics": ["Food"],
       "tags": [
         "mushroom risotto",
         "risotto",
@@ -489,11 +469,7 @@
         "people_orgs": [],
         "numbers": []
       },
-      "topics": [
-        "hybrid search",
-        "keyword search",
-        "semantic search"
-      ],
+      "topics": ["Programming"],
       "tags": [
         "hybrid search",
         "keyword search",

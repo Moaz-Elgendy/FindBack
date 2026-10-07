@@ -1,3 +1,4 @@
+import 'widgets/saved_date.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -29,6 +30,7 @@ class _DetailPageState extends State<DetailPage> {
   bool _loading = true;
   String? _error;
   bool _cookMode = false;
+  bool _fullBriefExpanded = false;
   Timer? _refreshTimer;
 
   @override
@@ -161,19 +163,22 @@ class _DetailPageState extends State<DetailPage> {
 
   Widget _buildDetail(ThemeData theme, ItemDetail item) {
     final List<String> ingredients = item.ingredients;
+    final briefAction = _fullBriefExpanded ? 'Tap to collapse' : 'Tap to expand';
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 112),
       children: <Widget>[
-        Text(item.bestTitle, style: theme.textTheme.headlineSmall),
-        if (item.sourceDomain != null && item.sourceDomain!.isNotEmpty)
+        Text(item.bestTitle, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600, height: 1.2, color: theme.colorScheme.primary)),
+        if (item.sourceDomain?.isNotEmpty == true || item.createdAt != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              item.sourceDomain!,
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
-            ),
+            child: Wrap(spacing: 12, runSpacing: 4, children: [
+              if (item.sourceDomain?.isNotEmpty == true)
+                Text(item.sourceDomain!, style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              if (item.createdAt != null) SavedDate(date: item.createdAt!),
+            ]),
           ),
-        if (item.isFailed)
+        if (item.isFailed && !item.hasFinalBrief)
           Padding(
             padding: const EdgeInsets.only(top: 12),
             child: _Banner(
@@ -190,7 +195,7 @@ class _DetailPageState extends State<DetailPage> {
         const SizedBox(height: 16),
         Text(
           item.briefText.isEmpty ? 'Open the original to view this memory.' : item.briefText,
-          style: theme.textTheme.bodyLarge,
+          style: theme.textTheme.bodyLarge?.copyWith(height: 1.55),
         ),
         if (item.bestTakeaway != null && item.bestTakeaway!.isNotEmpty)
           Padding(padding: const EdgeInsets.only(top: 10), child: Text(item.bestTakeaway!, style: theme.textTheme.titleSmall)),
@@ -203,29 +208,43 @@ class _DetailPageState extends State<DetailPage> {
               clipBehavior: Clip.antiAlias,
               child: ExpansionTile(
                 key: PageStorageKey<String>('full-brief-${item.id}'),
+                onExpansionChanged: (expanded) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _fullBriefExpanded != expanded) {
+                      setState(() => _fullBriefExpanded = expanded);
+                    }
+                  });
+                },
                 textColor: theme.colorScheme.onPrimaryContainer,
                 collapsedTextColor: theme.colorScheme.onPrimaryContainer,
+                iconColor: theme.colorScheme.onPrimaryContainer,
+                collapsedIconColor: theme.colorScheme.onPrimaryContainer,
+                tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                shape: const Border(),
+                collapsedShape: const Border(),
                 title: Text('Full Brief', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                 subtitle: Text(item.pointsWithRefs.isEmpty && item.keyPoints.isEmpty
-                    ? 'Details · Tap to expand'
-                    : '${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · Tap to expand'),
-                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    ? 'Details · $briefAction'
+                    : '${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · $briefAction'),
+                childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                 children: <Widget>[
                   if (item.pointsWithRefs.isNotEmpty)
-                    for (final BriefKeyPoint point in item.pointsWithRefs)
+                    for (final (index, point) in item.pointsWithRefs.indexed) ...<Widget>[
+                      if (index > 0) Divider(color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.2)),
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
-                            Text(point.point, style: theme.textTheme.bodyLarge?.copyWith(height: 1.45, color: theme.colorScheme.onPrimaryContainer)),
+                            Text(point.point, style: theme.textTheme.bodyLarge?.copyWith(height: 1.55, color: theme.colorScheme.onPrimaryContainer)),
                             if (point.sourceRef != null)
                               point.timestampUrl(item.url) == null
                                   ? Padding(padding: const EdgeInsets.only(top: 6), child: Text(point.sourceRef!, style: theme.textTheme.bodySmall))
                                   : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text(point.sourceRef!)),
                           ],
                         ),
-                      )
+                      ),
+                    ]
                   else
                     for (final String point in item.keyPoints) _Bullet(text: point),
                   if (item.missingInfo?.isNotEmpty ?? false)
@@ -245,6 +264,7 @@ class _DetailPageState extends State<DetailPage> {
           ExpansionTile(
             key: PageStorageKey<String>('tags-${item.id}'),
             title: const Text('Tags'),
+            subtitle: Text('${item.tags.length} search tags', style: theme.textTheme.bodySmall),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             children: <Widget>[
               Align(

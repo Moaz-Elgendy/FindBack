@@ -12,6 +12,35 @@ import 'package:findback/models/item.dart';
 import 'package:findback/data/api_client.dart';
 import 'package:findback/utils/share_text.dart';
 void main() {
+  testWidgets('batch save sheet scrolls above the keyboard at double text size', (tester) async {
+    tester.view.physicalSize = const Size(320, 740);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    final urls = <String>[];
+    final capture = CaptureService(isOnline: () async => false,
+      ingest: (_, __, ___) async => throw StateError('must queue'),
+      queue: (url, _, __) async { urls.add(url); return url; });
+    await tester.pumpWidget(MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
+      home: Scaffold(body: Builder(builder: (context) => TextButton(
+        onPressed: () => CaptureSheet.show(context, capture: capture), child: const Text('Save links'))))));
+    await tester.tap(find.text('Save links'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.enterText(find.byType(TextField).first, 'https://example.com/one\nhttps://example.com/two');
+    await tester.scrollUntilVisible(find.widgetWithText(FilledButton, 'Save'), 150,
+      scrollable: find.byType(Scrollable).last);
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(urls, ['https://example.com/one', 'https://example.com/two']);
+    expect(find.byType(CaptureSheet), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   test('twenty queued links survive restart and upload through existing batch sync', () async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;

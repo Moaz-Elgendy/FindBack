@@ -1,11 +1,38 @@
 """Filters over saved intelligence, shared by library and search."""
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, Query
-from sqlalchemy import Text, cast, func
+from sqlalchemy import exists, func, select
 from app.models import Item
 
 KEYS = {'topic', 'type', 'entity', 'intent', 'action', 'source', 'saved'}
+
+
+# Shared with the mobile catalogue; labels are assigned by the LLM, not keywords.
+TOPIC_LABELS = ('AI', 'Programming', 'Gym', 'Food', 'Electronics', 'Design', 'Business', 'Education', 'Science', 'History', 'Travel', 'Health', 'Finance', 'Entertainment', 'Lifestyle', 'Culture')
+TOPIC_INSTRUCTIONS = (
+    "TOPICS FOR FILTERING: Classify the actual subject semantically. Choose one or two broad labels from "
+    + json.dumps(list(TOPIC_LABELS)) + ". Return these exact labels in topics. "
+    "Use the content's main subject, not incidental keywords, a creator's name, a tool name, "
+    "an intent, or a unique per-memory phrase. Use AI for AI systems/agents, Programming for "
+    "software development, Gym for exercise/fitness, Food for recipes/cooking/nutrition. "
+    "Use other catalogue subjects where supported, e.g. History for historical material and "
+    "Science for astronomy. Never emit Other or guess a subject without meaningful evidence."
+)
+
+
+def semantic_topics(values):
+    if not isinstance(values, list) or len(values) > 2:
+        raise ValueError("topics must contain at most two broad semantic labels")
+    labels = []
+    for value in values:
+        canonical = next((label for label in TOPIC_LABELS if isinstance(value, str) and label.casefold() == value.strip().casefold()), None)
+        if canonical is None:
+            raise ValueError("topics must use supported semantic labels, not specific phrases or Other")
+        if canonical not in labels:
+            labels.append(canonical)
+    return labels
 
 
 def read_filters(intelligence: str | None = Query(None, max_length=4096)) -> dict:
@@ -27,13 +54,16 @@ def read_filters(intelligence: str | None = Query(None, max_length=4096)) -> dic
 def query_for(db, user_id, values):
     q = db.query(Item).filter(Item.user_id == user_id)
     for key, value in values.items():
-        if key == 'topic':
-            q = q.filter(func.lower(cast(Item.brief_v2['topics'], Text)).contains(
-                json.dumps(value.lower(), ensure_ascii=False), autoescape=True))
-        elif key == 'entity':
-            entries = func.jsonb_path_query_array(Item.entities, '$.*[*]')
-            q = q.filter(func.lower(cast(entries, Text)).contains(
-                json.dumps(value.lower(), ensure_ascii=False), autoescape=True))
+        if key in ('topic', 'entity'):
+            entries = (func.jsonb_path_query_array(func.coalesce(
+                           Item.brief_v2['topics'], Item.fetch_metadata['brief']['topics']), '$[*]')
+                       if key == 'topic' else
+                       func.jsonb_path_query_array(Item.entities, '$.tools_products[*]').op('||')(
+                           func.jsonb_path_query_array(Item.entities, '$.people_orgs[*]')))
+            labels = func.jsonb_array_elements_text(entries).table_valued('value')
+            match = (func.lower(labels.c.value) == value.strip().lower() if key == 'topic' else
+                     labels.c.value.op('~*')(r'(^|[^[:alnum:]_])' + re.escape(value.strip()) + r'($|[^[:alnum:]_])'))
+            q = q.filter(exists(select(1).select_from(labels).where(match)))
         elif key == 'saved':
             start = datetime.strptime(value, '%Y-%m-%d').replace(tzinfo=timezone.utc)
             q = q.filter(Item.created_at >= start, Item.created_at < start + timedelta(days=1))

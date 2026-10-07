@@ -23,7 +23,9 @@ class CaptureSheet extends StatefulWidget {
         useSafeArea: true,
         builder: (BuildContext context) => Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: CaptureSheet(capture: capture, onSaved: onSaved),
+          child: SingleChildScrollView(
+            child: CaptureSheet(capture: capture, onSaved: onSaved),
+          ),
         ),
       );
 

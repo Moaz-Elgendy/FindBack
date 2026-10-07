@@ -7,14 +7,20 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
+    private var dartReady = false
+    private val pendingShares = mutableListOf<String>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        sharedText(intent)?.let { pendingShares.add(it) }
+        setIntent(Intent())
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "findback/share")
         channel!!.setMethodCallHandler { call, result ->
             if (call.method == "getInitialShare") {
-                result.success(sharedText(intent))
-                intent = Intent()
+                val initial = pendingShares.takeIf { it.isNotEmpty() }?.joinToString("\n")
+                pendingShares.clear()
+                dartReady = true
+                result.success(initial)
             } else {
                 result.notImplemented()
             }
@@ -25,7 +31,11 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val text = sharedText(intent) ?: return
-        channel?.invokeMethod("onShare", text)
+        if (dartReady) {
+            channel?.invokeMethod("onShare", text)
+        } else {
+            pendingShares.add(text)
+        }
         setIntent(Intent())
     }
 

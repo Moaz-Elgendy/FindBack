@@ -10,7 +10,7 @@ def payload():
                 instant_brief='Use Claude Code to write and test code.',
                 key_points=[{'point': 'Claude Code: writes code.', 'segment_ids': [1], 'source_ref': '00:05'}],
                 best_takeaway=None, entities={'tools_products': ['Claude Code'], 'people_orgs': [], 'numbers': []},
-                topics=['coding'], tags=['claude code', 'claude', 'coding', 'code', 'ai', 'ai tools',
+                topics=['Programming'], tags=['claude code', 'claude', 'coding', 'code', 'ai', 'ai tools',
                 'developer tools', 'developers', 'software development', 'programming', 'tutorial',
                 'skills', 'code tools', 'testing', 'code writing'],
                 search_phrases=['Find Claude Code skills.', 'Tools for writing code.', 'AI tools for developers.',
@@ -146,3 +146,20 @@ def test_oversized_segment_and_many_chunks_keep_every_request_bounded(monkeypatc
     result = asyncio.run(brief_v2.extract(ev, gateway))
     assert max(map(len, gateway.calls)) <= 13000
     assert {p.source_ref for p in result.key_points} == {brief_v2.timestamp(i * 10) for i in range(16)}
+
+
+def test_semantic_topic_prompt_rejects_phrase_then_repairs():
+    from app.services.intelligence import TOPIC_INSTRUCTIONS
+
+    class Gateway:
+        calls = 0
+
+        async def generate_json(self, system, user, **kwargs):
+            assert TOPIC_INSTRUCTIONS in system
+            self.calls += 1
+            return dict(payload(), topics=['Claude coding skills']) if self.calls == 1 else payload()
+
+    gateway = Gateway()
+    result = asyncio.run(brief_v2.extract(evidence(), gateway))
+    assert gateway.calls == 2
+    assert result.topics == ['Programming']

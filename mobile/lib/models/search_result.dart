@@ -18,6 +18,7 @@ class SearchResult {
     this.sourceDomain,
     this.matchReason,
     this.createdAt,
+    this.isGeneratingBrief = false,
     this.topics = const [], this.contentType, this.entities = const {}, this.likelyIntent, this.suggestedAction, this.intent,
   });
 
@@ -51,13 +52,17 @@ class SearchResult {
   final String? sourceDomain;
   final String? matchReason;
   final DateTime? createdAt;
+  final bool isGeneratingBrief;
   final List<String> topics;
   final Map<String, Object?> entities;
   final String? contentType, likelyIntent, suggestedAction, intent;
 
   Map<String, List<String>> get intelligence => {
-    'topic': topics, 'type': [if (contentType != null) contentType!],
-    'entity': entities.values.expand((v) => v is List ? v.whereType<String>() : <String>[]).toList(),
+    'topic': groupedTopics(this), 'type': [if (contentType != null) contentType!],
+    'entity': ['tools_products', 'people_orgs'].expand((key) {
+      final values = entities[key];
+      return values is List ? values.whereType<String>() : <String>[];
+    }).toList(),
     'intent': [if ((likelyIntent ?? intent) != null) (likelyIntent ?? intent)!],
     'action': [if (suggestedAction != null) suggestedAction!],
     'source': [if (sourceDomain != null) sourceDomain!],
@@ -76,6 +81,7 @@ class SearchResult {
         sourceDomain: item.sourceDomain,
         matchReason: 'Recently saved',
         createdAt: item.createdAt,
+      isGeneratingBrief: item.isGeneratingBrief,
         topics: item.topics, contentType: item.contentType, entities: item.entities,
         likelyIntent: item.likelyIntent, suggestedAction: item.suggestedAction, intent: item.intent,
       );
@@ -95,6 +101,7 @@ class SearchResult {
         sourceDomain: sourceDomain,
         matchReason: matchReason ?? this.matchReason,
         createdAt: createdAt,
+      isGeneratingBrief: isGeneratingBrief,
         topics: topics, contentType: contentType, entities: entities,
         likelyIntent: likelyIntent, suggestedAction: suggestedAction, intent: intent,
       );
@@ -117,5 +124,25 @@ class SearchResponse {
 
 
 bool matchesIntelligence(SearchResult item, Map<String, String> filters) =>
-    filters.entries.every((entry) => (item.intelligence[entry.key] ?? [])
-        .any((value) => value.toLowerCase() == entry.value.toLowerCase()));
+    filters.entries.every((entry) {
+      final knownTopic = topicLabels.any((label) => label.toLowerCase() == entry.value.toLowerCase());
+      // Preserve legacy specific-topic filters without offering them in the selector.
+      final values = entry.key == 'topic' && !knownTopic
+          ? item.topics : item.intelligence[entry.key] ?? <String>[];
+      return values.any((value) => entry.key == 'entity'
+          ? RegExp(r'(^|[^\p{L}\p{N}_])' + RegExp.escape(entry.value.trim()) +
+              r'($|[^\p{L}\p{N}_])', caseSensitive: false, unicode: true).hasMatch(value)
+          : value.toLowerCase() == entry.value.toLowerCase());
+    });
+
+// Shared with the backend; these are LLM classifications, not keyword guesses.
+const topicLabels = <String> ['AI', 'Programming', 'Gym', 'Food', 'Electronics', 'Design', 'Business', 'Education', 'Science', 'History', 'Travel', 'Health', 'Finance', 'Entertainment', 'Lifestyle', 'Culture'];
+
+List<String> groupedTopics(SearchResult item) => item.topics.map((topic) =>
+    topicLabels.where((label) => label.toLowerCase() == topic.trim().toLowerCase()).firstOrNull)
+    .whereType<String>().toSet().toList();
+
+List<String> topicChoices(Iterable<SearchResult> items) {
+  final available = items.expand(groupedTopics).toSet();
+  return topicLabels.where(available.contains).toList();
+}

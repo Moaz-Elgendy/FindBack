@@ -36,7 +36,7 @@ def clean_source_text(text: str, *, title: bool = False) -> str:
     text = re.sub(r'\[([^]]+)\]\([^)]*\)', r'\1', text)
     text = re.sub(r'(?im)^\s*\[[^]]+\]:\s*https?://\S+.*$', '', text)
     text = text.split('Markdown Content:', 1)[-1]
-    controls = r'log\s?in|sign\s?(?:in|up)|forgot (?:password|account)\??|privacy|terms|log in to .+|see more(?: on Facebook)?|see less|like|comment|share|email or phone number|password|create new account|(?:.+\s*[·|–-]\s*)?original audio(?:\s*[·|–-].*)?'
+    controls = r'reels?|.+ sent you (?:a|an) (?:reel|video|post|link)|log\s?in|sign\s?(?:in|up)|forgot (?:password|account)\??|privacy|terms|log in to .+|see more(?: on Facebook)?|see less|like|comment|share|email or phone number|password|create new account|(?:.+\s*[·|–-]\s*)?original audio(?:\s*[·|–-].*)?'
     counts = r'(?:[\d,.]+\s*[KMB]?\s*(?:reactions?|likes?|comments?|shares?|views?))(?:\s*[·|]\s*[\d,.]+\s*[KMB]?\s*(?:reactions?|likes?|comments?|shares?|views?))*'
     lines = []
     for line in text.splitlines():

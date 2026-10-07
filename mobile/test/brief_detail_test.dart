@@ -5,6 +5,39 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final status in ['processing', 'failed']) {
+    testWidgets('stored LLM Brief stays final when later processing is $status', (tester) async {
+      int calls = 0;
+      final service = ItemsService(
+        remoteItem: (_) async {
+          calls++;
+          return ItemDetail.fromJson({
+            'id': 'final', 'url': 'https://facebook.com/reel/final', 'title': 'Final skill facts',
+            'status': status, 'brief_source': 'llm', 'needs_retry': true,
+            'created_at': '2026-09-28T12:00:00Z', 'instant_brief': 'Use reusable skills to plan and test changes.',
+          });
+        },
+        localItem: (_) async => null,
+        remoteRecent: (_, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []),
+        localRecent: (_, {String? category, Map<String, String>? filters}) async => [],
+        cache: (_) async {}, remoteDelete: (_) async {},
+        localDelete: (_) async => 0, dropQueued: (_) async => 0, isOnline: () async => true,
+      );
+      await tester.pumpWidget(MaterialApp(home: DetailPage(itemId: 'final', items: service)));
+      await tester.pump();
+      expect(find.text('Use reusable skills to plan and test changes.'), findsOneWidget);
+    final title = tester.widget<Text>(find.text('Final skill facts'));
+    expect(title.style!.color, Theme.of(tester.element(find.text('Final skill facts'))).colorScheme.primary);
+    expect(find.textContaining('Saved '), findsOneWidget);
+      expect(find.text('Generating/processing...'), findsNothing);
+      expect(find.textContaining("couldn't read this one"), findsNothing);
+      await tester.pump(const Duration(seconds: 30));
+      expect(calls, 1);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+  }
+
   testWidgets('generated Brief hides loading during media retries and keeps limitations in Full Brief', (tester) async {
     int calls = 0;
     final service = ItemsService(

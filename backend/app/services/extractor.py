@@ -9,6 +9,8 @@ Prompts per content type are Phase 10; this phase only fixes the schema.
 """
 from __future__ import annotations
 
+from app.services.intelligence import TOPIC_INSTRUCTIONS
+
 import logging
 import re
 
@@ -117,7 +119,7 @@ def system_prompt(profile) -> str:
     prompt. `BRIEF_SYSTEM_PROMPT` is kept as the base so the Phase 9 prompt
     contract still holds.
     """
-    return f"{BRIEF_SYSTEM_PROMPT}\n{profile_for_prompt(profile)}"
+    return f"{BRIEF_SYSTEM_PROMPT}\n{profile_for_prompt(profile)}\n{TOPIC_INSTRUCTIONS}"
 
 
 async def extract_memory(raw_text: str, url_title: str = "",

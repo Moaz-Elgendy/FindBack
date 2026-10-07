@@ -24,12 +24,12 @@ async def search(q: str = Query(..., min_length=1), category: str = None, limit:
                             status="hit" if results else "miss",
                             duration_ms=took)
     metadata = {}
-    for item in db.query(Item.id, Item.brief_v2, Item.entities, Item.intent).filter(
+    for item in db.query(Item.id, Item.brief_v2, Item.entities, Item.intent, Item.fetch_metadata["brief"]["topics"].label("legacy_topics")).filter(
             Item.user_id == user.id, Item.id.in_([r['row'][0] for r in results])):
         brief = item.brief_v2 or {}
         metadata[str(item.id)] = {name: brief.get(name) for name in (
             'content_type', 'likely_intent', 'suggested_action')}
-        metadata[str(item.id)].update(topics=brief.get('topics', []), entities=item.entities or {}, intent=item.intent)
+        metadata[str(item.id)].update(topics=brief.get('topics', item.legacy_topics or []), entities=item.entities or {}, intent=item.intent)
     items = []
     for r in results:
         row = r["row"]

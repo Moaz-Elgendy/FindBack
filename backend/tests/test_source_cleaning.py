@@ -144,3 +144,17 @@ def test_cache_skips_unprompted_local_when_source_terms_exist(monkeypatch):
         allowed = candidate(provider, used, caption)
         rows[:] = [allowed]
         assert media.cached_evidence('facebook', 'x', 'owner') == allowed.evidence_bundle
+
+
+def test_facebook_share_recipient_is_not_content():
+    source = 'Reels\nMoaz sent you a reel\nUseful Claude Code skills'
+    assert fetcher.clean_source_text(source) == 'Useful Claude Code skills'
+
+
+def test_share_recipient_cannot_ground_an_entity_or_reach_the_model():
+    from app.services.brief_v2 import evidence_text, model_input, drop_unconfirmed_names
+    evidence = {'title': 'Claude skills', 'caption': 'Reels\nMoaz sent you a reel\nUseful Claude Code skills'}
+    data = {'entities': {'people_orgs': ['Moaz'], 'tools_products': ['Claude']}}
+    assert 'Moaz' not in model_input(evidence)['caption']
+    assert drop_unconfirmed_names(data, evidence_text(evidence)) == ['Moaz']
+    assert data['entities'] == {'people_orgs': [], 'tools_products': ['Claude']}

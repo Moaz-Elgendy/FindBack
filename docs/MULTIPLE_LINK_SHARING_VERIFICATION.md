@@ -1,5 +1,7 @@
 # Phase 5: Multiple-link sharing
 
+Historical evidence from the earlier sharing implementation. For the current native startup fix and three-record database verification, see [Phase 6 verification](PHASE6_VERIFICATION.md).
+
 Verified on 2026-10-07.
 
 ## Implementation

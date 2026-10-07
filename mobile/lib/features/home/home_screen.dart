@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
 // Material 3 exports its own `SearchController` (for `SearchAnchor`), which
 // collides with this app's controller; hide the framework one.
 import 'package:flutter/material.dart' hide SearchController;
@@ -42,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _nextCursor;
   bool _loadingMore = false;
   bool _wasSearching = false;
+  Timer? _processingRefresh;
   String? _moreError;
 
   @override
@@ -69,13 +70,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _onQueueChanged() {
     final count = widget.services.pending.value;
-    if (count < _pendingCount && mounted) _loadRecent();
+    if (count < _pendingCount && mounted) {
+      _loadIntelligence();
+      _loadRecent();
+    }
     _pendingCount = count;
+    _scheduleProcessingRefresh();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _retryQueued();
+    if (state == AppLifecycleState.resumed) {
+      _retryQueued();
+    } else {
+      _processingRefresh?.cancel();
+    }
   }
 
   Future<void> _retryQueued() async {
@@ -98,11 +107,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           _intelligenceItems = items;
-          _topics = items.expand((item) => item.topics).toSet().toList()..sort();
+          _topics = topicChoices(items);
         });
       }
     } on ApiException {
       // Recent/search reports connection errors; retain the previous filter choices.
+    } finally {
+      _scheduleProcessingRefresh();
     }
   }
 
@@ -135,7 +146,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               decoration: InputDecoration(labelText: entry.value),
               items: [
                 const DropdownMenuItem<String>(value: null, child: Text('Any')),
-                for (final value in ({..._intelligenceItems.expand((item) => item.intelligence[entry.key] ?? []),
+                for (final value in ({..._intelligenceItems.expand((item) => entry.key == 'topic' ? <String>[] : item.intelligence[entry.key] ?? []),
+                    if (entry.key == 'topic') ..._topics,
                     if (selected[entry.key] != null) selected[entry.key]!}.toList()..sort()))
                   DropdownMenuItem(value: value, child: Text(value.replaceAll('_', ' '), maxLines: 1, overflow: TextOverflow.ellipsis)),
               ],
@@ -155,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _processingRefresh?.cancel();
     widget.services.sharedCapture.removeListener(_onSharedCapture);
     WidgetsBinding.instance.removeObserver(this);
     widget.services.pending.removeListener(_onQueueChanged);
@@ -163,10 +176,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> _loadRecent() async {
+  Future<void> _loadRecent({bool background = false}) async {
     final requestId = ++_recentRequestId;
     _recentCategory = _search.category;
     setState(() {
+      if (!background) _recent = [];
       _loadingRecent = true;
       _loadingMore = false;
       _moreError = null;
@@ -177,7 +191,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted || requestId != _recentRequestId) return;
       setState(() {
         _recent = page.items;
-        _topics = {..._topics, ...page.items.expand((item) => item.topics)}.toList()..sort();
+        _topics = topicChoices([..._intelligenceItems, ...page.items]);
         _nextCursor = page.nextCursor;
         _loadingRecent = false;
         _recentError = null;
@@ -213,9 +227,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _refreshAll() async {
+  int get _processingCount {
+    final server = _intelligenceItems.where((item) => !item.isLocalOnly && item.isGeneratingBrief).length;
+    final local = _intelligenceItems.where((item) => item.isLocalOnly && item.isGeneratingBrief).length;
+    final queued = widget.services.pending.value;
+    return server + (local > queued ? local : queued);
+  }
+
+  void _scheduleProcessingRefresh() {
+    _processingRefresh?.cancel();
+    if (mounted && _processingCount > 0 &&
+        (WidgetsBinding.instance.lifecycleState == null ||
+         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed)) {
+      _processingRefresh = Timer(const Duration(seconds: 5),
+          () => _refreshAll(background: true));
+    }
+  }
+
+  Future<void> _refreshAll({bool background = false}) async {
     await widget.services.refreshPending();
-    await _loadRecent();
+    await _loadIntelligence();
+    if (!mounted) return;
+    await _loadRecent(background: background);
     if (_search.hasQuery) await _search.run();
   }
 
@@ -314,8 +347,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('FindBack'),
         actions: <Widget>[
-          _QueueBadge(pending: widget.services.pending),
-          IconButton(tooltip: 'Refresh', onPressed: _retryQueued, icon: const Icon(Icons.refresh)),
+          ValueListenableBuilder<int>(
+            valueListenable: widget.services.pending,
+            builder: (context, _, child) => _processingCount == 0
+                ? const SizedBox.shrink()
+                : Padding(padding: const EdgeInsets.only(right: 16),
+                    child: Text('Processing $_processingCount',
+                        style: theme.textTheme.labelMedium)),
+          ),
         ],
       ),
       body: SafeArea(
@@ -340,6 +379,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : const Icon(Icons.search),
                   suffixIcon: _search.hasQuery
                       ? IconButton(
+                          tooltip: 'Clear search',
                           icon: const Icon(Icons.close),
                           onPressed: () {
                             _input.clear();
@@ -353,7 +393,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             SizedBox(
-              height: 48,
+              height: 64 + (MediaQuery.textScalerOf(context).scale(14) - 14),
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -396,7 +436,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     children: <Widget>[
                       const Icon(Icons.cloud_off, size: 16),
                       const SizedBox(width: 8),
-                      Text('Offline — searching this device only', style: theme.textTheme.bodySmall),
+                      Expanded(child: Text('Offline — searching this device only', style: theme.textTheme.bodySmall)),
                     ],
                   ),
                 ),
@@ -418,21 +458,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return const Center(child: CircularProgressIndicator());
     }
     if (_search.results.isEmpty) {
-      return _EmptyState(
+      return _refreshableEmpty(_EmptyState(
         icon: Icons.travel_explore,
         title: 'Nothing matched “${_search.query}”',
         hint: _search.offline
             ? 'This device has no copy of it. Reconnect to search everything you saved.'
             : 'Try fewer words, or a phrase you remember from the page.',
-      );
+      ));
     }
     return RefreshIndicator(
       onRefresh: _retryQueued,
       child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 96, top: 4),
-        itemCount: _search.results.length,
+        itemCount: _search.results.length + 1,
         itemBuilder: (BuildContext context, int index) {
-          final SearchResult result = _search.results[index];
+          if (index == 0) return _refreshCue(theme);
+          final SearchResult result = _search.results[index - 1];
           return ResultCard(result: result, onTap: () => _openDetail(result.id));
         },
       ),
@@ -444,27 +486,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return const Center(child: CircularProgressIndicator());
     }
     if (_recentError != null) {
-      return _EmptyState(
+      return _refreshableEmpty(_EmptyState(
         icon: Icons.wifi_off,
         title: 'Could not load your library',
         hint: _recentError!,
         action: OutlinedButton(onPressed: _loadRecent, child: const Text('Try again')),
-      );
+      ));
     }
     if (_recent.isEmpty) {
-      return const _EmptyState(
+      return _refreshableEmpty(const _EmptyState(
         icon: Icons.auto_stories_outlined,
         title: 'Nothing saved yet',
         hint: 'Save a link and FindBack keeps it findable by vague memory.',
-      );
+      ));
     }
     return RefreshIndicator(
       onRefresh: _retryQueued,
       child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 96, top: 4),
-        itemCount: _recent.length + (_nextCursor == null ? 0 : 1),
+        itemCount: _recent.length + 1 + (_nextCursor == null ? 0 : 1),
         itemBuilder: (BuildContext context, int index) {
-          if (index == _recent.length) {
+          if (index == 0) return _refreshCue(theme);
+          if (index == _recent.length + 1) {
             return Padding(
               padding: const EdgeInsets.all(16),
               child: Column(children: [
@@ -477,38 +521,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ]),
             );
           }
-          final SearchResult item = _recent[index];
+          final SearchResult item = _recent[index - 1];
           return ResultCard(result: item, onTap: () => _openDetail(item.id));
         },
       ),
     );
   }
-}
 
-/// Depth of the offline write queue, so a save that has not uploaded is visible
-/// instead of silently missing from the server.
-class _QueueBadge extends StatelessWidget {
-  const _QueueBadge({required this.pending});
+  Widget _refreshableEmpty(Widget child) => LayoutBuilder(
+    builder: (context, bounds) => RefreshIndicator(
+      onRefresh: _retryQueued,
+      child: ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
+        _refreshCue(Theme.of(context)),
+        SizedBox(height: (bounds.maxHeight - 64).clamp(0, double.infinity), child: child),
+      ]),
+    ),
+  );
 
-  final ValueListenable<int> pending;
+  Widget _refreshCue(ThemeData theme) => Semantics(
+    button: true, label: 'Refresh memories', onTap: _retryQueued,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: -3, end: 0),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero : const Duration(milliseconds: 900),
+          builder: (context, offset, child) => Transform.translate(
+              offset: Offset(0, offset), child: child),
+          child: Icon(Icons.arrow_downward, size: 14,
+              color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(width: 6),
+        Flexible(child: Text('Pull down to refresh', style: theme.textTheme.labelSmall
+            ?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
+      ]),
+    ),
+  );
 
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: pending,
-      builder: (BuildContext context, int count, Widget? child) {
-        if (count <= 0) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(right: 4),
-          child: Chip(
-            avatar: const Icon(Icons.cloud_upload_outlined, size: 16),
-            label: Text('$count queued'),
-            visualDensity: VisualDensity.compact,
-          ),
-        );
-      },
-    );
-  }
 }
 
 class _EmptyState extends StatelessWidget {

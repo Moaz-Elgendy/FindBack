@@ -237,11 +237,13 @@ class LocalDb {
 
   /// Substring search over the cached mirror — the offline answer set.
   Future<List<SearchResult>> localSearch(String query, {int limit = 20, String? category, Map<String, String>? filters}) async {
-    final like = '%$query%';
+    final escaped = query.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
+    final like = '%$escaped%';
     final filtered = category != null && category != 'All' && category.isNotEmpty;
     final rows = await db.query(
       'items',
-      where: '(title LIKE ? OR title_clean LIKE ? OR summary LIKE ? OR tags LIKE ?)'
+      where: r"(title LIKE ? ESCAPE '\' OR title_clean LIKE ? ESCAPE '\' "
+          r"OR summary LIKE ? ESCAPE '\' OR tags LIKE ? ESCAPE '\')"
           '${filtered ? ' AND category = ?' : ''}',
       whereArgs: <Object?>[like, like, like, like, if (filtered) category],
       orderBy: 'created_at DESC',

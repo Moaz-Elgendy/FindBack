@@ -52,6 +52,127 @@ void main() {
         apply: (_) async {}, markFailed: (_) async => {}, isOnline: () async => false));
   }
 
+
+  testWidgets('processing status replaces refresh and clears automatically', (tester) async {
+    var finalized = false;
+    var requests = 0;
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async {
+        requests++;
+        return ItemPage(items: [ItemDetail.fromJson({..._item('one', 'tutorial'),
+          'status': finalized ? 'ready' : 'processing',
+          if (finalized) 'brief_source': 'llm',
+          if (finalized) 'instant_brief': 'Final useful Brief.'})]);
+    });
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byTooltip('Refresh'), findsNothing);
+    expect(find.text('Processing 1'), findsOneWidget);
+    expect(find.text('Pull down to refresh'), findsOneWidget);
+    final list = tester.widget<ListView>(find.byType(ListView).last);
+    expect(list.physics, isA<AlwaysScrollableScrollPhysics>());
+    finalized = true;
+    await tester.runAsync(() async {
+      await tester.pump(const Duration(seconds: 5));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('Processing 1'), findsNothing);
+    expect(find.byKey(const ValueKey('processing-border')), findsNothing);
+    final afterFinal = requests;
+    await tester.pump(const Duration(seconds: 10));
+    expect(requests, afterFinal, reason: 'Polling stops after finalization');
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() => services.dispose());
+  });
+
+  testWidgets('offline queue and local memory are counted once', (tester) async {
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async =>
+        ItemPage(items: [
+          ItemDetail.fromJson({..._item('local-one', 'tutorial'), 'status': 'pending'}),
+          ItemDetail.fromJson({..._item('server', 'tutorial'), 'status': 'processing'}),
+          ItemDetail.fromJson({..._item('finished', 'tutorial'), 'status': 'processing',
+            'needs_retry': true, 'brief_source': 'llm', 'instant_brief': 'Final Brief.'}),
+        ]));
+    services.pending.value = 1;
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Processing 2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('processing-border')), findsNWidgets(2));
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() => services.dispose());
+  });
+
+  testWidgets('empty library still supports pull-to-refresh', (tester) async {
+    var requests = 0;
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async {
+      requests++;
+      return const ItemPage(items: []);
+    });
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    expect(find.text('Nothing saved yet'), findsOneWidget);
+    expect(find.text('Pull down to refresh'), findsOneWidget);
+    final before = requests;
+    await tester.runAsync(() => tester.widget<RefreshIndicator>(
+        find.byType(RefreshIndicator)).onRefresh());
+    await tester.pumpAndSettle();
+    expect(requests, greaterThan(before));
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() => services.dispose());
+  });
+
+  testWidgets('topic selector hides generated phrases and refreshes its groups', (tester) async {
+    final records = [
+      ItemDetail.fromJson({..._item('one', 'tutorial'), 'title_clean': 'Claude skills', 'topics': ['AI']}),
+      ItemDetail.fromJson({..._item('two', 'tutorial'), 'title_clean': 'Claude extensions', 'topics': ['AI']}),
+      ItemDetail.fromJson({..._item('three', 'tutorial'), 'topics': ['AI']}),
+      ItemDetail.fromJson({..._item('food', 'recipe'), 'topics': ['Food']}),
+    ];
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async =>
+        ItemPage(items: records.where((item) => matchesIntelligence(SearchResult.fromItem(item), filters ?? {})).toList()));
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FilterChip, 'AI'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'Food'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'Claude Code skills'), findsNothing);
+    await tester.tap(find.text('Filters'));
+    await tester.pumpAndSettle();
+    final topic = tester.widget<DropdownButtonFormField<String>>(find.byType(DropdownButtonFormField<String>).first);
+    final dropdown = find.descendant(of: find.byWidget(topic), matching: find.byType(DropdownButton<String>));
+    expect(tester.widget<DropdownButton<String>>(dropdown).items!.map((item) => item.value), [null, 'AI', 'Food']);
+    Navigator.of(tester.element(find.text('Content intelligence'))).pop();
+    await tester.pumpAndSettle();
+    records.removeWhere((item) => item.id == 'food');
+    await tester.runAsync(() => tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh());
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FilterChip, 'Food'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
+  testWidgets('topic filters remain readable and have 48px targets at double text size', (tester) async {
+    tester.view.physicalSize = const Size(320, 740);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final services = await setup(tester,
+      recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async =>
+        ItemPage(items: [ItemDetail.fromJson({..._item('readable', 'tutorial'), 'topics': ['AI']})]));
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
+      home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    final chips = find.widgetWithText(FilterChip, 'All');
+    expect(tester.getSize(chips).height, greaterThanOrEqualTo(48));
+    expect(tester.getSize(find.widgetWithText(ActionChip, 'Filters')).height, greaterThanOrEqualTo(48));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
   testWidgets('topic beyond page 20 and content-type sheet filter reach the whole library', (tester) async {
     const connectivity = MethodChannel('dev.fluttercommunity.plus/connectivity');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);

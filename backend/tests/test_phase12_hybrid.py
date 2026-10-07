@@ -358,7 +358,8 @@ def test_search_endpoint_excludes_other_categories(db, sessions):
         app.dependency_overrides.update(previous)
     assert response.status_code == 200
     rows = response.json()["results"]
-    assert [row["id"] for row in rows] == [ids["chicken_recipe"]]
+    # A category restricts matches; it cannot turn a recipe into headphones.
+    assert rows == []
     assert all(row["category"] == "recipe" for row in rows)
 
 

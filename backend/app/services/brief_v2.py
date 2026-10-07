@@ -10,9 +10,11 @@ from pydantic import ValidationError
 from app import env
 from app.schemas import BriefV2
 from app.services.ai_gateway import get_gateway
+from app.services.fetcher import clean_source_text
+from app.services.intelligence import TOPIC_INSTRUCTIONS, semantic_topics
 
-PROMPT_VERSION = 'brief_v3.3'
-SYSTEM_PROMPT = (Path(__file__).parent.parent / 'prompts' / 'brief_v3.txt').read_text()
+PROMPT_VERSION = 'brief_v3.4'
+SYSTEM_PROMPT = (Path(__file__).parent.parent / 'prompts' / 'brief_v3.txt').read_text() + '\n\n' + TOPIC_INSTRUCTIONS
 FORBIDDEN = ("the video's spoken content was unavailable", 'only the caption was available',
              'this video discusses', 'this post is about')
 BANNED_TAGS = {'interesting', 'useful', 'video content', 'saved', 'pending', 'memory'}
@@ -38,7 +40,8 @@ def copied_points(points: list[dict], evidence: dict) -> bool:
 
 
 def evidence_text(evidence: dict) -> str:
-    return normalized(' '.join([str(evidence.get(k) or '') for k in ('title','author','caption','ocr_text')]
+    return normalized(' '.join([(clean_source_text(str(evidence.get(k) or ''), title=k == 'title') if k in ('title', 'caption')
+        else str(evidence.get(k) or '')) for k in ('title','author','caption','ocr_text')]
                               + [s['text'] for s in evidence.get('transcript', [])]
                               + list(evidence.get('comments', [])) + list(evidence.get('frame_notes', []))))
 
@@ -86,6 +89,9 @@ def model_input(evidence: dict) -> dict:
     keys = ('source_platform', 'url', 'source_id', 'title', 'author', 'duration',
             'caption', 'transcript', 'ocr_text', 'frame_notes', 'comments', 'evidence_level', 'language')
     supplied = {k: evidence[k] for k in keys if k in evidence}
+    for key in ('title', 'caption'):
+        if key in supplied:
+            supplied[key] = clean_source_text(str(supplied[key] or ''), title=key == 'title')
     if evidence.get('transcript'):
         supplied['transcript'] = [{k: segment[k] for k in ('id', 'start', 'text')}
                                   for segment in numbered_segments(evidence)]
@@ -160,6 +166,7 @@ def prose_text(data: dict) -> str:
 
 def validate(data: dict, evidence: dict) -> BriefV2:
     data = repair_shape(data)
+    data['topics'] = semantic_topics(data.get('topics', []))
     segments = {s['id']: s for s in numbered_segments(evidence)}
     points = [dict(point) for point in data.get('key_points', [])]
     for point in points:

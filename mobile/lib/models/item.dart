@@ -84,7 +84,10 @@ class ItemDetail {
   final String? contentType, likelyIntent, suggestedAction, intent;
   final List<String> topics;
 
-  bool get isGeneratingBrief => !isFailed && (!isReady || (needsRetry && briefSource != 'llm'));
+  bool get hasFinalBrief => briefSource == 'llm' && briefText.trim().isNotEmpty;
+
+  bool get isGeneratingBrief => !isFailed && !hasFinalBrief &&
+      (!isReady || needsRetry || briefSource == 'fallback');
   final List<BriefKeyPoint> pointsWithRefs;
 
   String get briefText => instantBrief ?? summary ?? '';

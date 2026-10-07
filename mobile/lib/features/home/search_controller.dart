@@ -61,6 +61,8 @@ class SearchController extends ChangeNotifier {
 
   /// Text-field entry point: coalesces keystrokes into one request.
   void onQueryChanged(String value) {
+    ++_requestId;
+    _results = const <SearchResult>[];
     _query = value;
     notifyListeners();
     _debounceTimer?.cancel();
@@ -76,6 +78,7 @@ class SearchController extends ChangeNotifier {
   /// Runs immediately (chip taps, retries). Results from an older query are
   /// discarded, so a slow request cannot overwrite fresher keystrokes.
   Future<void> run([String? value, String? category]) async {
+    final id = ++_requestId;
     final text = (value ?? _query).trim();
     _query = value ?? _query;
     if (category != null) _category = category;
@@ -89,7 +92,7 @@ class SearchController extends ChangeNotifier {
 
     final selectedCategory = _category;
     final selectedFilters = Map<String, String>.of(filters);
-    final id = ++_requestId;
+    _results = const <SearchResult>[];
     _loading = true;
     notifyListeners();
 

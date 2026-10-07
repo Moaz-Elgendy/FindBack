@@ -108,6 +108,8 @@ class ItemDetail(BaseModel):
             return value
         data = {name: getattr(value, name) for name in cls.model_fields if hasattr(value, name)}
         brief = getattr(value, "brief_v2", None) or {}
+        if "topics" not in brief:
+            data["topics"] = ((getattr(value, "fetch_metadata", None) or {}).get("brief") or {}).get("topics", [])
         evidence = getattr(value, "evidence_bundle", None) or {}
         metadata = getattr(value, "processing_metadata", None) or {}
         for name in ("instant_brief", "best_takeaway", "content_type", "confidence", "missing_info",

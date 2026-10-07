@@ -65,6 +65,7 @@ void main() {
         findsOneWidget);
     await tester.tap(find.text('Full Brief'));
     await tester.pumpAndSettle();
+    expect(find.text('2 key points · Tap to collapse'), findsOneWidget);
     expect(find.text('Use the testing skill.'), findsOneWidget);
     expect(find.text('00:39'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Tags'), 150,

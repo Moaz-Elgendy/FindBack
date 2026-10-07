@@ -1,0 +1,116 @@
+[
+  {
+    "endpoint": "items",
+    "topic": "AI",
+    "http_status": 200,
+    "count": 3,
+    "ids": [
+      "990a024d-760e-423d-8445-e745d8a635b4",
+      "03fe40d4-7bfd-4fb7-85b1-b47f10ec04c1",
+      "7c8e9b90-10b8-4bb8-a307-e44180a9452b"
+    ]
+  },
+  {
+    "endpoint": "search",
+    "topic": "AI",
+    "http_status": 200,
+    "count": 3,
+    "ids": [
+      "03fe40d4-7bfd-4fb7-85b1-b47f10ec04c1",
+      "7c8e9b90-10b8-4bb8-a307-e44180a9452b",
+      "990a024d-760e-423d-8445-e745d8a635b4"
+    ]
+  },
+  {
+    "endpoint": "items",
+    "topic": "Programming",
+    "http_status": 200,
+    "count": 3,
+    "ids": [
+      "990a024d-760e-423d-8445-e745d8a635b4",
+      "03fe40d4-7bfd-4fb7-85b1-b47f10ec04c1",
+      "7c8e9b90-10b8-4bb8-a307-e44180a9452b"
+    ]
+  },
+  {
+    "endpoint": "search",
+    "topic": "Programming",
+    "http_status": 200,
+    "count": 3,
+    "ids": [
+      "03fe40d4-7bfd-4fb7-85b1-b47f10ec04c1",
+      "7c8e9b90-10b8-4bb8-a307-e44180a9452b",
+      "990a024d-760e-423d-8445-e745d8a635b4"
+    ]
+  },
+  {
+    "endpoint": "items",
+    "topic": "Design",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "search",
+    "topic": "Design",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "items",
+    "topic": "Food",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "search",
+    "topic": "Food",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "items",
+    "topic": "History",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "search",
+    "topic": "History",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "items",
+    "topic": "Science",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "search",
+    "topic": "Science",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "items",
+    "topic": "Other",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  },
+  {
+    "endpoint": "search",
+    "topic": "Other",
+    "http_status": 200,
+    "count": 0,
+    "ids": []
+  }
+]

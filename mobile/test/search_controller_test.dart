@@ -20,6 +20,24 @@ SearchResponse _response(List<String> ids, {int tookMs = 7}) => SearchResponse(
     );
 
 void main() {
+  test('clearing query invalidates an in-flight response', () async {
+    final pending = Completer<SearchResponse>();
+    final controller = SearchController(
+      remote: (_, __, ___) => pending.future,
+      local: (_, {String? category, Map<String, String>? filters}) async => [],
+      isOnline: () async => true,
+      debounce: Duration.zero,
+    );
+    final running = controller.run('Claude');
+    await Future<void>.delayed(Duration.zero);
+    await controller.run('');
+    pending.complete(_response(['stale']));
+    await running;
+    expect(controller.results, isEmpty);
+    expect(controller.loading, isFalse);
+    controller.dispose();
+  });
+
   test('a failed connectivity probe uses filtered cached results and stops loading', () async {
     final controller = SearchController(
       remote: (_, __, filters) async => throw StateError('must use cache'),
