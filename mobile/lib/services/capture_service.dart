@@ -1,4 +1,5 @@
 import '../data/api_client.dart';
+import '../utils/share_text.dart';
 import '../data/local_db.dart';
 import '../models/item.dart';
 import 'sync_service.dart' show ConnectivityProbe, systemIsOnline;
@@ -29,6 +30,13 @@ class CaptureOutcome {
   bool get isQueued => status == CaptureStatus.queued;
 }
 
+class CaptureBatch {
+  const CaptureBatch(this.outcomes, {this.failedUrls = const []});
+  final List<CaptureOutcome> outcomes;
+  final List<String> failedUrls;
+  bool get isQueued => outcomes.any((outcome) => outcome.isQueued);
+}
+
 /// The Save path: try the API, and if the network is the reason it failed, keep
 /// the capture on-device so the user never loses a link.
 class CaptureService {
@@ -57,11 +65,27 @@ class CaptureService {
   final ConnectivityProbe _isOnline;
   final Future<ItemDetail?> Function(String url)? _existingItem;
 
+  Future<CaptureBatch> captureText(String text, {String? titleHint}) async {
+    final urls = extractUrlsFromShareText(text);
+    final outcomes = <CaptureOutcome>[];
+    final failed = <String>[];
+    for (final url in urls) {
+      try {
+        outcomes.add(await capture(url: url,
+            preview: previewFromText(urls.length == 1 ? text : url),
+            titleHint: titleHint, queueOnly: urls.length > 1));
+      } catch (_) {
+        failed.add(url);
+      }
+    }
+    return CaptureBatch(outcomes, failedUrls: failed);
+  }
+
   /// Throws [ApiException] when the server actively rejects the URL — that is a
   /// real answer the user should see. Only connectivity problems are absorbed
   /// into the queue.
-  Future<CaptureOutcome> capture({required String url, String? preview, String? titleHint}) async {
-    if (await _isOnline()) {
+  Future<CaptureOutcome> capture({required String url, String? preview, String? titleHint, bool queueOnly = false}) async {
+    if (!queueOnly && await _isOnline()) {
       try {
         final IngestResult result = await _ingest(url, preview, titleHint);
         return CaptureOutcome(status: CaptureStatus.remote, reference: result.id, alreadyExists: result.alreadyExists);

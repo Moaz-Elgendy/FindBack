@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../config.dart';
@@ -69,21 +70,23 @@ class ApiClient {
     return SyncBatchResult.fromJson(data);
   }
 
-  Future<SearchResponse> search(String query, {String? category, int limit = 10}) async {
+  Future<SearchResponse> search(String query, {String? category, int limit = 10, Map<String, String>? filters}) async {
     final params = <String, String>{'q': query, 'limit': '$limit'};
     if (category != null && category.isNotEmpty && category != 'All') {
       params['category'] = category.toLowerCase();
     }
+    if (filters?.isNotEmpty == true) params['intelligence'] = jsonEncode(filters);
     final data = await _get('/api/v1/search', params);
     return SearchResponse.fromJson(data);
   }
 
-  Future<ItemPage> listItems({int limit = 20, String? cursor, String? category}) async {
+  Future<ItemPage> listItems({int limit = 20, String? cursor, String? category, Map<String, String>? filters}) async {
     final params = <String, String>{'limit': '$limit'};
     if (cursor != null && cursor.isNotEmpty) params['cursor'] = cursor;
     if (category != null && category.isNotEmpty && category != 'All') {
       params['category'] = category.toLowerCase();
     }
+    if (filters?.isNotEmpty == true) params['intelligence'] = jsonEncode(filters);
     final data = await _get('/api/v1/items', params);
     return ItemPage.fromJson(data);
   }

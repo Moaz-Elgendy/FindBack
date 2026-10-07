@@ -80,20 +80,17 @@ class ShareIntentService {
   /// Returns null when the payload held no URL: there was nothing to save, and
   /// the user should not be told a save happened.
   ///
-  /// This never throws for a network reason -- the whole point of Phase 15 is
-  /// that a capture survives having no internet. A URL the server actively
-  /// rejects still propagates, because that is a real answer.
-  Future<CaptureOutcome?> captureShared(
+  /// Each unique URL uses the capture path. Failed URLs remain in the result.
+  Future<CaptureBatch?> captureShared(
     String payload,
     CaptureService capture,
   ) async {
-    final String? url = urlFromShare(payload);
-    if (url == null) return null;
-    return capture.capture(url: url, preview: payload);
+    if (extractUrlsFromShareText(payload).isEmpty) return null;
+    return capture.captureText(payload);
   }
 
   /// Saves the share that launched the app, if there was one.
-  Future<CaptureOutcome?> captureInitialShare(CaptureService capture) async {
+  Future<CaptureBatch?> captureInitialShare(CaptureService capture) async {
     final String? payload = await readInitialShare();
     if (payload == null) return null;
     return captureShared(payload, capture);

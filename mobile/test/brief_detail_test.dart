@@ -18,8 +18,8 @@ void main() {
         });
       },
       localItem: (_) async => null,
-      remoteRecent: (_, {String? category, String? cursor}) async => const ItemPage(items: []),
-      localRecent: (_, {String? category}) async => [],
+      remoteRecent: (_, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []),
+      localRecent: (_, {String? category, Map<String, String>? filters}) async => [],
       cache: (_) async {}, remoteDelete: (_) async {},
       localDelete: (_) async => 0, dropQueued: (_) async => 0, isOnline: () async => true,
     );
@@ -55,8 +55,8 @@ void main() {
         });
       },
       localItem: (_) async => null,
-      remoteRecent: (_, {String? category, String? cursor}) async => const ItemPage(items: []),
-      localRecent: (_, {String? category}) async => [],
+      remoteRecent: (_, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []),
+      localRecent: (_, {String? category, Map<String, String>? filters}) async => [],
       cache: (_) async {}, remoteDelete: (_) async {},
       localDelete: (_) async => 0, dropQueued: (_) async => 0, isOnline: () async => true,
     );

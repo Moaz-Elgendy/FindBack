@@ -18,6 +18,7 @@ class SearchResult {
     this.sourceDomain,
     this.matchReason,
     this.createdAt,
+    this.topics = const [], this.contentType, this.entities = const {}, this.likelyIntent, this.suggestedAction, this.intent,
   });
 
   factory SearchResult.fromJson(Map<String, dynamic> json) => SearchResult(
@@ -31,23 +32,14 @@ class SearchResult {
         sourceDomain: json['source_domain'] as String?,
         matchReason: json['match_reason'] as String?,
         createdAt: parseDate(json['created_at']),
+        topics: stringList(json['topics']), contentType: json['content_type'] as String?, entities: objectMap(json['entities']),
+        likelyIntent: json['likely_intent'] as String?, suggestedAction: json['suggested_action'] as String?, intent: json['intent'] as String?,
       );
 
   /// Rows written by the offline optimist before the server saw them.
-  factory SearchResult.fromLocalRow(Map<String, Object?> row) => SearchResult(
-        id: row['id']?.toString() ?? '',
-        title: (row['title_clean'] as String?)?.isNotEmpty == true
-            ? row['title_clean'] as String
-            : ((row['title'] as String?)?.isNotEmpty == true ? row['title'] as String : row['url'] as String? ?? ''),
-        summary: ItemDetail.fromLocalRow(row).briefText,
-        tags: decodeTags(row['tags']),
-        category: row['category'] as String? ?? 'other',
-        score: 0.5,
-        thumbnail: row['thumbnail_url'] as String?,
-        sourceDomain: row['source_domain'] as String?,
-        matchReason: 'Offline — matched title/summary',
-        createdAt: parseDate(row['created_at']),
-      );
+  factory SearchResult.fromLocalRow(Map<String, Object?> row) =>
+      SearchResult.fromItem(ItemDetail.fromLocalRow(row))
+          .copyWith(matchReason: 'Offline — matched title/summary', score: 0.5);
 
   final String id;
   final String title;
@@ -59,6 +51,18 @@ class SearchResult {
   final String? sourceDomain;
   final String? matchReason;
   final DateTime? createdAt;
+  final List<String> topics;
+  final Map<String, Object?> entities;
+  final String? contentType, likelyIntent, suggestedAction, intent;
+
+  Map<String, List<String>> get intelligence => {
+    'topic': topics, 'type': [if (contentType != null) contentType!],
+    'entity': entities.values.expand((v) => v is List ? v.whereType<String>() : <String>[]).toList(),
+    'intent': [if ((likelyIntent ?? intent) != null) (likelyIntent ?? intent)!],
+    'action': [if (suggestedAction != null) suggestedAction!],
+    'source': [if (sourceDomain != null) sourceDomain!],
+    'saved': [if (createdAt != null) createdAt!.toUtc().toIso8601String().substring(0, 10)],
+  };
 
   /// The library list ("Recent") shows cached items the same way.
   factory SearchResult.fromItem(ItemDetail item) => SearchResult(
@@ -72,6 +76,8 @@ class SearchResult {
         sourceDomain: item.sourceDomain,
         matchReason: 'Recently saved',
         createdAt: item.createdAt,
+        topics: item.topics, contentType: item.contentType, entities: item.entities,
+        likelyIntent: item.likelyIntent, suggestedAction: item.suggestedAction, intent: item.intent,
       );
 
   bool get isLocalOnly => id.startsWith('local-');
@@ -89,6 +95,8 @@ class SearchResult {
         sourceDomain: sourceDomain,
         matchReason: matchReason ?? this.matchReason,
         createdAt: createdAt,
+        topics: topics, contentType: contentType, entities: entities,
+        likelyIntent: likelyIntent, suggestedAction: suggestedAction, intent: intent,
       );
 }
 
@@ -106,3 +114,8 @@ class SearchResponse {
   final List<SearchResult> results;
   final int tookMs;
 }
+
+
+bool matchesIntelligence(SearchResult item, Map<String, String> filters) =>
+    filters.entries.every((entry) => (item.intelligence[entry.key] ?? [])
+        .any((value) => value.toLowerCase() == entry.value.toLowerCase()));

@@ -4,11 +4,14 @@ import 'package:findback/data/local_db.dart';
 import 'package:findback/data/token_store.dart';
 import 'package:findback/features/home/home_screen.dart';
 import 'package:findback/models/item.dart';
+import 'package:findback/models/search_result.dart';
 import 'package:findback/services/capture_service.dart';
 import 'package:findback/services/items_service.dart';
 import 'package:findback/services/share_intent_service.dart';
 import 'package:findback/services/sync_service.dart';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -28,15 +31,15 @@ void main() {
   setUpAll(() { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi; });
 
   Future<AppServices> setup(WidgetTester tester, {
-    required RemoteRecentFetch recent, bool duplicate = false, SyncService? syncService,
+    required RemoteRecentFetch recent, bool duplicate = false, SyncService? syncService, ApiClient? searchApi,
   }) async {
     final db = (await tester.runAsync(() => LocalDb.openAt(inMemoryDatabasePath)))!;
-    final api = ApiClient(tokens: _Tokens());
+    final api = searchApi ?? ApiClient(tokens: _Tokens());
     return AppServices(db: db, api: api,
       items: ItemsService(remoteItem: (_) async => ItemDetail.fromJson({
         ..._item('old', 'tutorial'), 'instant_brief': 'Existing useful Brief.'}),
         localItem: (_) async => null, remoteRecent: recent,
-        localRecent: (_, {String? category}) async => [], cache: (_) async {},
+        localRecent: (_, {String? category, Map<String, String>? filters}) async => [], cache: (_) async {},
         remoteDelete: (_) async {}, localDelete: (_) async => 0,
         dropQueued: (_) async => 0, isOnline: () async => true),
       capture: CaptureService(ingest: (_, __, ___) async => IngestResult(
@@ -49,10 +52,65 @@ void main() {
         apply: (_) async {}, markFailed: (_) async => {}, isOnline: () async => false));
   }
 
+  testWidgets('topic beyond page 20 and content-type sheet filter reach the whole library', (tester) async {
+    const connectivity = MethodChannel('dev.fluttercommunity.plus/connectivity');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(connectivity, null));
+    final requested = <Map<String, String>>[];
+    final records = [for (var i = 0; i < 25; i++) ItemDetail.fromJson({
+      ..._item('$i', 'tutorial'), 'topics': [i == 24 ? 'AI' : 'Food'],
+      'content_type': i == 24 ? 'ai_tool' : 'recipe',
+      'entities': {'tools_products': [i == 24 ? 'Claude' : 'Oven']},
+    })];
+    final dio = Dio()..interceptors.add(InterceptorsWrapper(onRequest: (options, handler) => handler.resolve(
+      Response(requestOptions: options, statusCode: 200, data: {'results': [], 'took_ms': 0}))));
+    final services = await setup(tester, searchApi: ApiClient(dio: dio, tokens: _Tokens()), recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async {
+      requested.add(Map.of(filters ?? {}));
+      final matching = records.where((item) => matchesIntelligence(SearchResult.fromItem(item), filters ?? {})).toList();
+      final start = cursor == null ? 0 : int.parse(cursor);
+      return ItemPage(items: matching.skip(start).take(limit).toList(),
+        nextCursor: start + limit < matching.length ? '${start + limit}' : null);
+    });
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilterChip, 'AI'));
+    await tester.pumpAndSettle();
+    expect(find.text('24 title'), findsOneWidget);
+    expect(find.text('0 title'), findsNothing);
+    await tester.tap(find.text('Filters (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Content intelligence'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ai tool').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Apply filters'), 200, scrollable: find.byType(Scrollable).last);
+    await tester.tap(find.text('Apply filters'));
+    await tester.pumpAndSettle();
+    expect(requested.last, {'topic': 'AI', 'type': 'ai_tool'});
+    expect(find.text('24 title'), findsOneWidget);
+    expect(find.text('Filters (2)'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).first, 'Claude');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Filters (2)'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Clear filters'), 200, scrollable: find.byType(Scrollable).last);
+    await tester.tap(find.text('Clear filters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(requested.last, isEmpty);
+    expect(find.text('0 title'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
   testWidgets('library loads items past 20 and stops at the last page', (tester) async {
     final asked = <String?>[];
-    final services = await setup(tester, recent: (limit, {String? category, String? cursor}) async {
-      asked.add(cursor);
+    final services = await setup(tester, recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async {
+      if (limit == HomeScreen.recentLimit) asked.add(cursor);
       final start = cursor == null ? 0 : int.parse(cursor);
       final end = start + limit > 45 ? 45 : start + limit;
       return ItemPage(items: [for (var i = start; i < end; i++) ItemDetail.fromJson(_item('$i', 'tutorial'))],
@@ -75,7 +133,7 @@ void main() {
 
   testWidgets('duplicate outside loaded page appears centered in a neutral dialog', (tester) async {
     final services = await setup(tester, duplicate: true,
-      recent: (limit, {String? category, String? cursor}) async => ItemPage(
+      recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => ItemPage(
         items: [ItemDetail.fromJson(_item('new', 'tutorial'))]));
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
@@ -101,9 +159,9 @@ void main() {
   });
   testWidgets('repeat from phone sharing uses the same existing-memory dialog', (tester) async {
     final services = await setup(tester,
-      recent: (limit, {String? category, String? cursor}) async => const ItemPage(items: []));
-    services.sharedCapture.value = const CaptureOutcome(status: CaptureStatus.remote,
-        reference: 'old', alreadyExists: true);
+      recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []));
+    services.sharedCapture.value = const CaptureBatch([CaptureOutcome(status: CaptureStatus.remote,
+        reference: 'old', alreadyExists: true)]);
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
@@ -128,7 +186,7 @@ void main() {
       isOnline: () async => true, retryBase: const Duration(hours: 1));
     await sync.flush();
     final services = await setup(tester, syncService: sync,
-      recent: (limit, {String? category, String? cursor}) async => const ItemPage(items: []));
+      recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []));
     services.pending.value = 1;
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
@@ -147,7 +205,7 @@ void main() {
   testWidgets('successful sync replaces the queued card without manual refresh', (tester) async {
     var synced = false;
     final services = await setup(tester,
-      recent: (limit, {String? category, String? cursor}) async => ItemPage(items: [
+      recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => ItemPage(items: [
         ItemDetail.fromJson(_item(synced ? 'server' : 'local-1', 'tutorial'))]));
     services.pending.value = 1;
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
@@ -174,7 +232,7 @@ void main() {
       isOnline: () async => true, retryBase: const Duration(hours: 1));
     await sync.flush();
     final services = await setup(tester, syncService: sync,
-      recent: (limit, {String? category, String? cursor}) async => const ItemPage(items: []));
+      recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []));
     services.pending.value = 1;
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();

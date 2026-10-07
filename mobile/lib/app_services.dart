@@ -46,7 +46,7 @@ class AppServices {
 
   /// Queue depth, shown as a badge so "saved on this device" is never silent.
   final ValueNotifier<int> pending = ValueNotifier<int>(0);
-  final ValueNotifier<CaptureOutcome?> sharedCapture = ValueNotifier(null);
+  final ValueNotifier<CaptureBatch?> sharedCapture = ValueNotifier(null);
 
   Future<void> refreshPending() async {
     try {
@@ -70,7 +70,7 @@ class AppServices {
   Future<void> startShareHandling() async {
     _shareSubscription ??= share.shares.listen((String payload) async {
       try {
-        final CaptureOutcome? outcome =
+        final CaptureBatch? outcome =
             await share.captureShared(payload, capture);
         // A share that had to wait for the network changes the pending count.
         if (outcome?.isQueued ?? false) await refreshPending();
@@ -84,7 +84,7 @@ class AppServices {
     });
     // The share that started this launch.
     try {
-      final CaptureOutcome? outcome =
+      final CaptureBatch? outcome =
           await share.captureInitialShare(capture);
       if (outcome?.isQueued ?? false) await refreshPending();
       if (outcome != null) sharedCapture.value = outcome;

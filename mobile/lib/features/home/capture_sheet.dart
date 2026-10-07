@@ -10,12 +10,12 @@ class CaptureSheet extends StatefulWidget {
   const CaptureSheet({super.key, required this.capture, this.onSaved});
 
   final CaptureService capture;
-  final void Function(CaptureOutcome outcome)? onSaved;
+  final void Function(CaptureBatch outcome)? onSaved;
 
   static Future<void> show(
     BuildContext context, {
     required CaptureService capture,
-    void Function(CaptureOutcome outcome)? onSaved,
+    void Function(CaptureBatch outcome)? onSaved,
   }) =>
       showModalBottomSheet<void>(
         context: context,
@@ -46,8 +46,8 @@ class _CaptureSheetState extends State<CaptureSheet> {
 
   Future<void> _save() async {
     final String raw = _text.text.trim();
-    final String? url = extractUrlFromShareText(raw);
-    if (url == null) {
+    final urls = extractUrlsFromShareText(raw);
+    if (urls.isEmpty) {
       setState(() => _error = 'No link found in that text. Paste a URL and try again.');
       return;
     }
@@ -58,13 +58,18 @@ class _CaptureSheetState extends State<CaptureSheet> {
       _error = null;
     });
     try {
-      final CaptureOutcome outcome = await widget.capture.capture(
-        url: url,
-        preview: previewFromText(raw),
-        titleHint: hint,
-      );
+      final CaptureBatch outcome = await widget.capture.captureText(raw, titleHint: hint);
       widget.onSaved?.call(outcome);
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      if (outcome.failedUrls.isEmpty) {
+        Navigator.pop(context);
+      } else {
+        _text.text = outcome.failedUrls.join('\n');
+        setState(() {
+          _saving = false;
+          _error = '${outcome.outcomes.length} saved. ${outcome.failedUrls.length} could not be saved; retry the remaining links.';
+        });
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -86,7 +91,7 @@ class _CaptureSheetState extends State<CaptureSheet> {
           Text('Save a link', style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
           Text(
-            'Paste a link or a whole share message — we keep the URL.',
+            'Paste one or more links, or a whole share message.',
             style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
           ),
           const SizedBox(height: 16),

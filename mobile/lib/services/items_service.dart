@@ -6,8 +6,8 @@ import 'sync_service.dart' show ConnectivityProbe, systemIsOnline;
 
 typedef RemoteItemFetch = Future<ItemDetail> Function(String id);
 typedef LocalItemFetch = Future<ItemDetail?> Function(String id);
-typedef RemoteRecentFetch = Future<ItemPage> Function(int limit, {String? category, String? cursor});
-typedef LocalRecentFetch = Future<List<SearchResult>> Function(int limit, {String? category});
+typedef RemoteRecentFetch = Future<ItemPage> Function(int limit, {String? category, String? cursor, Map<String, String>? filters});
+typedef LocalRecentFetch = Future<List<SearchResult>> Function(int limit, {String? category, Map<String, String>? filters});
 typedef ItemCache = Future<void> Function(List<ItemDetail> items);
 typedef RemoteDelete = Future<void> Function(String id);
 typedef LocalDelete = Future<int> Function(String id);
@@ -61,10 +61,10 @@ class ItemsService {
       ItemsService(
         remoteItem: api.getItem,
         localItem: db.localItem,
-        remoteRecent: (int limit, {String? category, String? cursor}) =>
-            api.listItems(limit: limit, category: category, cursor: cursor),
-        localRecent: (int limit, {String? category}) =>
-            db.recentLocalItems(limit: limit, category: category),
+        remoteRecent: (int limit, {String? category, String? cursor, Map<String, String>? filters}) =>
+            api.listItems(limit: limit, category: category, cursor: cursor, filters: filters),
+        localRecent: (int limit, {String? category, Map<String, String>? filters}) =>
+            db.recentLocalItems(limit: limit, category: category, filters: filters),
         cache: db.upsertRemoteItems,
         remoteDelete: api.deleteItem,
         localDelete: db.deleteItem,
@@ -110,16 +110,16 @@ class ItemsService {
   }
 
   /// The library list, always in newest-first order.
-  Future<List<SearchResult>> recent({int limit = 10, String? category, String? cursor}) async =>
-      (await recentPage(limit: limit, category: category, cursor: cursor)).items;
+  Future<List<SearchResult>> recent({int limit = 10, String? category, String? cursor, Map<String, String>? filters}) async =>
+      (await recentPage(limit: limit, category: category, cursor: cursor, filters: filters)).items;
 
   Future<({List<SearchResult> items, String? nextCursor})> recentPage({
-    int limit = 20, String? category, String? cursor, int loadedCount = 0,
+    int limit = 20, String? category, String? cursor, int loadedCount = 0, Map<String, String>? filters,
   }) async {
     final localCursor = cursor?.startsWith('local:') == true;
     if (!localCursor && await _isOnline()) {
       try {
-        final ItemPage page = await _remoteRecent(limit, category: category, cursor: cursor);
+        final ItemPage page = await _remoteRecent(limit, category: category, cursor: cursor, filters: filters);
         await _cache(page.items);
         return (items: page.items.map(SearchResult.fromItem).toList(growable: false),
             nextCursor: page.nextCursor);
@@ -128,7 +128,7 @@ class ItemsService {
       }
     }
     final offset = localCursor ? int.parse(cursor!.substring(6)) : loadedCount;
-    final rows = await _localRecent(offset + limit + 1, category: category);
+    final rows = await _localRecent(offset + limit + 1, category: category, filters: filters);
     return (items: rows.skip(offset).take(limit).toList(growable: false),
         nextCursor: rows.length > offset + limit ? 'local:${offset + limit}' : null);
   }

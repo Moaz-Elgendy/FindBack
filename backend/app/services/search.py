@@ -175,8 +175,15 @@ def recency_boost(created_at, now: datetime | None = None) -> float:
     return 0.5 ** (age_days / 30.0)
 
 
-def _cat_filter(category: str | None, alias: str = "") -> str:
-    return f"AND {alias}category = :cat" if category else ""
+def _cat_filter(category: str | None, alias: str = "", intelligence_ids=None) -> str:
+    clause = f"AND {alias}category = :cat" if category else ""
+    if intelligence_ids is not None:
+        from uuid import UUID
+        # Only database-owned, parsed UUIDs enter SQL; no user filter text does.
+        # ponytail: UUID allowlists fit current libraries; use SQL subqueries if planning gets costly.
+        ids = ','.join("'" + str(UUID(str(value))) + "'" for value in intelligence_ids)
+        clause += f" AND {alias}id IN ({ids})" if ids else " AND FALSE"
+    return clause
 
 
 def _with_notes(db: Session, user_id, ids: list[str]) -> dict[str, dict]:
@@ -231,7 +238,7 @@ def or_tsquery(terms: list[str]) -> str:
 
 
 def lexical_search(db: Session, user_id, query: str, terms: list[str],
-                   category: str | None = None, limit: int = 50):
+                   category: str | None = None, limit: int = 50, intelligence_ids=None):
     """Full-text candidates from the item's whole searchable document.
 
     The terms are OR'd, not AND'd. `plainto_tsquery` ANDs every word, so "aws
@@ -254,7 +261,7 @@ def lexical_search(db: Session, user_id, query: str, terms: list[str],
             WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND (i.search_text_tsv @@ to_tsquery('english', :q)
                    OR i.tsv @@ to_tsquery('english', :q))
-              {_cat_filter(category, 'i.')}
+              {_cat_filter(category, 'i.', intelligence_ids)}
             ORDER BY rank DESC
             LIMIT :lim
         """, {"uid": str(user_id), "q": or_tsquery(terms),
@@ -262,7 +269,7 @@ def lexical_search(db: Session, user_id, query: str, terms: list[str],
 
 
 def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
-                         limit: int = 50, category: str | None = None):
+                         limit: int = 50, category: str | None = None, intelligence_ids=None):
     """Full-text candidates from inside the content, with the matched chunk."""
     if not terms:
         return []
@@ -275,7 +282,7 @@ def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
             JOIN items i ON i.id = c.item_id
             WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND c.tsv @@ to_tsquery('english', :q)
-              {_cat_filter(category, 'i.')}
+              {_cat_filter(category, 'i.', intelligence_ids)}
             ORDER BY rank DESC
             LIMIT :lim
         """, {"uid": str(user_id), "q": or_tsquery(terms),
@@ -290,7 +297,7 @@ _NOTE_DOCUMENT = ("coalesce(um.user_note, '') || ' ' || "
 
 
 def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
-                category: str | None = None):
+                category: str | None = None, intelligence_ids=None):
     """Candidates from the user's own note and intent (Phase 12 + 13).
 
     A note is how the user remembers a thing -- "the one I saved to try on the
@@ -322,7 +329,7 @@ def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
               AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'
               AND to_tsvector('english', {_NOTE_DOCUMENT})
                   @@ to_tsquery('english', :q)
-              {_cat_filter(category, 'i.')}
+              {_cat_filter(category, 'i.', intelligence_ids)}
             ORDER BY rank DESC
             LIMIT :lim
         """, {"uid": str(user_id), "q": or_tsquery(terms),
@@ -330,7 +337,7 @@ def note_search(db: Session, user_id, terms: list[str], limit: int = 50,
 
 
 def vector_search(db: Session, user_id, q_emb, category: str | None = None,
-                  limit: int = 50):
+                  limit: int = 50, intelligence_ids=None):
     """Semantic candidates from the item's own memory vector."""
     if q_emb is None:
         return []
@@ -341,7 +348,7 @@ def vector_search(db: Session, user_id, q_emb, category: str | None = None,
             FROM items i
             WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND i.embedding IS NOT NULL
-              {_cat_filter(category, 'i.')}
+              {_cat_filter(category, 'i.', intelligence_ids)}
             ORDER BY i.embedding <=> CAST(:qvec AS vector)
             LIMIT :lim
         """, {"uid": str(user_id), "qvec": vec_str,
@@ -373,7 +380,7 @@ def _dedupe_rows(rows) -> list:
     return kept
 
 def _chunk_vector_rows(db: Session, user_id, q_emb, limit: int = 50,
-                       category: str | None = None) -> list:
+                       category: str | None = None, intelligence_ids=None) -> list:
     """The synchronous half of `chunk_search`: one query, no embedding call."""
     if q_emb is None:
         return []
@@ -386,7 +393,7 @@ def _chunk_vector_rows(db: Session, user_id, q_emb, limit: int = 50,
             FROM chunks c
             JOIN items i ON i.id = c.item_id
             WHERE i.user_id = :uid AND {_SEARCHABLE}
-              {_cat_filter(category, 'i.')}
+              {_cat_filter(category, 'i.', intelligence_ids)}
             ORDER BY c.embedding <=> CAST(:qvec AS vector)
             LIMIT :lim
         """, {"uid": str(user_id), "qvec": vec_str, "lim": limit,
@@ -459,6 +466,8 @@ def _filter_rows(rows, meta: dict) -> list:
     before = meta.get("before")
     kept = []
     for row in rows:
+        if 'allowed_ids' in meta and str(row[0]) not in meta['allowed_ids']:
+            continue
         if domain and row[5] != domain:
             continue
         created = row[7]
@@ -474,7 +483,7 @@ def _filter_rows(rows, meta: dict) -> list:
 async def hybrid_search(db: Session, user_id, query: str, category: str = None,
                         limit: int = 10, source_domain: str = None,
                         saved_after: datetime = None,
-                        saved_before: datetime = None):
+                        saved_before: datetime = None, intelligence: dict | None = None):
     """Find the user's own memories. Retrieval only: nothing is recommended.
 
     Five candidate lists are merged with Reciprocal Rank Fusion and then
@@ -495,6 +504,10 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
     # future provider swap) can replace the call without reloading this module.
     q_emb = await embedder.embed_text(query, task="query") if query.strip() else None
     meta = metadata_filter(source_domain, saved_after, saved_before)
+    if intelligence:
+        from app.services.intelligence import query_for
+        from app.models import Item
+        meta['allowed_ids'] = {str(row[0]) for row in query_for(db, user_id, intelligence).with_entities(Item.id)}
     # Everything below is synchronous SQL. Run on the event loop it would hold
     # up every other request for as long as Postgres takes, so it goes to a
     # worker thread. The session is used by one thread at a time.
@@ -505,15 +518,16 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
 def _rank_candidates(db: Session, user_id, query: str, q_emb, category,
                      limit: int, meta: dict, t0: float):
     """The database half of `hybrid_search`: gather the five lists, then fuse."""
+    extra = {'intelligence_ids': meta['allowed_ids']} if 'allowed_ids' in meta else {}
     terms = correct_tag_terms(db, user_id, query_terms(query))
-    lex_rows = _filter_rows(lexical_search(db, user_id, query, terms, category),
+    lex_rows = _filter_rows(lexical_search(db, user_id, query, terms, category, **extra),
                             meta)
-    vec_rows = _filter_rows(vector_search(db, user_id, q_emb, category), meta)
+    vec_rows = _filter_rows(vector_search(db, user_id, q_emb, category, **extra), meta)
     chunk_vec_rows = _filter_rows(
-        _chunk_vector_rows(db, user_id, q_emb, category=category), meta)
+        _chunk_vector_rows(db, user_id, q_emb, category=category, **extra), meta)
     chunk_lex_rows = _filter_rows(
-        chunk_lexical_search(db, user_id, query, terms, category=category), meta)
-    note_rows = _filter_rows(note_search(db, user_id, terms, category=category), meta)
+        chunk_lexical_search(db, user_id, query, terms, category=category, **extra), meta)
+    note_rows = _filter_rows(note_search(db, user_id, terms, category=category, **extra), meta)
 
     # The whole searchable document per item, so the reason can be checked
     # against everything that was actually indexed -- structured_data and

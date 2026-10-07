@@ -54,8 +54,8 @@ void main() {
       final service = ItemsService(
         remoteItem: (id) async => ItemDetail.fromJson({'id': id, 'url': 'https://example.test/queued', 'status': 'ready'}),
         localItem: db.localItem, resolveLocalId: db.syncedItemId,
-        remoteRecent: (_, {String? category, String? cursor}) async => const ItemPage(items: []),
-        localRecent: (_, {String? category}) async => [], cache: db.upsertRemoteItems,
+        remoteRecent: (_, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []),
+        localRecent: (_, {String? category, Map<String, String>? filters}) async => [], cache: db.upsertRemoteItems,
         remoteDelete: (_) async {}, localDelete: db.deleteItem, dropQueued: db.dropQueued,
         isOnline: () async => true);
       expect((await service.getItem('local-$client'))?.id, 'server-a');

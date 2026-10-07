@@ -24,6 +24,7 @@ class _Tokens extends TokenStore {
 Map<String, dynamic> _item(String id, String category) => {
   'id': id, 'url': 'https://example.test/$id', 'title_clean': '$id title',
   'category': category, 'status': 'ready', 'tags': <String>[],
+  'topics': [category == 'recipe' ? 'Food' : category == 'tutorial' ? 'Gym' : 'AI'], 'content_type': category,
 };
 
 void main() {
@@ -86,24 +87,24 @@ void main() {
     });
   }
 
-  testWidgets('empty-query chip tap changes the visible Recent list', (tester) async {
+  testWidgets('topic-filtered empty-query chip tap changes the visible Recent list', (tester) async {
     final db = (await tester.runAsync(() => LocalDb.openAt(inMemoryDatabasePath)))!;
     final asked = <String?>[];
     final dio = Dio()..interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
-        final category = options.uri.queryParameters['category'];
-        asked.add(category);
+        final filters = jsonDecode(options.uri.queryParameters['intelligence'] ?? '{}') as Map<String, dynamic>;
+        asked.add(filters['topic'] as String?);
         final rows = [_item('article', 'article'), _item('recipe', 'recipe'), _item('tutorial', 'tutorial')];
         handler.resolve(Response(requestOptions: options, statusCode: 200,
-          data: {'items': rows.where((row) => category == null || row['category'] == category).toList()}));
+          data: {'items': rows.where((row) => filters['topic'] == null || (row['topics'] as List).contains(filters['topic'])).toList()}));
       },
     ));
     final api = ApiClient(dio: dio, tokens: _Tokens());
     final services = AppServices(db: db, api: api,
       items: ItemsService(remoteItem: api.getItem, localItem: (_) async => null,
-        remoteRecent: (limit, {String? category, String? cursor}) =>
-            api.listItems(limit: limit, category: category, cursor: cursor),
-        localRecent: (_, {String? category}) async => [], cache: (_) async {},
+        remoteRecent: (limit, {String? category, String? cursor, Map<String, String>? filters}) =>
+            api.listItems(limit: limit, category: category, cursor: cursor, filters: filters),
+        localRecent: (_, {String? category, Map<String, String>? filters}) async => [], cache: (_) async {},
         remoteDelete: api.deleteItem, localDelete: (_) async => 0,
         dropQueued: (_) async => 0, isOnline: () async => true),
       capture: CaptureService.of(db: db, api: api),
@@ -114,18 +115,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('article title'), findsOneWidget);
     expect(find.text('recipe title'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilterChip, 'recipe'));
+    await tester.tap(find.widgetWithText(FilterChip, 'Food'));
     await tester.pumpAndSettle();
-    expect(asked.last, 'recipe');
+    expect(asked.last, 'Food');
     expect(find.text('article title'), findsNothing);
     expect(find.text('recipe title'), findsOneWidget);
-    final tutorial = find.widgetWithText(FilterChip, 'tutorial');
+    final tutorial = find.widgetWithText(FilterChip, 'Gym');
     expect(tutorial, findsOneWidget);
     await tester.ensureVisible(tutorial);
     await tester.pumpAndSettle();
     await tester.tap(tutorial);
     await tester.pumpAndSettle();
-    expect(asked.last, 'tutorial');
+    expect(asked.last, 'Gym');
     expect(find.text('tutorial title'), findsOneWidget);
     expect(find.text('recipe title'), findsNothing);
     await tester.pumpWidget(const SizedBox());

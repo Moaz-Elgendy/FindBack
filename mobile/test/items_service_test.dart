@@ -29,11 +29,11 @@ class _Harness {
             },
         localItem: (String id) async => local[id],
         remoteRecent: remoteRecent ??
-            (int limit, {String? category, String? cursor}) async {
+            (int limit, {String? category, String? cursor, Map<String, String>? filters}) async {
               remoteCalls++;
               return ItemPage(items: <ItemDetail>[_item('r1')]);
             },
-        localRecent: (int limit, {String? category}) async =>
+        localRecent: (int limit, {String? category, Map<String, String>? filters}) async =>
             localRecent ?? local.values.map(SearchResult.fromItem).toList(),
         cache: (List<ItemDetail> items) async {
           for (final ItemDetail item in items) {
@@ -57,7 +57,7 @@ void main() {
   test('library pages preserve cursor, category and cached Brief', () async {
     final h = _Harness();
     final asked = <String?>[];
-    final service = h.service(remoteRecent: (limit, {String? category, String? cursor}) async {
+    final service = h.service(remoteRecent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async {
       expect(category, 'tutorial');
       asked.add(cursor);
       return ItemPage(items: [_item(cursor == null ? 'first' : 'older')],
@@ -119,7 +119,7 @@ void main() {
     final _Harness h = _Harness()
       ..local['local-1'] = _item('local-1');
     final List<SearchResult> rows =
-        await h.service(online: false, remoteRecent: (int limit, {String? category, String? cursor}) async => throw AssertionError()).recent();
+        await h.service(online: false, remoteRecent: (int limit, {String? category, String? cursor, Map<String, String>? filters}) async => throw AssertionError()).recent();
     expect(rows.single.title, 'Server local-1');
     expect(h.remoteCalls, 0);
   });

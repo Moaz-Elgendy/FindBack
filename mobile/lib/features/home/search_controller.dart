@@ -6,8 +6,8 @@ import '../../data/api_client.dart';
 import '../../models/search_result.dart';
 import '../../services/sync_service.dart' show ConnectivityProbe, systemIsOnline;
 
-typedef RemoteSearch = Future<SearchResponse> Function(String query, String? category);
-typedef LocalSearch = Future<List<SearchResult>> Function(String query, {String? category});
+typedef RemoteSearch = Future<SearchResponse> Function(String query, String? category, Map<String, String> filters);
+typedef LocalSearch = Future<List<SearchResult>> Function(String query, {String? category, Map<String, String>? filters});
 
 /// Debounced search with an offline path, ported from the RN `useSearch` hook.
 ///
@@ -31,7 +31,7 @@ class SearchController extends ChangeNotifier {
     ConnectivityProbe? isOnline,
   }) =>
       SearchController(
-        remote: (String query, String? category) => api.search(query, category: category),
+        remote: (String query, String? category, Map<String, String> filters) => api.search(query, category: category, filters: filters),
         local: local,
         isOnline: isOnline ?? systemIsOnline,
       );
@@ -44,6 +44,7 @@ class SearchController extends ChangeNotifier {
   Timer? _debounceTimer;
   String _query = '';
   String _category = 'All';
+  Map<String, String> filters = {};
   List<SearchResult> _results = const <SearchResult>[];
   bool _loading = false;
   bool _offline = false;
@@ -87,30 +88,31 @@ class SearchController extends ChangeNotifier {
     }
 
     final selectedCategory = _category;
+    final selectedFilters = Map<String, String>.of(filters);
     final id = ++_requestId;
     _loading = true;
     notifyListeners();
 
-    final bool online = await _isOnline();
-    _offline = !online;
     try {
+      final bool online = await _isOnline();
+      _offline = !online;
       if (_offline) {
-        final rows = await _local(text, category: selectedCategory);
+        final rows = await _local(text, category: selectedCategory, filters: selectedFilters);
         if (id != _requestId) return;
         _results = rows;
         _tookMs = null;
       } else {
-        final response = await _remote(text, selectedCategory);
+        final response = await _remote(text, selectedCategory, selectedFilters);
         if (id != _requestId) return;
         _results = response.results;
         _tookMs = response.tookMs;
       }
     } on ApiException catch (error) {
       debugPrint('[search] remote failed: $error');
-      await _fallback(text, id, selectedCategory);
+      await _fallback(text, id, selectedCategory, selectedFilters);
     } catch (error) {
       debugPrint('[search] failed: $error');
-      await _fallback(text, id, selectedCategory);
+      await _fallback(text, id, selectedCategory, selectedFilters);
     } finally {
       if (id == _requestId) {
         _loading = false;
@@ -119,9 +121,9 @@ class SearchController extends ChangeNotifier {
     }
   }
 
-  Future<void> _fallback(String text, int id, String category) async {
+  Future<void> _fallback(String text, int id, String category, Map<String, String> filters) async {
     try {
-      final rows = await _local(text, category: category);
+      final rows = await _local(text, category: category, filters: filters);
       if (id != _requestId) return;
       _results = rows
           .map((SearchResult row) => row.copyWith(matchReason: 'Offline fallback', score: 0.3))

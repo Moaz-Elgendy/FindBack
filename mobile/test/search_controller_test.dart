@@ -20,14 +20,31 @@ SearchResponse _response(List<String> ids, {int tookMs = 7}) => SearchResponse(
     );
 
 void main() {
+  test('a failed connectivity probe uses filtered cached results and stops loading', () async {
+    final controller = SearchController(
+      remote: (_, __, filters) async => throw StateError('must use cache'),
+      local: (_, {String? category, Map<String, String>? filters}) async => [
+        const SearchResult(id: 'ai', title: 'Tools', summary: '', tags: [], category: 'other', score: 1, topics: ['AI']),
+        const SearchResult(id: 'food', title: 'Tools', summary: '', tags: [], category: 'other', score: 1, topics: ['Food']),
+      ].where((item) => matchesIntelligence(item, filters ?? {})).toList(),
+      isOnline: () async => throw StateError('connectivity unavailable'),
+    );
+    controller.filters = {'topic': 'AI'};
+    await controller.run('tools');
+    expect(controller.results.map((item) => item.id), ['ai']);
+    expect(controller.loading, isFalse);
+    expect(controller.offline, isTrue);
+    controller.dispose();
+  });
+
   test('keystrokes collapse into one request', () async {
     final List<String> asked = <String>[];
     final SearchController controller = SearchController(
-      remote: (String query, String? category) async {
+      remote: (String query, String? category, filters) async {
         asked.add(query);
         return _response(<String>['x']);
       },
-      local: (String query, {String? category}) async => const <SearchResult>[],
+      local: (String query, {String? category, Map<String, String>? filters}) async => const <SearchResult>[],
       isOnline: () async => true,
       debounce: const Duration(milliseconds: 30),
     );
@@ -47,11 +64,11 @@ void main() {
   test('clearing the box clears the results without a request', () async {
     int asked = 0;
     final SearchController controller = SearchController(
-      remote: (String query, String? category) async {
+      remote: (String query, String? category, filters) async {
         asked++;
         return _response(<String>['x']);
       },
-      local: (String query, {String? category}) async => const <SearchResult>[],
+      local: (String query, {String? category, Map<String, String>? filters}) async => const <SearchResult>[],
       isOnline: () async => true,
       debounce: Duration.zero,
     );
@@ -67,8 +84,8 @@ void main() {
 
   test('offline searches the device and says so', () async {
     final SearchController controller = SearchController(
-      remote: (String query, String? category) async => throw AssertionError('no network'),
-      local: (String query, {String? category}) async => <SearchResult>[_hit('local-1')],
+      remote: (String query, String? category, filters) async => throw AssertionError('no network'),
+      local: (String query, {String? category, Map<String, String>? filters}) async => <SearchResult>[_hit('local-1')],
       isOnline: () async => false,
     );
 
@@ -82,9 +99,9 @@ void main() {
 
   test('a failed API call falls back to the mirror, clearly labelled', () async {
     final SearchController controller = SearchController(
-      remote: (String query, String? category) async =>
+      remote: (String query, String? category, filters) async =>
           throw ApiException('502 bad gateway', statusCode: 502, kind: ApiFailureKind.server),
-      local: (String query, {String? category}) async => <SearchResult>[_hit('local-2', score: 0.55)],
+      local: (String query, {String? category, Map<String, String>? filters}) async => <SearchResult>[_hit('local-2', score: 0.55)],
       isOnline: () async => true,
     );
 
@@ -99,14 +116,14 @@ void main() {
 
   test('a slow response cannot overwrite a newer keystroke', () async {
     final SearchController controller = SearchController(
-      remote: (String query, String? category) async {
+      remote: (String query, String? category, filters) async {
         if (query == 'slow') {
           await Future<void>.delayed(const Duration(milliseconds: 40));
           return _response(<String>['stale']);
         }
         return _response(<String>['fresh']);
       },
-      local: (String query, {String? category}) async => const <SearchResult>[],
+      local: (String query, {String? category, Map<String, String>? filters}) async => const <SearchResult>[],
       isOnline: () async => true,
     );
 
@@ -121,8 +138,8 @@ void main() {
 
   test('a broken mirror leaves the previous results on screen', () async {
     final SearchController controller = SearchController(
-      remote: (String query, String? category) async => _response(<String>['keep']),
-      local: (String query, {String? category}) async => throw StateError('database is locked'),
+      remote: (String query, String? category, filters) async => _response(<String>['keep']),
+      local: (String query, {String? category, Map<String, String>? filters}) async => throw StateError('database is locked'),
       isOnline: () async => true,
     );
 
@@ -130,8 +147,8 @@ void main() {
     expect(controller.results.single.id, 'keep');
 
     final SearchController failing = SearchController(
-      remote: (String query, String? category) async => throw ApiException('gone'),
-      local: (String query, {String? category}) async => throw StateError('database is locked'),
+      remote: (String query, String? category, filters) async => throw ApiException('gone'),
+      local: (String query, {String? category, Map<String, String>? filters}) async => throw StateError('database is locked'),
       isOnline: () async => true,
     );
     await failing.run('pasta');

@@ -23,9 +23,9 @@ final item = ItemDetail.fromJson(<String, dynamic>{
 ItemsService service() => ItemsService(
       remoteItem: (_) async => item,
       localItem: (_) async => null,
-      remoteRecent: (_, {String? category, String? cursor}) async =>
+      remoteRecent: (_, {String? category, String? cursor, Map<String, String>? filters}) async =>
           const ItemPage(items: []),
-      localRecent: (_, {String? category}) async => [],
+      localRecent: (_, {String? category, Map<String, String>? filters}) async => [],
       cache: (_) async {},
       remoteDelete: (_) async {},
       localDelete: (_) async => 0,

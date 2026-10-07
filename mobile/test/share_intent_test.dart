@@ -51,13 +51,13 @@ void main() {
     mockPlatform(initialShare: 'Look at this https://example.com/shared');
     final ShareIntentService share = ShareIntentService(channel: channel);
 
-    final CaptureOutcome? outcome = await share.captureInitialShare(
+    final CaptureBatch? outcome = await share.captureInitialShare(
       captureWith(ingest: (String url, _, __) async => accepted('server-1')),
     );
 
     expect(outcome, isNotNull);
-    expect(outcome!.status, CaptureStatus.remote);
-    expect(outcome.reference, 'server-1');
+    expect(outcome!.outcomes.single.status, CaptureStatus.remote);
+    expect(outcome.outcomes.single.reference, 'server-1');
   });
 
   test('a shared link is saved locally when there is no network', () async {
@@ -66,16 +66,16 @@ void main() {
     mockPlatform(initialShare: 'https://example.com/offline-share');
     final ShareIntentService share = ShareIntentService(channel: channel);
 
-    final CaptureOutcome? outcome = await share.captureInitialShare(
+    final CaptureBatch? outcome = await share.captureInitialShare(
       captureWith(
         isOnline: () async => false,
         ingest: (String url, _, __) async => accepted('never'),
       ),
     );
 
-    expect(outcome!.status, CaptureStatus.queued);
+    expect(outcome!.outcomes.single.status, CaptureStatus.queued);
     expect(outcome.isQueued, isTrue);
-    expect(outcome.clientId, 'q1');
+    expect(outcome.outcomes.single.clientId, 'q1');
   });
 
   test('a share with no link in it is not saved as anything', () async {
@@ -83,7 +83,7 @@ void main() {
     final ShareIntentService share = ShareIntentService(channel: channel);
     int ingests = 0;
 
-    final CaptureOutcome? outcome = await share.captureInitialShare(
+    final CaptureBatch? outcome = await share.captureInitialShare(
       captureWith(ingest: (String url, _, __) async {
         ingests++;
         return accepted('server-1');

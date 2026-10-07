@@ -26,6 +26,7 @@ class ItemDetail {
     this.missingInfo,
     this.needsRetry = false,
     this.briefSource,
+    this.contentType, this.topics = const [], this.likelyIntent, this.suggestedAction, this.intent,
     this.pointsWithRefs = const <BriefKeyPoint>[],
   });
 
@@ -53,6 +54,8 @@ class ItemDetail {
       missingInfo: json['missing_info'] as String?,
       needsRetry: json['needs_retry'] == true,
       briefSource: json['brief_source'] as String?,
+      contentType: json['content_type'] as String?, topics: stringList(json['topics']),
+      likelyIntent: json['likely_intent'] as String?, suggestedAction: json['suggested_action'] as String?, intent: json['intent'] as String?,
       pointsWithRefs: asObjectList(json['key_points_with_refs']).map(BriefKeyPoint.fromJson).toList(growable: false),
     );
   }
@@ -78,6 +81,8 @@ class ItemDetail {
   final String? missingInfo;
   final bool needsRetry;
   final String? briefSource;
+  final String? contentType, likelyIntent, suggestedAction, intent;
+  final List<String> topics;
 
   bool get isGeneratingBrief => !isFailed && (!isReady || (needsRetry && briefSource != 'llm'));
   final List<BriefKeyPoint> pointsWithRefs;
@@ -119,6 +124,7 @@ class ItemDetail {
           'instant_brief': instantBrief, 'best_takeaway': bestTakeaway,
           'missing_info': missingInfo, 'needs_retry': needsRetry,
           'brief_source': briefSource,
+          'content_type': contentType, 'topics': topics, 'likely_intent': likelyIntent, 'suggested_action': suggestedAction, 'intent': intent,
           'key_points': keyPoints, 'entities': entities,
           'key_points_with_refs': pointsWithRefs.map((BriefKeyPoint p) => p.toJson()).toList(),
         }),
@@ -145,6 +151,8 @@ class ItemDetail {
       missingInfo: brief['missing_info'] as String?,
       needsRetry: brief['needs_retry'] == true,
       briefSource: brief['brief_source'] as String?,
+      contentType: brief['content_type'] as String?, topics: stringList(brief['topics']),
+      likelyIntent: brief['likely_intent'] as String?, suggestedAction: brief['suggested_action'] as String?, intent: brief['intent'] as String?,
       pointsWithRefs: asObjectList(brief['key_points_with_refs']).map(BriefKeyPoint.fromJson).toList(growable: false),
       tags: decodeTags(row['tags']),
       title: row['title'] as String?,

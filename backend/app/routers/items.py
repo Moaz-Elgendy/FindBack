@@ -11,6 +11,7 @@ from app.models import Item
 from app.schemas import ItemDetail
 from app.services import retention
 from app.categories import Category
+from app.services.intelligence import query_for, read_filters
 
 router = APIRouter(prefix="/api/v1/items", tags=["items"])
 
@@ -58,9 +59,9 @@ def _decode_cursor(db: Session, user, cursor: str) -> tuple[datetime, UUID]:
 
 @router.get("", response_model=dict)
 def list_items(limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = None,
-               category: Category = None,
+               category: Category = None, intelligence: dict = Depends(read_filters),
                db: Session = Depends(get_db), user = Depends(get_current_user)):
-    q = db.query(Item).options(*_NOT_NEEDED).filter(Item.user_id == user.id)
+    q = query_for(db, user.id, intelligence if isinstance(intelligence, dict) else {}).options(*_NOT_NEEDED)
     if category is not None:
         q = q.filter(Item.category == category.value)
     if cursor:

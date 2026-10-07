@@ -48,3 +48,14 @@ String? deriveLocalTitle({String? titleHint, String? preview, String? fallback, 
   }
   return fallback;
 }
+
+/// Unique links in shared text, in their original order.
+List<String> extractUrlsFromShareText(String? text) {
+  if (text == null) return <String>[];
+  final urls = <String>{};
+  for (final token in text.split(RegExp(r'\s+'))) {
+    final url = extractUrlFromShareText(token);
+    if (url != null) urls.add(url);
+  }
+  return urls.toList();
+}

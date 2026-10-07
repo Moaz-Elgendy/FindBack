@@ -14,7 +14,7 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 3;
+  static const int schemaVersion = 4;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
@@ -34,6 +34,12 @@ class LocalDb {
           onCreate: (Database database, int version) async => _onCreate(database),
           onUpgrade: (Database database, int oldVersion, int newVersion) async {
             if (oldVersion < 2) await database.execute("ALTER TABLE items ADD COLUMN brief_payload TEXT DEFAULT '{}'");
+            if (oldVersion < 4) {
+              final columns = await database.rawQuery('PRAGMA table_info(sync_queue)');
+              if (!columns.any((column) => column['name'] == 'server_id')) {
+                await database.execute('ALTER TABLE sync_queue ADD COLUMN server_id TEXT');
+              }
+            }
           },
         ),
       );
@@ -230,7 +236,7 @@ class LocalDb {
       );
 
   /// Substring search over the cached mirror — the offline answer set.
-  Future<List<SearchResult>> localSearch(String query, {int limit = 20, String? category}) async {
+  Future<List<SearchResult>> localSearch(String query, {int limit = 20, String? category, Map<String, String>? filters}) async {
     final like = '%$query%';
     final filtered = category != null && category != 'All' && category.isNotEmpty;
     final rows = await db.query(
@@ -239,9 +245,10 @@ class LocalDb {
           '${filtered ? ' AND category = ?' : ''}',
       whereArgs: <Object?>[like, like, like, like, if (filtered) category],
       orderBy: 'created_at DESC',
-      limit: limit,
+      limit: filters?.isNotEmpty == true ? null : limit,
     );
-    return rows.map(SearchResult.fromLocalRow).toList(growable: false);
+    return rows.map(SearchResult.fromLocalRow)
+        .where((row) => matchesIntelligence(row, filters ?? {})).take(limit).toList(growable: false);
   }
 
   Future<void> upsertRemoteItems(List<ItemDetail> items) async {
@@ -253,13 +260,14 @@ class LocalDb {
     });
   }
 
-  Future<List<SearchResult>> recentLocalItems({int limit = 10, String? category}) async {
+  Future<List<SearchResult>> recentLocalItems({int limit = 10, String? category, Map<String, String>? filters}) async {
     final filtered = category != null && category != 'All' && category.isNotEmpty;
     final rows = await db.query('items',
         where: filtered ? 'category = ?' : null,
         whereArgs: filtered ? <Object?>[category] : null,
-        orderBy: 'created_at DESC', limit: limit);
-    return rows.map(SearchResult.fromLocalRow).toList(growable: false);
+        orderBy: 'created_at DESC', limit: filters?.isNotEmpty == true ? null : limit);
+    return rows.map(SearchResult.fromLocalRow)
+        .where((row) => matchesIntelligence(row, filters ?? {})).take(limit).toList(growable: false);
   }
 
   /// The cached copy of one item, or null when it was never seen online.

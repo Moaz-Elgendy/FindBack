@@ -48,6 +48,12 @@ class SearchResponseItem(BaseModel):
     # The chunk that matched and, for timed content, when it was said.
     matched_chunk: Optional[str] = None
     matched_at: Optional[str] = None
+    topics: List[str] = []
+    content_type: Optional[str] = None
+    entities: Dict[str, Any] = {}
+    likely_intent: Optional[str] = None
+    suggested_action: Optional[str] = None
+    intent: Optional[str] = None
     score: float
     created_at: Optional[datetime]
 

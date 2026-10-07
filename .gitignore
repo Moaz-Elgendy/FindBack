@@ -33,7 +33,16 @@ mobile/ios/Flutter/flutter_export_environment.sh
 # Generated per developer machine by tool/setup_mobile.sh, so `git add mobile/`
 # stays clean. Drop the android/ (and ios/) line when the native share-intake
 # work lands — an intent-filter / Share Extension target has to be checked in.
-mobile/android/
+mobile/android/**
+!mobile/android/app/
+!mobile/android/app/src/
+!mobile/android/app/src/main/
+!mobile/android/app/src/main/AndroidManifest.xml
+!mobile/android/app/src/main/kotlin/
+!mobile/android/app/src/main/kotlin/com/
+!mobile/android/app/src/main/kotlin/com/findback/
+!mobile/android/app/src/main/kotlin/com/findback/findback/
+!mobile/android/app/src/main/kotlin/com/findback/findback/MainActivity.kt
 mobile/ios/
 mobile/linux/
 mobile/macos/
