@@ -4,29 +4,70 @@ import 'package:flutter/material.dart';
 import 'app_services.dart';
 import 'features/collections/library_shell.dart';
 import 'features/account/account_page.dart';
+import 'features/home/detail_page.dart';
 import 'services/account_coordinator.dart';
+import 'services/appearance.dart';
+import 'theme.dart';
 
 /// Root widget. Theme only — dependencies arrive through [AppServices].
 class FindBackApp extends StatefulWidget {
-  const FindBackApp({super.key, required this.services, this.accounts});
+  const FindBackApp({super.key, required this.services, this.accounts, this.appearance});
 
   final AppServices services;
   final AccountCoordinator? accounts;
+  final Appearance? appearance;
 
   @override
   State<FindBackApp> createState() => _FindBackAppState();
 }
 
-class _FindBackAppState extends State<FindBackApp> {
+class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
   final _navigator = GlobalKey<NavigatorState>();
   StreamSubscription<String>? _authLinks;
+  StreamSubscription<String>? _reminderTaps;
+  AppServices? _boundReminders;
+  late final Appearance _appearance;
   AppServices get services => widget.accounts?.services ?? widget.services;
 
   @override
   void initState() {
     super.initState();
+    _appearance = widget.appearance ?? Appearance();
     widget.accounts?.addListener(_changed);
     _bindLinks();
+    WidgetsBinding.instance.addObserver(this);
+    _bindReminders();
+  }
+
+  void _bindReminders() {
+    if (_boundReminders == services) return;
+    _boundReminders = services;
+    _reminderTaps?.cancel();
+    final reminder = services.reminders;
+    if (reminder == null) return;
+    final bound = services;
+    _reminderTaps = reminder.taps.listen((id) => _openReminder(id, bound));
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await reminder.start();
+        final id = reminder.initialTap;
+        reminder.initialTap = null;
+        if (id != null) _openReminder(id, bound);
+      } catch (_) { /* A device plugin failure cannot prevent opening the library. */ }
+    });
+  }
+
+  void _openReminder(String id, AppServices bound) {
+    if (!mounted || services != bound) return;
+    _navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) =>
+      DetailPage(itemId: id, items: bound.items, services: bound)));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      services.reminders?.reconcile().catchError((Object _) {});
+    }
   }
 
   void _bindLinks() {
@@ -68,42 +109,32 @@ class _FindBackAppState extends State<FindBackApp> {
     _navigator.currentState?.popUntil((route) => route.isFirst);
     setState(() {});
     _bindLinks();
+    _bindReminders();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _reminderTaps?.cancel();
     widget.accounts?.removeListener(_changed);
     _authLinks?.cancel();
+    if (widget.appearance == null) _appearance.dispose();
     super.dispose();
-  }
-
-  /// The RN client's accent (`#1769aa`) kept as the seed so the brand survives
-  /// the rewrite.
-  static const Color _seed = Color(0xFF1769AA);
-
-  static ThemeData _theme(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
-    return ThemeData(colorScheme: scheme, useMaterial3: true,
-      scaffoldBackgroundColor: scheme.surface,
-      cardTheme: CardThemeData(color: scheme.surfaceContainerLowest,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: scheme.outlineVariant))),
-      appBarTheme: AppBarTheme(backgroundColor: scheme.surface, scrolledUnderElevation: 0,
-        titleTextStyle: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: scheme.onSurface)),
-      navigationBarTheme: NavigationBarThemeData(backgroundColor: scheme.surfaceContainerLow),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return AppearanceScope(appearance: _appearance,
+      child: ListenableBuilder(listenable: _appearance, builder: (context, child) => MaterialApp(
       title: 'FindBack',
       navigatorKey: _navigator,
+          builder: (context, child) => AccountCoordinatorScope(accounts: widget.accounts,
+            child: AppServicesScope(services: services, child: child!)),
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
-      themeMode: ThemeMode.system,
+      theme: FindBackTheme.build(Brightness.light),
+      darkTheme: FindBackTheme.build(Brightness.dark),
+      themeMode: _appearance.mode,
       home: LibraryShell(key: ObjectKey(services), services: services, auth: widget.accounts?.auth),
-    );
+    )));
   }
 }

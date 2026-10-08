@@ -71,16 +71,19 @@ _WORD = re.compile(r"[^\W_][\w\-_.+]*", re.UNICODE)
 _CONTENT_IDX = 8
 
 # The item columns every candidate query selects, in a fixed order.
-_ITEM_COLUMNS = ("i.id, i.title_clean, i.summary, i.tags, i.category, "
+_ITEM_COLUMNS = ("i.id, coalesce(i.edited_title, i.title_clean), coalesce(i.edited_summary, CASE WHEN i.link_only THEN NULL ELSE i.summary END), i.tags, i.category, "
                  "i.source_domain, i.thumbnail_url, i.created_at, i.content_id")
 
 
 # Which items a search may return: finished, and not a degraded fallback brief.
 # One definition, so the candidate queries below cannot drift apart.
 _SEARCHABLE = (
-    "i.status = 'ready' "
-    "AND coalesce(i.brief_v2->>'brief_source','') <> 'fallback' "
-    "AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'")
+    "i.status = 'ready' AND i.deleted_at IS NULL "
+    "AND (i.link_only OR (coalesce(i.brief_v2->>'brief_source','') <> 'fallback' "
+    "AND coalesce(i.processing_metadata->>'brief_fallback','false') <> 'true'))")
+
+# ponytail: edits use a per-library scan; add an index if large libraries need it.
+_EDIT_TSV = "to_tsvector('english', coalesce(i.edited_title,'') || ' ' || coalesce(i.edited_summary,''))"
 
 
 def _fetch(db: Session, label: str, sql: str, params: dict) -> list:
@@ -258,11 +261,13 @@ def lexical_search(db: Session, user_id, query: str, terms: list[str],
     return _fetch(db, "lexical", f"""
             SELECT {_ITEM_COLUMNS},
                    greatest(ts_rank(i.search_text_tsv, to_tsquery('english', :q)),
-                            ts_rank(i.tsv, to_tsquery('english', :q))) AS rank
+                            ts_rank(i.tsv, to_tsquery('english', :q)),
+                            ts_rank({_EDIT_TSV}, to_tsquery('english', :q))) AS rank
             FROM items i
             WHERE i.user_id = :uid AND {_SEARCHABLE}
               AND (i.search_text_tsv @@ to_tsquery('english', :q)
-                   OR i.tsv @@ to_tsquery('english', :q))
+                   OR i.tsv @@ to_tsquery('english', :q)
+                   OR {_EDIT_TSV} @@ to_tsquery('english', :q))
               {_cat_filter(category, 'i.', intelligence_ids)}
             ORDER BY rank DESC
             LIMIT :lim
@@ -276,7 +281,7 @@ def chunk_lexical_search(db: Session, user_id, query: str, terms: list[str],
     if not terms:
         return []
     return _fetch(db, "chunk lexical", f"""
-            SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
+            SELECT i.id, coalesce(i.edited_title, i.title_clean), coalesce(i.edited_summary, CASE WHEN i.link_only THEN NULL ELSE i.summary END), i.tags, i.category,
                    i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
                    ts_rank(c.tsv, to_tsquery('english', :q)) AS rank,
                    c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
@@ -388,7 +393,7 @@ def _chunk_vector_rows(db: Session, user_id, q_emb, limit: int = 50,
         return []
     vec_str = "[" + ",".join(str(x) for x in q_emb) + "]"
     return _fetch(db, "chunk vector", f"""
-            SELECT i.id, i.title_clean, i.summary, i.tags, i.category,
+            SELECT i.id, coalesce(i.edited_title, i.title_clean), coalesce(i.edited_summary, CASE WHEN i.link_only THEN NULL ELSE i.summary END), i.tags, i.category,
                    i.source_domain, i.thumbnail_url, i.created_at, i.content_id,
                    1 - (c.embedding <=> CAST(:qvec AS vector)) AS cosine,
                    c.chunk_text, c.chunk_idx, c.start_timestamp, c.start_seconds
@@ -506,10 +511,13 @@ async def hybrid_search(db: Session, user_id, query: str, category: str = None,
     # future provider swap) can replace the call without reloading this module.
     q_emb = await embedder.embed_text(query, task="query") if query.strip() else None
     meta = metadata_filter(source_domain, saved_after, saved_before)
-    if intelligence:
+    if intelligence or saved_after is not None:
         from app.services.intelligence import query_for
         from app.models import Item
-        meta['allowed_ids'] = {str(row[0]) for row in query_for(db, user_id, intelligence).with_entities(Item.id)}
+        eligible = query_for(db, user_id, intelligence or {})
+        if saved_after is not None:
+            eligible = eligible.filter(Item.created_at >= saved_after)
+        meta['allowed_ids'] = {str(row[0]) for row in eligible.with_entities(Item.id)}
     # Everything below is synchronous SQL. Run on the event loop it would hold
     # up every other request for as long as Postgres takes, so it goes to a
     # worker thread. The session is used by one thread at a time.
@@ -592,6 +600,7 @@ def _rank_candidates(db: Session, user_id, query: str, q_emb, category,
         chunk = chunk_by_id.get(iid)
         context = contexts.get(str(row[8])) if row[8] is not None else None
         results.append({"row": row, "score": score,
+                        "matched_terms": matched_terms(terms, documents.get(iid), row[1], row[2], " ".join(row[3] or []), chunk[10] if chunk else None, (context or {}).get("note"), (context or {}).get("intent")),
                         "match_reason": evidence_reason(
                             terms, row,
                             (context or {}).get("note"), chunk,
@@ -611,7 +620,7 @@ def correct_tag_terms(db, user_id, terms: list[str]) -> list[str]:
     if not terms or not any(len(t) >= 4 for t in terms): return terms
     try:
         rows = db.execute(text("SELECT DISTINCT unnest(tags) FROM items "
-                               "WHERE user_id = :uid AND status = 'ready' AND coalesce(brief_v2->>'brief_source','') <> 'fallback' AND coalesce(processing_metadata->>'brief_fallback','false') <> 'true' LIMIT 1000"),
+                              "WHERE user_id = :uid AND deleted_at IS NULL AND status = 'ready' AND coalesce(brief_v2->>'brief_source','') <> 'fallback' AND coalesce(processing_metadata->>'brief_fallback','false') <> 'true' LIMIT 1000"),
                           {'uid': str(user_id)}).fetchall()
         vocabulary = sorted({word for row in rows for word in query_terms(row[0])})
         expanded = list(terms)

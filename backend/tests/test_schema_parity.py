@@ -146,6 +146,7 @@ def test_items_indexes_match_migration():
     assert {ix.name for ix in Item.__table__.indexes} == {
         "items_user_created_idx", "items_category_idx", "items_tsv_idx", "items_embedding_hnsw",
         "items_search_text_tsv_idx", "items_evidence_source_idx",
+        "items_deleted_at_idx",
     }
 
 

@@ -33,6 +33,7 @@ from sqlalchemy import event, or_, text
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    Item,
     JOB_ACTIVE_STATUSES, JOB_STATUS_FAILED, JOB_STATUS_PENDING,
     JOB_STATUS_PROCESSING, JOB_STATUS_READY, ProcessingJob,
 )
@@ -119,8 +120,9 @@ def _pending_item_ids(db, content_id) -> list:
     flight.
     """
     return [row[0] for row in db.execute(text(
-        "SELECT id FROM items WHERE content_id = :cid "
-        "AND (status IN ('pending', 'failed') OR (status = 'ready' AND needs_retry))"),
+        "SELECT id FROM items WHERE content_id = :cid AND deleted_at IS NULL AND NOT link_only "
+        "AND ((edited_title IS NULL AND edited_summary IS NULL) OR reprocess_snapshot IS NOT NULL) "
+        "AND (status IN ('pending', 'failed') OR (status = 'ready' AND (needs_retry OR reprocess_snapshot IS NOT NULL)))"),
         {"cid": str(content_id)})]
 
 
@@ -324,7 +326,7 @@ def recover_briefs(db, limit: int = 50) -> None:
     from app.models import JOB_TYPE_PROCESS
     rows = db.execute(text("""
         SELECT i.id, i.content_id FROM items i
-        WHERE i.status = 'ready' AND i.brief_v2 <> '{}'::jsonb AND i.content_id IS NOT NULL
+        WHERE i.status = 'ready' AND i.deleted_at IS NULL AND i.edited_title IS NULL AND i.edited_summary IS NULL AND i.reprocess_snapshot IS NULL AND NOT i.link_only AND i.brief_v2 <> '{}'::jsonb AND i.content_id IS NOT NULL
           AND (i.brief_v2->>'prompt_version' IS DISTINCT FROM :version
                OR coalesce(i.brief_v2->>'brief_source','') NOT IN ('llm','fallback')
                OR i.brief_v2->>'evidence_level' IS NULL)
@@ -432,9 +434,14 @@ def recover_lost_jobs(db, limit: int = 50) -> int:
             UPDATE items
             SET status = :status,
                 failure_reason = CASE WHEN :gives_up THEN :why ELSE failure_reason END
-            WHERE content_id = :cid AND status = 'processing'
+            WHERE content_id = :cid AND status = 'processing' AND deleted_at IS NULL
+              AND ((edited_title IS NULL AND edited_summary IS NULL) OR reprocess_snapshot IS NOT NULL)
         """), {"status": "failed" if gives_up else "pending", "gives_up": gives_up,
                "why": WORKER_LOST, "cid": str(job["content_id"])})
+        if gives_up:
+            from app.services import reprocessing
+            for item in db.query(Item).filter(Item.content_id == job['content_id'], Item.reprocess_snapshot.isnot(None), Item.deleted_at.is_(None)):
+                reprocessing.fail(item)
         record_failure(db, job["id"], WORKER_LOST,
                        attempt_count=job["attempt_count"])  # commits both
         recovered += 1
@@ -455,7 +462,9 @@ def dispatch_once(db, publisher=None, limit: int = 50) -> dict:
         def publisher(item_id: str) -> None:
             process_item.delay(item_id)
 
+    from app.services.deletion import purge_deleted_saves
     from app.services.retention import purge_expired_guest_staging
+    purge_deleted_saves(db, limit)
     purge_expired_guest_staging(db, limit)
 
     recovered = recover_lost_jobs(db, limit)

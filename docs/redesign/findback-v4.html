@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FindBack · v4 with one-button reminders</title>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#EDF7F5;--card:#fff;--ink:#0C2A28;--mute:#4A6664;--line:#D3E6E3;--brand:#0F766E;--soft:#D5F0EC;--danger:#B42318;--accent:#E8A317;--accent-soft:#FFF0D2;--accent-ink:#8A5200;--page:#BFD6D2;--label:#3E5C59;--bezel:#0C2A28;--onbrand:#fff;--toast:#0C2A28;--readbg:#FFFBF2;--failbg:#FFF8F7;--failline:#F0C9C4;--prodbg:#E6ECF6;--prodfg:#2F4A7A;--st2:#B9E3DD;--st3:#8FD0C7}
+[data-theme=dark]{color-scheme:dark;--page:#050E0D;--label:#8FB0AB;--bezel:#000;--bg:#0A1715;--card:#112220;--ink:#E4F1EF;--mute:#9CB8B4;--line:#223C39;--brand:#35BFB1;--soft:#14403B;--accent-soft:#3A2B0E;--accent-ink:#F6C768;--onbrand:#04201D;--toast:#2A4744;--readbg:#1A1710;--failbg:#1F1413;--failline:#4A2622;--prodbg:#1E2D47;--prodfg:#AFC7F2;--st2:#1F5F58;--st3:#2A8279}
+[data-theme=dark] .menu .d,[data-theme=dark] .dng{color:#FF8A7D}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.45 'Schibsted Grotesk',system-ui,sans-serif;background:var(--page);color:var(--ink);padding:32px 16px;display:flex;gap:36px;flex-wrap:wrap;justify-content:center}
+section{max-width:390px}
+.label{font-size:13px;color:var(--label);margin:0 0 10px 6px;max-width:390px}
+.phone{width:390px;height:800px;background:var(--bg);border-radius:40px;border:8px solid var(--bezel);overflow:hidden;position:relative}
+.scroll{height:100%;overflow:auto;padding:22px 16px 120px}
+button{font-family:inherit;cursor:pointer;color:inherit}
+button:focus-visible,input:focus-visible,textarea:focus-visible,.card:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+/* top bar */
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 2px}
+.top h1{font-size:22px;font-weight:700}
+.st{display:flex;align-items:center;gap:6px}
+.pill{font-size:12.5px;font-weight:600;padding:6px 10px;border-radius:99px;display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
+.pill.proc{background:var(--accent-soft);color:var(--accent-ink)}
+.pill.proc::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);animation:p 1.2s infinite}
+.pill.q{background:var(--card);color:var(--mute);border:1px solid var(--line)}
+@keyframes p{50%{opacity:.25}}@media(prefers-reduced-motion:reduce){.pill.proc::before{animation:none}}
+.av{width:38px;height:38px;border-radius:50%;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;color:var(--brand)}
+/* compact search */
+.cfind{width:100%;display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 15px;margin-bottom:16px;color:var(--mute);font-size:15px;text-align:left}
+/* brief cards */
+.card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin-bottom:12px;user-select:none;-webkit-user-select:none;transition:transform .15s}
+.card.held{transform:scale(.975);border-color:var(--brand);box-shadow:0 14px 30px -16px var(--brand)}
+.meta{display:flex;justify-content:space-between;font-size:12.5px;color:var(--mute);margin-bottom:8px}.meta b{font-weight:600;padding:3px 9px;border-radius:99px;background:var(--soft);color:var(--brand)}.meta b.recipe{background:var(--accent-soft);color:var(--accent-ink)}.meta b.product{background:var(--prodbg);color:var(--prodfg)}.meta{align-items:center}.cm{background:none;border:0;width:36px;height:36px;margin:-8px -8px -8px 6px;border-radius:50%;font-size:20px;color:var(--mute);line-height:1}.cm:hover{background:var(--bg)}.why{font-size:12.5px;color:var(--accent-ink);margin-top:8px}.fail{border-color:var(--failline);background:var(--failbg)}.fail p{font-size:14px;color:var(--mute);margin-bottom:8px}.fail .more{margin-right:16px}
+.card h2{font-size:18px;line-height:1.25;margin-bottom:10px;font-weight:600}
+.card ul{list-style:none}.card li{font-family:'Source Serif 4',serif;font-size:15.5px;padding:5px 0;border-top:1px solid var(--line)}
+.card li b{font-family:'Schibsted Grotesk';font-weight:600}
+.fig{display:flex;gap:18px;margin:2px 0 10px}.fig div{font-size:12.5px;color:var(--mute)}.fig strong{display:block;font-size:20px;color:var(--ink);font-weight:600}
+.more{background:none;border:0;color:var(--brand);font:600 14px 'Schibsted Grotesk';padding:12px 0 4px;min-height:44px}
+.read{border:1px dashed var(--accent);color:var(--accent-ink);background:var(--readbg)}.read .bar2{height:8px;border-radius:9px;background:linear-gradient(90deg,var(--accent-soft) 30%,var(--card) 50%,var(--accent-soft) 70%);background-size:200%;animation:sh 1.4s infinite;margin:8px 0}
+@keyframes sh{to{background-position:-200%}}@media(prefers-reduced-motion:reduce){.read .bar2{animation:none}}
+.ctx{position:absolute;top:-18px;right:14px;display:flex;background:var(--toast);border-radius:14px;box-shadow:0 12px 24px -8px rgba(0,0,0,.45);overflow:hidden;z-index:3}
+.ctx button{background:none;border:0;color:#fff;font:600 14px 'Schibsted Grotesk';padding:11px 16px}.ctx button+button{border-left:1px solid rgba(255,255,255,.2)}.ctx .d{color:#FFB4AB}
+.hint{text-align:center;color:var(--mute);font-size:12.5px;margin:4px 0 14px}
+/* bottom bar */
+.bar{position:absolute;left:0;right:0;bottom:0;height:84px;background:var(--card);border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 92px 1fr;align-items:start;padding-top:10px;z-index:2}
+.bar .t{display:grid;justify-items:center;gap:3px;font-size:13px;color:var(--mute);font-weight:600;background:none;border:0}
+.bar .t.on{color:var(--brand)}
+.bar .add{width:60px;height:60px;border-radius:50%;background:var(--brand);color:var(--onbrand);font-size:32px;line-height:1;border:0;margin:-28px auto 0;box-shadow:0 0 0 6px var(--bg),0 12px 22px -8px var(--brand)}
+/* find mode */
+.fm{display:none;position:absolute;inset:0;background:var(--bg);padding:22px 16px 40px;overflow:auto;z-index:4}
+.finding .fm{display:block}
+.fh{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 2px}.fh h1{font-size:22px}
+.cancel{background:none;border:0;color:var(--brand);font:600 15px 'Schibsted Grotesk';padding:12px 8px}
+.fm .box{background:var(--card);border:2px solid var(--line);border-radius:22px;padding:14px 16px}.fm .box:focus-within{border-color:var(--brand)}
+.fm textarea{width:100%;border:0;outline:0;resize:none;font:500 17px/1.4 'Schibsted Grotesk';height:72px;background:none;color:var(--ink)}
+.fm .cnt{color:var(--mute);font-size:13px;display:block;min-height:18px}
+.frag{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
+.frag button{font:500 14px 'Schibsted Grotesk';border:1px solid var(--line);background:var(--card);border-radius:99px;padding:8px 13px}
+.frag button.on{background:var(--soft);border-color:var(--brand);color:var(--brand);font-weight:600}
+.empty{text-align:center;color:var(--mute);padding:26px 10px}
+/* detail */
+.nav{display:flex;justify-content:space-between;align-items:center;margin:2px 0 18px;position:relative}
+.bk,.dots{white-space:nowrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 14px;font-size:15px;font-weight:600}
+.menu{position:absolute;right:0;top:48px;background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 36px -14px rgba(12,42,40,.4);padding:6px;z-index:3;min-width:150px}
+.menu[hidden]{display:none}
+.menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:12px 14px;font:600 15px 'Schibsted Grotesk';border-radius:10px}.menu button:hover{background:var(--bg)}.menu .d{color:var(--danger)}
+h1.t1{font-size:26px;line-height:1.15;font-weight:700;margin:6px 4px 6px}
+.src{margin:0 4px 18px;color:var(--mute);font-size:13.5px}
+.pane{background:var(--card);border-radius:22px;padding:6px 18px;border:1px solid var(--line);margin-bottom:16px}
+.sk{display:grid;grid-template-columns:34px 1fr;gap:12px;padding:15px 0;border-top:1px solid var(--line)}.sk:first-child{border-top:0}
+.sk i{font-style:normal;width:30px;height:30px;border-radius:50%;background:var(--soft);color:var(--brand);display:grid;place-items:center;font-weight:700;font-size:14px}
+.sk b{display:block;font-size:16.5px;font-weight:600}.sk p{font-family:'Source Serif 4',serif;font-size:15.5px;margin:2px 0 4px}.sk a{font-size:12.5px;color:var(--brand);font-weight:600;text-decoration:none}
+.rem p{font-size:14px;color:var(--mute);margin:0 4px 10px}
+.opt{display:flex;gap:8px}.opt button{flex:1;padding:12px 4px;border-radius:14px;border:1px solid var(--line);background:var(--card);font-size:14.5px;font-weight:600}
+.opt button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
+.when{display:none;align-items:center;justify-content:space-between;margin:12px 4px 0;font-size:14px}.when.on{display:flex}
+.when{color:var(--accent-ink);font-weight:600}.when button{background:none;border:0;color:var(--accent-ink);font-weight:700;font-size:14px;padding:10px 4px}
+.time{font:inherit;border:1px solid var(--line);border-radius:10px;padding:6px 8px;background:var(--card);color:var(--ink)}
+.dock{position:absolute;left:0;right:0;bottom:0;padding:14px 16px 24px;background:linear-gradient(transparent,var(--bg) 35%);display:flex;gap:10px;z-index:2}
+.dock .m{flex:1;background:var(--brand);color:var(--onbrand);border:0;border-radius:16px;padding:16px;font-weight:600;font-size:16px}
+.dock .s{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:0 22px;font-weight:600;font-size:15px;color:var(--ink)}
+/* overlays */
+.ov{position:absolute;inset:0;background:rgba(12,42,40,.45);z-index:9;display:flex;align-items:flex-end}
+.ov.mid{align-items:center;justify-content:center;padding:24px}
+.sh{width:100%;background:var(--card);border-radius:28px 28px 0 0;padding:14px 20px 26px}
+.dlg{background:var(--card);border-radius:24px;padding:22px;width:100%}
+.grab{width:40px;height:4px;border-radius:9px;background:var(--line);margin:0 auto 14px}
+.sh h2,.dlg h2{font-size:21px;margin-bottom:8px}.dlg p{color:var(--mute);margin-bottom:18px}
+label.l{display:block;font-weight:600;font-size:14px;margin-top:10px}label.l span{color:var(--mute);font-weight:400}
+.fld{width:100%;border:1px solid var(--line);border-radius:14px;padding:13px;font:inherit;margin:6px 0 4px;background:var(--bg);color:var(--ink)}
+.two{display:flex;gap:10px;margin-top:14px}.two button{flex:1;border:0;border-radius:14px;padding:15px;font-weight:600;font-size:15.5px}
+.ghost{background:var(--bg)}.main{background:var(--brand);color:var(--onbrand)}.danger{background:var(--danger);color:#fff}
+.toast{display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left!important;position:absolute;left:20px;right:20px;top:18px;background:var(--toast);color:#fff;padding:14px 16px;border-radius:14px;z-index:10;text-align:center;font-weight:600}
+.toast button{background:none;border:0;color:#FFC96B;font:700 15px 'Schibsted Grotesk';padding:6px}.ic{display:inline-flex;vertical-align:-3px;margin-right:6px}.grp .rw.dd b{color:var(--danger)}.priv{font-size:13px;color:var(--mute);margin:0 6px 16px}
+.tbtn{position:fixed;top:14px;right:14px;z-index:50;display:flex;gap:8px;align-items:center;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:99px;padding:10px 16px;font-weight:600;font-size:14px;box-shadow:0 8px 20px -10px rgba(0,0,0,.5)}.opt.seg button[aria-pressed=true]{background:var(--brand);border-color:var(--brand);color:var(--onbrand)}
+.remb{width:100%;display:flex;align-items:center;gap:10px;padding:15px 16px;border-radius:16px;border:1px solid var(--line);background:var(--card);font-weight:600;font-size:15.5px;text-align:left}.remb.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}.rlist button{display:flex;justify-content:space-between;align-items:center;width:100%;padding:16px 4px;background:none;border:0;border-top:1px solid var(--line);font:600 16px "Schibsted Grotesk",system-ui,sans-serif;color:var(--ink)}.rlist small{font-weight:500;font-size:14px;color:var(--mute)}.rm{width:100%;background:none;border:0;color:var(--danger);font:600 15px "Schibsted Grotesk",system-ui,sans-serif;padding:14px 0 0}[data-theme=dark] .rm{color:#FF8A7D}
+/* collections */
+.sub{color:var(--mute);margin:0 4px 16px}
+.col{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px;margin-bottom:10px;width:100%;text-align:left}
+.stack{display:flex}.stack i{width:30px;height:40px;border-radius:8px;border:2px solid var(--card);margin-left:-10px;background:var(--soft)}.stack i:first-child{margin:0}.stack i:nth-child(2){background:var(--st2)}.stack i:nth-child(3){background:var(--st3)}
+.col b{display:block;font-size:16.5px;font-weight:600}.col span{color:var(--mute);font-size:13.5px}.col .ch{margin-left:auto;color:var(--mute);font-size:20px}
+.new{border-style:dashed;color:var(--brand);font-weight:600;justify-content:center}
+/* settings */
+.grp{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:4px 18px;margin-bottom:16px}
+.rw{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 0;border-top:1px solid var(--line)}.rw:first-child{border-top:0}
+.rw small{display:block;color:var(--mute);font-size:13px;margin-top:2px;max-width:220px}.rw b{font-weight:600}
+.gh{font-size:13.5px;color:var(--mute);margin:18px 6px 8px;font-weight:600}
+.sw{position:relative;width:52px;height:30px;flex:none}.sw input{opacity:0;position:absolute;inset:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}
+.sw span{position:absolute;inset:0;background:var(--line);border-radius:99px;transition:.2s}.sw span::after{content:"";position:absolute;width:24px;height:24px;border-radius:50%;background:#fff;left:3px;top:3px;transition:.2s}
+.sw input:checked+span{background:var(--brand)}.sw input:checked+span::after{left:25px}.sw input:focus-visible+span{outline:3px solid var(--brand);outline-offset:2px}
+.me{display:flex;gap:14px;align-items:center}.me .av{width:52px;height:52px}
+/* lock screen */
+.lock{height:100%;background:linear-gradient(160deg,#0F766E,#0A3F3B);color:#fff;padding:64px 18px;text-align:center}
+.lock .tm{font-size:76px;font-weight:300;margin:6px 0 56px}
+.nt{background:rgba(255,255,255,.16);backdrop-filter:blur(14px);border-radius:20px;padding:14px 16px;margin-bottom:10px;text-align:left}
+.nt small{opacity:.8;display:flex;justify-content:space-between;margin-bottom:4px}.nt b{display:block;font-weight:700}
+</style></head><body>
+<button class="tbtn" id="themeBtn"><span id="ti"></span><span id="tt">Dark mode</span></button>
+
+<section><p class="label">1 · Home. Tap ⋯ on a card (or press and hold) for Edit / Delete; Delete has Undo. Tap the search box to open “What do you remember?”</p>
+<div class="phone" id="p1"><div class="scroll" id="home">
+  <header class="top" data-title="FindBack" data-status="1"></header>
+  <button class="cfind" id="open"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></span>What do you remember?</button>
+    <div id="feed"></div>
+</div>
+<nav class="bar" data-on="lib"></nav>
+<div class="fm" id="fm1">
+  <div class="fh"><h1>Find</h1><button class="cancel">Cancel</button></div>
+  <div class="box"><textarea placeholder="e.g. a video about some AI tool that makes presentations…" aria-label="Describe what you remember"></textarea><span class="cnt"></span></div>
+  <div class="frag"></div><div class="out"></div>
+</div></div></section>
+
+<section><p class="label">2 · Search open. You type it the way you’d say it; fragments narrow it down</p>
+<div class="phone finding" id="p2"><div class="fm" id="fm2">
+  <div class="fh"><h1>Find</h1><span></span></div>
+  <div class="box"><textarea aria-label="Describe what you remember">a video about some AI tool that makes presentations</textarea><span class="cnt"></span></div>
+  <div class="frag"></div><div class="out"></div>
+</div></div></section>
+
+<section><p class="label">3 · Memory. ⋯ has Edit and Delete. Tap Remind me, pick a time (each option shows its real time) or choose your own. Default is off</p>
+<div class="phone" id="p3"><div class="scroll">
+  <div class="nav"><button class="bk">‹ Back</button><button class="dots" id="dots" aria-label="More">⋯</button>
+    <div class="menu" id="menu"><button data-a="edit"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></span>Edit</button><button class="d" data-a="del"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span>Delete</button></div></div>
+  <h1 class="t1" id="t3">5 Skills You Should Add to Claude</h1><p class="src">Video · youtube.com · 5 min · saved 2 days ago</p>
+  <div class="pane">
+   <div class="sk"><i>1</i><div><b>Report writer</b><p>Turns rough notes into a clean report. Useful for weekly updates.</p><a href="#">Jump to 0:42</a></div></div>
+   <div class="sk"><i>2</i><div><b>Code reviewer</b><p>Flags risky changes before you commit.</p><a href="#">Jump to 1:35</a></div></div>
+   <div class="sk"><i>3</i><div><b>Reply drafter</b><p>Writes replies in your own tone.</p><a href="#">Jump to 2:20</a></div></div>
+   <div class="sk"><i>4</i><div><b>PDF reader</b><p>Pulls the key numbers out of long files.</p><a href="#">Jump to 3:08</a></div></div>
+   <div class="sk"><i>5</i><div><b>Week planner</b><p>Turns one messy list into a plan.</p><a href="#">Jump to 4:01</a></div></div>
+  </div>
+  <div class="rem"><button class="remb" id="remb"><span id="remIc"></span><span id="remTxt">Remind me</span></button></div>
+</div>
+<div class="dock"><button class="m">Open original</button><button class="s">Share</button></div></div></section>
+
+<section><p class="label">4 · Collections: grouped automatically, nothing to organize</p>
+<div class="phone"><div class="scroll">
+  <header class="top" data-title="Collections"></header>
+  <p class="sub">Grouped for you automatically. Nothing to organize.</p>
+  <button class="col"><span class="stack"><i></i><i></i><i></i></span><div><b>AI tools</b><span>5 saves</span></div><span class="ch">›</span></button>
+  <button class="col"><span class="stack"><i></i><i></i></span><div><b>Weeknight cooking</b><span>4 saves</span></div><span class="ch">›</span></button>
+  <button class="col"><span class="stack"><i></i><i></i></span><div><b>Running</b><span>3 saves</span></div><span class="ch">›</span></button>
+</div><nav class="bar" data-on="col"></nav></div></section>
+
+<section><p class="label">5 · Save a link (centered button). Sharing from another app skips this sheet</p>
+<div class="phone"><div class="scroll" style="filter:blur(2px)"><header class="top" data-title="FindBack" data-status="1"></header><div class="card" style="height:150px"></div><div class="card" style="height:150px"></div></div>
+<nav class="bar" data-on="lib"></nav>
+<div class="ov"><div class="sh"><div class="grab"></div><h2>Save a link</h2>
+  <label class="l">Link or shared text</label><input class="fld" value="https://youtu.be/kx92ab" aria-label="Link">
+  <label class="l">What you remember about it <span>(optional)</span></label><input class="fld" placeholder="e.g. the one about Claude add-ons" aria-label="What you remember">
+  <div class="two"><button class="ghost">Cancel</button><button class="main">Save</button></div></div></div></div></section>
+
+<section><p class="label">6 · Account (top-right icon). One weekly note. No reminder settings: times are chosen on each memory</p>
+<div class="phone"><div class="scroll">
+  <div class="nav" style="margin-bottom:8px"><button class="bk">‹ Back</button></div>
+  <h1 class="t1" style="margin-bottom:14px">Account</h1>
+  <div class="grp"><div class="rw"><div class="me"><span class="av" data-av></span><div><b>moaz@example.com</b><small>Signed in</small></div></div><button class="bk" style="font-size:14px">Sign out</button></div></div>
+  <p class="gh">Weekly note</p>
+  <div class="grp">
+   <div class="rw"><div><b>Remind me of forgotten saves</b><small>One notification a week. Never daily.</small></div><label class="sw"><input type="checkbox" id="wk" checked aria-label="Weekly note"><span></span></label></div>
+   <div class="rw" id="wkRow"><b>Sunday at</b><input class="time" type="time" value="18:00" aria-label="Weekly note time"></div>
+  </div>
+  <p class="gh">Appearance</p>
+  <div class="grp"><div class="rw"><b>Theme</b><div class="opt seg" id="themeSeg" style="width:220px"><button data-m="light">Light</button><button data-m="dark">Dark</button><button data-m="auto">Auto</button></div></div></div>
+  <p class="gh">Your data</p>
+  <div class="grp"><div class="rw"><b>Export my saves</b><button class="bk" style="font-size:14px">Export</button></div><div class="rw dd"><div><b>Delete account</b><small>Removes your saves and summaries.</small></div><button class="bk dng" style="font-size:14px;color:var(--danger)">Delete</button></div></div>
+  <p class="priv">Links you save are read and summarized by an AI service. Nothing is shared with other people.</p>
+</div></div></section>
+
+<section><p class="label">7 · What reaches your lock screen: one weekly note, plus only the reminders you asked for. Titles stay hidden on the lock screen</p>
+<div class="phone"><div class="lock"><p style="opacity:.85">Sunday</p><div class="tm">6:00</div>
+  <div class="nt"><small><span>FindBack</span><span>now</span></small><b>3 things you saved and forgot</b>Creamy mushroom chicken, Cloudflow 5 running shoes and 1 more.</div>
+  <div class="nt" style="opacity:.8"><small><span>FindBack</span><span>This evening 7:00 pm</span></small><b>You asked to be reminded</b>A video you saved 2 days ago</div>
+</div></div></section>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const I={lib:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>',
+col:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>',
+av:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7z"/></svg>'};
+$$('[data-av]').forEach(e=>e.innerHTML=I.av);
+$$('.top').forEach(t=>t.innerHTML=`<h1>${t.dataset.title}</h1><div class="st">${t.dataset.status?'<span class="pill proc" aria-label="Reading 3 saves">Reading 3</span>':''}<span class="av" role="button" aria-label="Account">${I.av}</span></div>`);
+$$('.bar').forEach(b=>b.innerHTML=`<button class="t ${b.dataset.on=='lib'?'on':''}">${I.lib}Library</button><button class="add" aria-label="Save a link">＋</button><button class="t ${b.dataset.on=='col'?'on':''}">${I.col}Collections</button>`);
+
+/* ---------- data ---------- */
+const ITEMS=[
+{id:1,k:'video',type:'Video',cat:'AI & Tech',title:'5 Skills You Should Add to Claude',when:'2 days ago',d:2,w:'video ai claude skills tool',lines:[['Report writer','turns rough notes into a clean report'],['Code reviewer','flags risky changes before you commit'],['Reply drafter','writes in your own tone'],['PDF reader','pulls key numbers from long files'],['Week planner','turns one messy list into a plan']]},
+{id:2,k:'video',type:'Video',cat:'AI & Tech',title:'AI tool that builds slide decks from a prompt',when:'12 days ago',d:12,w:'video ai tool presentation presentations slides deck powerpoint',lines:[['Paste an outline','get a styled deck'],['Export','to PowerPoint'],['Free tier','3 decks a month']]},
+{id:3,k:'recipe',type:'Recipe',cat:'Food',title:'Creamy mushroom chicken',when:'1 week ago',d:7,w:'recipe chicken cream mushrooms mushroom food dinner',fig:[['35 min','total'],['7','ingredients'],['2','servings']],note:'Sear the chicken first and don’t move it for 4 minutes.'},
+{id:4,k:'product',type:'Product',cat:'Shopping',title:'Cloudflow 5 running shoes',when:'3 weeks ago',d:21,w:'shoes running product buy shopping',fig:[['$129','price'],['245 g','weight']],note:'Good: light, wide toe box. Not: wears out after ~400 km.'},
+{id:5,k:'video',type:'Video',cat:'Cloud & DevOps',title:'Debugging crashing containers on ECS',when:'3 weeks ago',d:21,w:'video aws crash crashed crashes fixing containers ecs',lines:[['Check','the stopped reason first'],['Then','read the container logs'],['Usual cause','out of memory or a failing health check']]}];
+const open_={};
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function card(it,m){let body=it.lines?`<ul>${it.lines.slice(0,open_[it.id]?9:3).map(l=>`<li><b>${l[0]}</b> — ${l[1]}</li>`).join('')}</ul>${it.lines.length>3?`<button class="more" data-more="${it.id}">${open_[it.id]?'Show less':'+'+(it.lines.length-3)+' more'}</button>`:''}`
+ :`<div class="fig">${it.fig.map(f=>`<div><strong>${f[0]}</strong>${f[1]}</div>`).join('')}</div><ul><li>${it.note}</li></ul>`;
+ body+=m&&m.length?`<div class="why">Matched: ${m.join(', ')}</div>`:'';
+ return `<article class="card" data-id="${it.id}" tabindex="0"><div class="meta"><b class="${it.k}">${it.type} · ${it.cat}</b><span>${it.when} ${it.id?`<button class="cm" data-cm aria-label="More actions">⋯</button>`:''}</span></div><h2>${esc(it.title)}</h2>${body}</article>`}
+function drawFeed(){$('#feed').innerHTML=`<article class="card read"><div class="meta"><span>Just saved · reading it now</span></div><div class="bar2" style="width:70%"></div><div class="bar2" style="width:90%"></div><div class="bar2" style="width:55%"></div></article>`+`<article class="card fail"><div class="meta"><span>Couldn’t read this page</span><span>just now</span></div><h2>medium.com/@someone/ai-notes</h2><p>It’s behind a paywall, so there was nothing to summarize.</p><button class="more">Retry</button><button class="more">Keep link only</button></article>`+ITEMS.map(i=>card(i)).join('')}
+document.addEventListener('click',e=>{const m=e.target.closest('[data-more]');if(m){open_[m.dataset.more]=!open_[m.dataset.more];drawFeed();$$('.fm .out').forEach(o=>o.dispatchEvent(new Event('redraw')))}});
+
+/* ---------- overlays ---------- */
+function ov(ph,html,mid){const o=document.createElement('div');o.className='ov'+(mid?' mid':'');o.innerHTML=html;ph.appendChild(o);return o}
+function toast(ph,t,undo){const x=document.createElement('div');x.className='toast';x.innerHTML='<span></span>'+(undo?'<button>Undo</button>':'');x.firstChild.textContent=t;if(undo)x.lastChild.onclick=()=>{undo();x.remove()};ph.appendChild(x);setTimeout(()=>x.remove(),5000)}
+function editSheet(ph,title,done,brief){const o=ov(ph,`<div class="sh"><div class="grab"></div><h2>Edit memory</h2><label class="l">Title</label><input class="fld" id="ei"><label class="l">Brief</label><textarea class="fld" rows="4" id="eb"></textarea><div class="two"><button class="ghost" data-x>Cancel</button><button class="main" data-s>Save</button></div></div>`);
+ $('#ei',o).value=title;$('#eb',o).value=brief||'';o.onclick=e=>{if(e.target==o||e.target.dataset.x!==undefined)o.remove();if(e.target.dataset.s!==undefined){done($('#ei',o).value.trim()||title);o.remove()}}}
+function confirmDel(ph,done){const o=ov(ph,`<div class="dlg"><h2>Delete this memory?</h2><p>It will be removed from your library. This can’t be undone.</p><div class="two" style="margin:0"><button class="ghost" data-x>Cancel</button><button class="danger" data-s>Delete</button></div></div>`,true);
+ o.onclick=e=>{if(e.target==o||e.target.dataset.x!==undefined)o.remove();if(e.target.dataset.s!==undefined){o.remove();done()}}}
+
+/* ---------- home: long-press ---------- */
+document.addEventListener('click',e=>{const b=e.target.closest('[data-cm]');if(b){e.stopPropagation();const c=b.closest('.card');hold(c)}},true);
+const feed=$('#feed'),p1=$('#p1');let timer;
+function clearCtx(){$$('.ctx').forEach(c=>c.remove());$$('.card.held').forEach(c=>c.classList.remove('held'))}
+function hold(c){clearCtx();c.classList.add('held');c.insertAdjacentHTML('beforeend','<div class="ctx"><button data-a="edit"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></span>Edit</button><button class="d" data-a="del"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span>Delete</button></div>')}
+feed.addEventListener('pointerdown',e=>{const c=e.target.closest('.card[data-id]');if(!c||e.target.closest('button'))return;timer=setTimeout(()=>hold(c),480)});
+['pointerup','pointercancel','pointerleave'].forEach(t=>feed.addEventListener(t,()=>clearTimeout(timer)));
+feed.addEventListener('contextmenu',e=>{const c=e.target.closest('.card[data-id]');if(c){e.preventDefault();hold(c)}});
+feed.addEventListener('keydown',e=>{if(e.key=='Enter'||e.key==' '){const c=e.target.closest('.card[data-id]');if(c&&e.key==' '){e.preventDefault();hold(c)}}});
+document.addEventListener('click',e=>{const b=e.target.closest('.ctx button');if(b){const c=b.closest('.card'),it=ITEMS.find(x=>x.id==c.dataset.id);clearCtx();
+  if(b.dataset.a=='edit')editSheet(p1,it.title,t=>{it.title=t;drawFeed()},it.brief||(it.lines?it.lines.map(l=>l[0]+' '+l[1]).join('. ')+'.':it.note));else{const ix=ITEMS.indexOf(it);ITEMS.splice(ix,1);drawFeed();toast(p1,'Memory deleted',()=>{ITEMS.splice(ix,0,it);drawFeed()})}return}
+ if(!e.target.closest('.card'))clearCtx()});
+
+/* ---------- find ---------- */
+const FR=[['a video',it=>it.k=='video'],['a recipe',it=>it.k=='recipe'],['about AI',it=>tok(it).some(t=>t=='ai')],['last 2 weeks',it=>it.d<=14],['something to buy',it=>it.k=='product']];
+const STOP=new Set('a an the that was about some there with for of it to and i is in on or my me one thing'.split(' '));
+const tok=it=>it.w.split(' ');
+function initFind(root,pre){const ta=$('textarea',root),out=$('.out',root),cnt=$('.cnt',root),fr=$('.frag',root),on=new Set(pre||[]);
+ fr.innerHTML=FR.map((f,i)=>`<button data-i="${i}" aria-pressed="${on.has(i)}" class="${on.has(i)?'on':''}">${f[0]}</button>`).join('');
+ function run(){const words=ta.value.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x&&!STOP.has(x)&&x!='video'&&!(on.has(0)&&false));
+  const ws=ta.value.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x&&!STOP.has(x));
+  const sc=it=>ws.filter(w=>tok(it).some(t=>t.startsWith(w)||w.startsWith(t))||it.title.toLowerCase().includes(w)).length;
+  let r=ITEMS.filter(it=>[...on].every(i=>FR[i][1](it)));
+  if(ws.length)r=r.filter(it=>sc(it)>0);
+  r.sort((a,b)=>sc(b)-sc(a));const any=ws.length||on.size;
+  cnt.textContent=any?`${r.length} ${r.length==1?'memory':'memories'} found`:'Newest saves first';
+  out.innerHTML=r.map(it=>card(it,ws.filter(w=>tok(it).some(t=>t.startsWith(w)||w.startsWith(t))))).join('')||'<div class="empty"><b>Nothing matches yet.</b><br>Try one thing you remember: a topic, a place, a name.</div>'}
+ fr.onclick=e=>{const b=e.target.closest('button');if(!b)return;const i=+b.dataset.i;on.has(i)?on.delete(i):on.add(i);b.classList.toggle('on');b.setAttribute('aria-pressed',on.has(i));run()};
+ ta.oninput=run;out.addEventListener('redraw',run);run();return ta}
+const ta1=initFind($('#fm1'));initFind($('#fm2'),[0,2]);
+$('#open').onclick=()=>{p1.classList.add('finding');ta1.focus()};
+$('#fm1 .cancel').onclick=()=>p1.classList.remove('finding');
+drawFeed();
+
+/* ---------- detail: menu, edit, delete ---------- */
+const p3=$('#p3'),menu=$('#menu');menu.hidden=false;
+$('#dots').onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden};
+document.addEventListener('click',e=>{if(!e.target.closest('#menu'))menu.hidden=true});
+menu.onclick=e=>{const a=e.target.dataset.a;if(!a)return;menu.hidden=true;
+ if(a=='edit')editSheet(p3,$('#t3').textContent,t=>$('#t3').textContent=t,'Report writer, code reviewer, reply drafter, PDF reader and week planner.');else toast(p3,'Memory deleted',()=>{})};
+
+/* ---------- reminders: one button, real times ---------- */
+const BELL='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17V11a6 6 0 0112 0v6l2 2H4zM10 21h4"/></svg>';
+$('#remIc').innerHTML=BELL;
+let rem=null;
+const t12=d=>d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}).toLowerCase();
+const dl=d=>d.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});
+const at=(d,h)=>{const x=new Date(d);x.setHours(h,0,0,0);return x};
+function slots(){const n=new Date(),a=[];
+ if(at(n,19)-n>36e5)a.push(['This evening',at(n,19),t12(at(n,19))]);
+ const tm=new Date(n);tm.setDate(n.getDate()+1);a.push(['Tomorrow',at(tm,9),t12(at(tm,9))]);
+ const sa=new Date(n);sa.setDate(n.getDate()+((6-n.getDay())||7));a.push([n.getDay()==6?'Next Saturday':'Saturday',at(sa,10),dl(sa)+', '+t12(at(sa,10))]);return a}
+function remLabel(d){const n=new Date(),tm=new Date(n);tm.setDate(n.getDate()+1);const same=(a,b)=>a.toDateString()==b.toDateString();
+ return(same(d,n)?'Today':same(d,tm)?'Tomorrow':dl(d))+', '+t12(d)}
+function paintRem(){const b=$('#remb');b.classList.toggle('on',!!rem);$('#remTxt').textContent=rem?'Reminder · '+remLabel(rem):'Remind me'}
+function remSheet(){const S=slots();
+ const o=ov(p3,`<div class="sh"><div class="grab"></div><h2>Remind me</h2><div class="rlist">${S.map((s,i)=>`<button data-i="${i}">${s[0]}<small>${s[2]}</small></button>`).join('')}<button data-pick>Pick date and time<small>›</small></button></div><div id="pk" hidden><input class="fld" type="datetime-local" id="pkv" aria-label="Reminder date and time"><div class="two"><button class="main" data-ok>Set reminder</button></div></div>${rem?'<button class="rm" data-rm>Remove reminder</button>':''}<div class="two"><button class="ghost" data-x>Cancel</button></div></div>`);
+ o.onclick=e=>{const t=e.target,done=m=>{o.remove();paintRem();if(m)toast(p3,m)};
+  if(t==o||t.closest('[data-x]'))return o.remove();
+  const i=t.closest('[data-i]');if(i){rem=S[+i.dataset.i][1];return done('Reminder set')}
+  if(t.closest('[data-pick]')){$('#pk',o).hidden=false;return $('#pkv',o).focus()}
+  if(t.closest('[data-ok]')){const d=new Date($('#pkv',o).value);if(isNaN(d)||d<=new Date())return $('#pkv',o).focus();rem=d;return done('Reminder set')}
+  if(t.closest('[data-rm]')){rem=null;done('Reminder removed')}}}
+$('#remb').onclick=remSheet;
+$('#wk').onchange=e=>$('#wkRow').style.opacity=e.target.checked?1:.4;
+
+/* ---------- theme ---------- */
+const SUN='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',MOON='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/></svg>';
+let mode='light';try{mode=localStorage.getItem('fb-theme')||'light'}catch(e){}
+const mq=matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(){const d=mode=='dark'||(mode=='auto'&&mq.matches);document.documentElement.dataset.theme=d?'dark':'light';$$('#themeSeg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m==mode));$('#tt').textContent=d?'Light mode':'Dark mode';$('#ti').innerHTML=d?SUN:MOON;try{localStorage.setItem('fb-theme',mode)}catch(e){}}
+$('#themeBtn').onclick=()=>{mode=document.documentElement.dataset.theme=='dark'?'light':'dark';applyTheme()};
+$('#themeSeg').onclick=e=>{const b=e.target.closest('button');if(b){mode=b.dataset.m;applyTheme()}};
+mq.onchange=applyTheme;applyTheme();
+</script></body></html>

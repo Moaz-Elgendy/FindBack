@@ -25,6 +25,12 @@ class ItemDetail {
     this.bestTakeaway,
     this.missingInfo,
     this.needsRetry = false,
+    this.failureReason,
+    this.edited = false,
+    this.descriptionOnly = false,
+    this.reprocessing = false,
+    this.reprocessFailure,
+    this.linkOnly = false,
     this.briefSource,
     this.contentType, this.topics = const [], this.likelyIntent, this.suggestedAction, this.intent,
     this.pointsWithRefs = const <BriefKeyPoint>[],
@@ -53,6 +59,12 @@ class ItemDetail {
       bestTakeaway: json['best_takeaway'] as String?,
       missingInfo: json['missing_info'] as String?,
       needsRetry: json['needs_retry'] == true,
+      failureReason: json['failure_reason'] as String?,
+      edited: json['edited'] == true,
+      descriptionOnly: json['description_only'] == true,
+      reprocessing: json['reprocessing'] == true,
+      reprocessFailure: json['reprocess_failure'] as String?,
+      linkOnly: json['link_only'] == true,
       briefSource: json['brief_source'] as String?,
       contentType: json['content_type'] as String?, topics: stringList(json['topics']),
       likelyIntent: json['likely_intent'] as String?, suggestedAction: json['suggested_action'] as String?, intent: json['intent'] as String?,
@@ -80,6 +92,10 @@ class ItemDetail {
   final String? bestTakeaway;
   final String? missingInfo;
   final bool needsRetry;
+  final String? failureReason;
+  final bool edited, descriptionOnly, reprocessing;
+  final String? reprocessFailure;
+  final bool linkOnly;
   final String? briefSource;
   final String? contentType, likelyIntent, suggestedAction, intent;
   final List<String> topics;
@@ -89,7 +105,10 @@ class ItemDetail {
       !RegExp(r'generic navigation|caption only contains|content (?:was not|could not be) (?:captured|extracted)',
           caseSensitive: false).hasMatch(briefText);
 
-  bool get isGeneratingBrief => !isFailed && !hasFinalBrief &&
+  bool get isGeneratingBrief =>
+      reprocessing ||
+      !edited && !linkOnly &&
+          !isFailed && !hasFinalBrief &&
       (!isReady || needsRetry || briefSource == 'fallback' || briefSource == 'llm');
   final List<BriefKeyPoint> pointsWithRefs;
 
@@ -129,6 +148,12 @@ class ItemDetail {
         'brief_payload': jsonEncode(<String, Object?>{
           'instant_brief': instantBrief, 'best_takeaway': bestTakeaway,
           'missing_info': missingInfo, 'needs_retry': needsRetry,
+          'failure_reason': failureReason,
+          'link_only': linkOnly,
+          'edited': edited,
+          'description_only': descriptionOnly,
+          'reprocessing': reprocessing,
+          'reprocess_failure': reprocessFailure,
           'brief_source': briefSource,
           'content_type': contentType, 'topics': topics, 'likely_intent': likelyIntent, 'suggested_action': suggestedAction, 'intent': intent,
           'key_points': keyPoints, 'entities': entities,
@@ -156,6 +181,12 @@ class ItemDetail {
       bestTakeaway: brief['best_takeaway'] as String?,
       missingInfo: brief['missing_info'] as String?,
       needsRetry: brief['needs_retry'] == true,
+      failureReason: brief['failure_reason'] as String?,
+      edited: brief['edited'] == true,
+      descriptionOnly: brief['description_only'] == true,
+      reprocessing: brief['reprocessing'] == true,
+      reprocessFailure: brief['reprocess_failure'] as String?,
+      linkOnly: brief['link_only'] == true,
       briefSource: brief['brief_source'] as String?,
       contentType: brief['content_type'] as String?, topics: stringList(brief['topics']),
       likelyIntent: brief['likely_intent'] as String?, suggestedAction: brief['suggested_action'] as String?, intent: brief['intent'] as String?,

@@ -14,6 +14,8 @@ def is_fallback(item) -> bool:
 
 
 def should_retry(item) -> bool:
+    if getattr(item, "edited_title", None) is not None or getattr(item, "edited_summary", None) is not None:
+        return False
     if is_fallback(item): return True
     return bool((fetcher.video_source(item.url or '') or (getattr(item, 'evidence_bundle', None) or {}).get('source_platform') in ('youtube', 'facebook', 'instagram', 'tiktok', 'vimeo', 'dailymotion', 'twitch'))
                 and (getattr(item, 'evidence_bundle', None) or {}).get('evidence_level') in ('partial', 'metadata_only')
@@ -22,6 +24,8 @@ def should_retry(item) -> bool:
 
 
 def schedule(db, item, job) -> bool:
+    if getattr(item, "edited_title", None) is not None or getattr(item, "edited_summary", None) is not None:
+        return False
     item.needs_retry = should_retry(item)
     if not item.needs_retry: return False
     fallback = is_fallback(item)

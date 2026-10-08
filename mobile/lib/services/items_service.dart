@@ -45,9 +45,11 @@ class ItemsService {
     required LocalDelete localDelete,
     required QueueDrop dropQueued,
     ConnectivityProbe? isOnline,
+    bool Function(ItemDetail)? isHidden,
     Future<String?> Function(String localId)? resolveLocalId,
   })  : _remoteItem = remoteItem,
         _localItem = localItem,
+        _isHidden = isHidden,
         _remoteRecent = remoteRecent,
         _localRecent = localRecent,
         _cache = cache,
@@ -60,6 +62,7 @@ class ItemsService {
   factory ItemsService.of({required ApiClient api, required LocalDb db, ConnectivityProbe? isOnline}) =>
       ItemsService(
         remoteItem: api.getItem,
+        isHidden: db.isHidden,
         localItem: db.localItem,
         remoteRecent: (int limit, {String? category, String? cursor, Map<String, String>? filters}) =>
             api.listItems(limit: limit, category: category, cursor: cursor, filters: filters),
@@ -74,6 +77,8 @@ class ItemsService {
       );
 
   static const String localPrefix = 'local-';
+
+  final bool Function(ItemDetail)? _isHidden;
 
   final RemoteItemFetch _remoteItem;
   final LocalItemFetch _localItem;
@@ -101,7 +106,7 @@ class ItemsService {
       try {
         final ItemDetail item = await _remoteItem(id);
         await _cache(<ItemDetail>[item]);
-        return item;
+        return _isHidden?.call(item) == true ? null : item;
       } on ApiException catch (error) {
         if (!error.isRetryableOffline) rethrow;
       }
@@ -121,7 +126,7 @@ class ItemsService {
       try {
         final ItemPage page = await _remoteRecent(limit, category: category, cursor: cursor, filters: filters);
         await _cache(page.items);
-        return (items: page.items.map(SearchResult.fromItem).toList(growable: false),
+        return (items: page.items.where((item) => _isHidden?.call(item) != true).map(SearchResult.fromItem).toList(growable: false),
             nextCursor: page.nextCursor);
       } on ApiException catch (error) {
         if (!error.isRetryableOffline) rethrow;

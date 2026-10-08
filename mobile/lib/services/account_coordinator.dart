@@ -174,6 +174,27 @@ class AccountCoordinator extends ChangeNotifier {
 
   Future<void> get settled => _switching;
 
+  Future<void> deleteAccount() async {
+    final operation = _switching.then((_) async {
+      final current = auth.currentSession;
+      if (current == null || current.id != _accountId) {
+        throw const AuthException('Sign in to delete your account.');
+      }
+      final previous = services;
+      await previous.api.deleteAccount();
+      try {
+        await previous.stopAccountWork();
+        previous.api.close();
+        await previous.db.clearAccountData();
+      } finally {
+        if (auth.currentSession?.id == current.id) await auth.signOut();
+      }
+    });
+    _switching = operation.catchError((Object _) {});
+    await operation;
+    await settled;
+  }
+
   Future<void> close() async {
     _closed = true;
     auth.session.removeListener(_changed);
@@ -182,4 +203,12 @@ class AccountCoordinator extends ChangeNotifier {
     await auth.dispose();
     super.dispose();
   }
+}
+
+class AccountCoordinatorScope extends InheritedWidget {
+  const AccountCoordinatorScope({super.key, required this.accounts, required super.child});
+  final AccountCoordinator? accounts;
+  static AccountCoordinator? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<AccountCoordinatorScope>()?.accounts;
+  @override bool updateShouldNotify(AccountCoordinatorScope oldWidget) => oldWidget.accounts != accounts;
 }

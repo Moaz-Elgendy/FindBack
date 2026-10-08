@@ -5,8 +5,8 @@ memory. This replaces the Expo/React Native client; the offline contract
 (SQLite mirror + write queue + `POST /api/v1/sync/batch`) is carried over
 unchanged, so an upgraded install keeps its cached memories.
 
-**Requirements:** Flutter stable with Dart ≥ 3.4 (3.22+) and, for device builds,
-Android Studio or Xcode. `android/` and `ios/` are *not* checked in — they are
+**Requirements:** Flutter stable with Dart ≥ 3.13 (3.47+) and, for device builds,
+Android Studio with SDK 37 or Xcode. `android/` and `ios/` are *not* checked in — they are
 generated per developer machine.
 
 ## Bootstrap & run

@@ -81,7 +81,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byTooltip('Refresh'), findsNothing);
-    expect(find.text('P 1'), findsOneWidget);
+    expect(find.text('Reading 1'), findsOneWidget);
     expect(find.text('Pull down to refresh'), findsOneWidget);
     final list = tester.widget<ListView>(find.byType(ListView).last);
     expect(list.physics, isA<AlwaysScrollableScrollPhysics>());
@@ -91,7 +91,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
     await tester.pumpAndSettle();
-    expect(find.text('P 1'), findsNothing);
+    expect(find.text('Reading 1'), findsNothing);
     expect(find.byKey(const ValueKey('processing-border')), findsNothing);
     final afterFinal = requests;
     await tester.pump(const Duration(seconds: 10));
@@ -112,9 +112,26 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('P 1'), findsOneWidget);
-    expect(find.text('Q 1'), findsOneWidget);
+    expect(find.text('Reading 2'), findsOneWidget);
     expect(find.byKey(const ValueKey('processing-border')), findsNWidgets(2));
+    await tester.pumpWidget(const SizedBox());
+    await drive(tester, services.dispose());
+  });
+
+  testWidgets('first queued save appears even when server library is empty', (tester) async {
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async => const ItemPage(items: []));
+    await tester.runAsync(() => services.db.queueSave(url: 'https://example.test/queued', titleHint: 'Queued memory'));
+    services.pending.value = 1;
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump();
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Reading 1'), findsOneWidget);
+    expect(find.text('Saved on this phone. Will be read when you’re back online.'), findsOneWidget);
+    expect(find.text('Save your first link'), findsNothing);
+    expect(find.text('Nothing matches yet'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });
@@ -127,7 +144,7 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
-    expect(find.text('Nothing saved yet'), findsOneWidget);
+    expect(find.text('Save your first link'), findsOneWidget);
     expect(find.text('Pull down to refresh'), findsOneWidget);
     final before = requests;
     final refreshing = tester.widget<RefreshIndicator>(
@@ -155,23 +172,23 @@ void main() {
     ];
     final services = await setup(tester, recent: (limit, {category, cursor, filters}) async =>
         ItemPage(items: records.where((item) => matchesIntelligence(SearchResult.fromItem(item), filters ?? {})).toList()));
-    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services, findMode: true)));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(FilterChip, 'AI'), findsOneWidget);
-    expect(find.widgetWithText(FilterChip, 'Food'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'about AI'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'about Food'), findsOneWidget);
     expect(find.widgetWithText(FilterChip, 'Claude Code skills'), findsNothing);
-    await tester.tap(find.text('Filters'));
+    await tester.tap(find.text('More filters'));
     await tester.pumpAndSettle();
     final topic = tester.widget<DropdownButtonFormField<String>>(find.byType(DropdownButtonFormField<String>).first);
     final dropdown = find.descendant(of: find.byWidget(topic), matching: find.byType(DropdownButton<String>));
     expect(tester.widget<DropdownButton<String>>(dropdown).items!.map((item) => item.value), [null, 'AI', 'Food']);
-    Navigator.of(tester.element(find.text('Content intelligence'))).pop();
+    Navigator.of(tester.element(find.text('More filters').last)).pop();
     await tester.pumpAndSettle();
     records.removeWhere((item) => item.id == 'food');
     final refreshed = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh();
     await drive(tester, refreshed);
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(FilterChip, 'Food'), findsNothing);
+    expect(find.widgetWithText(FilterChip, 'about Food'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });
@@ -188,11 +205,11 @@ void main() {
       theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
-      home: HomeScreen(services: services)));
+      home: HomeScreen(services: services, findMode: true)));
     await tester.pumpAndSettle();
-    final chips = find.widgetWithText(FilterChip, 'All');
-    expect(tester.getSize(chips).height, greaterThanOrEqualTo(48));
-    expect(tester.getSize(find.widgetWithText(ActionChip, 'Filters')).height, greaterThanOrEqualTo(48));
+    final chips = find.widgetWithText(FilterChip, 'about AI');
+    expect(tester.getSize(chips).height, greaterThanOrEqualTo(44));
+    expect(tester.getSize(find.widgetWithText(TextButton, 'More filters')).height, greaterThanOrEqualTo(44));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
@@ -216,15 +233,15 @@ void main() {
       return ItemPage(items: matching.skip(start).take(limit).toList(),
         nextCursor: start + limit < matching.length ? '${start + limit}' : null);
     });
-    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services, findMode: true)));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilterChip, 'AI'));
+    await tester.tap(find.widgetWithText(FilterChip, 'about AI'));
     await tester.pumpAndSettle();
     expect(find.text('24 title'), findsOneWidget);
     expect(find.text('0 title'), findsNothing);
-    await tester.tap(find.text('Filters (1)'));
+    await tester.tap(find.text('More filters (1)'));
     await tester.pumpAndSettle();
-    expect(find.text('Content intelligence'), findsOneWidget);
+    expect(find.text('More filters'), findsOneWidget);
     await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
     await tester.pumpAndSettle();
     await tester.tap(find.text('ai tool').last);
@@ -234,12 +251,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(requested.last, {'topic': 'AI', 'type': 'ai_tool'});
     expect(find.text('24 title'), findsOneWidget);
-    expect(find.text('Filters (2)'), findsOneWidget);
+    expect(find.text('More filters (2)'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'Claude');
     await tester.pump(const Duration(milliseconds: 300));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Filters (2)'));
+    await tester.tap(find.text('More filters (2)'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Clear filters'), 200, scrollable: find.byType(Scrollable).last);
     await tester.tap(find.text('Clear filters'));
@@ -276,33 +293,30 @@ void main() {
     await drive(tester, services.dispose());
   });
 
-  testWidgets('duplicate outside loaded page appears centered in a neutral dialog', (tester) async {
+  testWidgets('duplicate outside loaded page shows Already saved toast with View', (tester) async {
     final services = await setup(tester, duplicate: true,
       recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => ItemPage(
         items: [ItemDetail.fromJson(_item('new', 'tutorial'))]));
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save a link'));
+    await tester.tap(find.byTooltip('Save a link'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).at(1), 'https://example.test/old');
+    await tester.enterText(find.byType(TextField).first, 'https://example.test/old');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
-    expect(find.text('Already exists'), findsOneWidget);
-    expect(find.text('old title'), findsOneWidget);
-    expect(find.text('Existing useful Brief.'), findsOneWidget);
-    expect(find.text('Saved. FindBack will summarise it shortly.'), findsNothing);
-    final dialog = find.byType(AlertDialog);
-    expect(tester.getCenter(dialog).dy, closeTo(tester.view.physicalSize.height / tester.view.devicePixelRatio / 2, 2));
-    expect(find.descendant(of: dialog, matching: find.byIcon(Icons.error)), findsNothing);
-    await tester.tap(find.text('Close'));
-    await tester.pumpAndSettle();
+    expect(find.text('Already saved'), findsOneWidget);
+    expect(find.text('View'), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Saved. Reading it now.'), findsNothing);
+    await tester.tap(find.text('View'));
+    await tester.pumpAndSettle();
+    expect(find.text('Existing useful Brief.'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });
-  testWidgets('repeat from phone sharing uses the same existing-memory dialog', (tester) async {
+  testWidgets('repeat from phone sharing uses the same Already saved toast', (tester) async {
     final services = await setup(tester,
       recent: (limit, {String? category, String? cursor, Map<String, String>? filters}) async => const ItemPage(items: []));
     services.sharedCapture.value = const CaptureBatch([CaptureOutcome(status: CaptureStatus.remote,
@@ -310,13 +324,12 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
-    expect(find.text('Already exists'), findsOneWidget);
-    expect(find.text('old title'), findsOneWidget);
+    expect(find.text('Already saved'), findsOneWidget);
     expect(services.sharedCapture.value, isNull);
-    await tester.tap(find.text('Open memory'));
+    await tester.tap(find.text('View'));
     await tester.pumpAndSettle();
     expect(find.text('Existing useful Brief.'), findsOneWidget);
-    expect(find.text('Open Original'), findsOneWidget);
+    expect(find.text('Open original'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });
@@ -335,14 +348,14 @@ void main() {
     services.pending.value = 1;
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
-    expect(find.text('Waiting for the backend. Your links are saved on this device.'), findsOneWidget);
+    expect(find.text('Your links are saved on this phone. Waiting to upload.'), findsOneWidget);
     reachable = true;
     await tester.tap(find.text('Retry upload'));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
     expect(queue, isEmpty);
     expect(sync.lastError.value, isNull);
-    expect(find.text('Waiting for the backend. Your links are saved on this device.'), findsNothing);
+    expect(find.text('Your links are saved on this phone. Waiting to upload.'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });

@@ -14,9 +14,18 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "findback/notifications").setMethodCallHandler { call, result ->
+            if (call.method == "openSettings") {
+                startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+                result.success(null)
+            } else result.notImplemented()
+        }
         pendingAuthLink = authLink(intent)
-        sharedText(intent)?.let { pendingShares.add(it) }
-        setIntent(Intent())
+        val initialShare = sharedText(intent)
+        initialShare?.let { pendingShares.add(it) }
+        // Keep notification launch extras for the notification plugin.
+        if (pendingAuthLink != null || initialShare != null) setIntent(Intent())
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "findback/share")
         channel!!.setMethodCallHandler { call, result ->
             if (call.method == "getInitialShare") {

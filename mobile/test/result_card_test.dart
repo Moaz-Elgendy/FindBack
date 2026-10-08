@@ -38,23 +38,22 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
-    testWidgets('saved date and accent title stay readable in $brightness', (tester) async {
+    testWidgets('relative age and ink title stay readable in $brightness', (tester) async {
       tester.view.physicalSize = const Size(320, 740);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       final theme = ThemeData(colorSchemeSeed: const Color(0xFF1769AA), useMaterial3: true, brightness: brightness);
-      final saved = DateTime.utc(2026, 9, 28, 12);
+      final saved = DateTime.now().subtract(const Duration(days: 2));
       final result = SearchResult.fromJson({'id': 'dated', 'title': 'Claude skills',
         'summary': 'Plan and test code.', 'source_domain': 'facebook.com', 'created_at': saved.toIso8601String()});
       await tester.pumpWidget(MaterialApp(theme: theme,
         builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
         home: Scaffold(body: ResultCard(result: result, onTap: () {}))));
       final title = tester.widget<Text>(find.text('Claude skills'));
-      expect(title.style!.color, theme.colorScheme.primary);
-      final context = tester.element(find.text('Claude skills'));
-      expect(find.text('Saved ${MaterialLocalizations.of(context).formatShortDate(saved.toLocal())}'), findsOneWidget);
-      final a = theme.colorScheme.primary.computeLuminance();
+      expect(title.style!.color, theme.colorScheme.onSurface);
+      expect(find.text('2 days ago'), findsOneWidget);
+      final a = theme.colorScheme.onSurface.computeLuminance();
       final b = theme.colorScheme.surfaceContainerLow.computeLuminance();
       expect((a > b ? (a + .05) / (b + .05) : (b + .05) / (a + .05)), greaterThanOrEqualTo(4.5));
       expect(tester.takeException(), isNull);
@@ -89,7 +88,7 @@ void main() {
 
   final results = <String, SearchResult>{
     'offline': SearchResult.fromLocalRow({
-      'id': 'saved-1', 'url': 'https://facebook.com/reel/x',
+      'id': 'saved-1', 'url': 'https://facebook.com/reel/x', 'status': 'ready',
       'title': 'Claude skills', 'summary': 'Tools for planning and testing.',
       'source_domain': 'facebook.com',
     }),

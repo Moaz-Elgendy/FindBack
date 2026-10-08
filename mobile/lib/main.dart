@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'app.dart';
 import 'services/account_coordinator.dart';
+import 'services/appearance.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
+    final appearance = Appearance();
+    await appearance.restore();
     final accounts = await AccountCoordinator.create();
-    runApp(FindBackApp(services: accounts.services, accounts: accounts));
+    runApp(FindBackApp(services: accounts.services, accounts: accounts, appearance: appearance));
     await accounts.start();
   } catch (error) {
     // A broken database or keystore is unrecoverable at runtime, but the user

@@ -21,6 +21,23 @@ class _Recorder {
 }
 
 void main() {
+  test('stop waits for an in-flight memory action', () async {
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final sync = SyncService(pending: () async => [],
+      send: (_) async => const SyncBatchResult(mapped: [], failedClientIds: []),
+      apply: (_) async {}, markFailed: (_) async {}, isOnline: () async => false);
+    final action = sync.exclusive(() async { started.complete(); await release.future; });
+    await started.future;
+    var stopped = false;
+    final stopping = sync.stop().then((_) => stopped = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(stopped, isFalse);
+    release.complete();
+    await action; await stopping;
+    expect(stopped, isTrue);
+  });
+
   test('does not talk to the API while offline', () async {
     final _Recorder rec = _Recorder();
     int sends = 0;

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import 'data/api_client.dart';
 import 'data/local_db.dart';
@@ -11,6 +11,9 @@ import 'services/guest_library.dart';
 import 'services/collections_service.dart';
 import 'services/capture_service.dart';
 import 'services/items_service.dart';
+import 'services/memory_actions.dart';
+import 'services/reminder_service.dart';
+import 'services/reminder_notifications.dart';
 import 'services/share_intent_service.dart';
 import 'services/sync_service.dart';
 
@@ -24,6 +27,7 @@ class AppServices {
     required this.capture,
     required this.items,
     required this.share,
+    this.reminders,
     this.guest = false,
     this.guestLibrary,
     this.initialLibrary = const [],
@@ -52,11 +56,14 @@ class AppServices {
       capture: capture,
       items: guestStore?.items ?? ItemsService.of(db: db, api: api),
       guestLibrary: guestStore,
+      reminders: ReminderService(db: db, api: api, notifications: NativeReminderNotifications(), guest: guest),
       guest: guest,
       initialLibrary: await db.recentLocalItems(limit: 20),
       share: ShareIntentService(),
     );
   }
+
+  late final MemoryActions actions = MemoryActions(db: db, api: api, sync: sync, guestLibrary: guestLibrary, reminders: reminders);
 
   late final CollectionsService collections = CollectionsService(db, api, guest: guest);
   Future<void>? _collectionWork;
@@ -73,6 +80,7 @@ class AppServices {
     on ApiException catch (error) { debugPrint('[collections] sync failed: ${error.kind.name}'); }
   }
 
+  final ReminderService? reminders;
   final bool guest;
   final List<SearchResult> initialLibrary;
   final GuestLibrary? guestLibrary;
@@ -149,6 +157,7 @@ class AppServices {
     await _shareSubscription?.cancel();
     _shareSubscription = null;
     await sync.stop();
+    await reminders?.stop();
     await _collectionWork;
     await _shareWork;
   }
@@ -156,9 +165,17 @@ class AppServices {
   Future<void> dispose() async {
     await stopAccountWork();
     await share.dispose();
+    reminders?.dispose();
     api.close();
     await db.close();
     pending.dispose();
     sharedCapture.dispose();
   }
+}
+
+class AppServicesScope extends InheritedWidget {
+  const AppServicesScope({super.key, required this.services, required super.child});
+  final AppServices services;
+  static AppServices? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<AppServicesScope>()?.services;
+  @override bool updateShouldNotify(AppServicesScope oldWidget) => oldWidget.services != services;
 }

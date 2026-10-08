@@ -7,7 +7,7 @@ from app.models import (
     JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_READY, JOB_TYPE_PROCESS, VISIBILITY_PUBLIC,
     Chunk, ContentAsset, Item, ProcessingJob,
 )
-from app.services import embedder, observability, retention
+from app.services import embedder, observability, retention, reprocessing
 from app.services.outbox import (AttemptLost, JobHeartbeat, claim_job, complete_job,
                                  fence_attempt, record_failure)
 import datetime
@@ -40,7 +40,8 @@ class _StageProgress:
     def _record(self, stage: str) -> None:
         if self.job is not None:
             self.job.last_stage = stage
-        self.db.commit()
+        if not self.item.reprocess_snapshot:
+            self.db.commit()
 
     async def run_all(self) -> str:
         """Run the stages, reporting each one (Phase 18).
@@ -143,6 +144,8 @@ def _reuse_source(db, item, job):
     Nothing on `user_memories` is read here. The note and the intent belong to
     one user and cannot be reused by another, so they are never consulted.
     """
+    if item.reprocess_snapshot or reprocessing.edited(item):
+        return None
     if item.content_id is None or job is None:
         return None
     asset = (db.query(ContentAsset)
@@ -163,6 +166,7 @@ def _reuse_source(db, item, job):
                 .filter(Item.content_id == item.content_id,
                         Item.id != item.id,
                         Item.status == "ready",
+                        Item.link_only.is_(False),
                         Item.embedding.isnot(None),
                         Item.embedding_model == model)
                 .order_by(Item.created_at.asc())
@@ -206,6 +210,8 @@ def _reuse_derived_data(db, item, source) -> int:
     """
     from app.services import pipeline
 
+    if reprocessing.edited(item):
+        return 0
     item.fetch_metadata = dict(
         item.fetch_metadata or {},
         brief=dict((source.fetch_metadata or {}).get("brief") or {}))
@@ -258,6 +264,12 @@ def process_item(self, item_id: str):
     try:
         item = db.query(Item).filter(Item.id == item_id).first()
         if not item: return {"error": "not found"}
+        if item.deleted_at is not None:
+            return {"id": str(item.id), "status": item.status, "skipped": "deleted"}
+        if reprocessing.edited(item) and not item.reprocess_snapshot:
+            return {"id": str(item.id), "status": item.status, "skipped": "edited"}
+        if item.link_only:
+            return {"id": str(item.id), "status": item.status, "skipped": "link only"}
 
         # Phase 6 idempotency. Two guards, in this order:
         #   1. Already finished -> do nothing at all. Re-running a completed job
@@ -292,13 +304,25 @@ def process_item(self, item_id: str):
             if not claim_job(db, job.id):
                 return {"id": str(item.id), "status": "skipped"}
 
+        # A queued message may have loaded the item before Keep link only won.
+        db.refresh(item)
+        if item.link_only or item.deleted_at is not None or (reprocessing.edited(item) and not item.reprocess_snapshot):
+            db.query(ProcessingJob).filter(ProcessingJob.id == job.id,
+                                            ProcessingJob.attempt_token == job.attempt_token).update({
+                ProcessingJob.status: JOB_STATUS_PENDING,
+                ProcessingJob.attempt_token: None,
+                ProcessingJob.locked_at: None,
+            })
+            db.commit()
+            return {"id": str(item.id), "status": item.status, "skipped": "link only"}
+
         # From here until the worker is done the lock is refreshed, so the
         # dispatcher can tell a busy worker from a dead one (see JobHeartbeat).
         token = job.attempt_token
         fence_attempt(db, job.id, token)
         heartbeat = JobHeartbeat(job.id, attempt_token=token).start()
 
-        if not (item.summary and item.needs_retry):
+        if not item.reprocess_snapshot and not (item.summary and item.needs_retry):
             item.status = "processing"
         db.commit()
 
@@ -331,6 +355,9 @@ def process_item(self, item_id: str):
         progress = _StageProgress(db, item, job)
         asyncio.run(progress.run_all())
 
+        if item.reprocess_snapshot and item.needs_retry:
+            raise RuntimeError("The new brief could not be completed")
+        reprocessing.succeed(item)
         item.status = "ready"
         item.failure_reason = None
         item.processed_at = datetime.datetime.now(datetime.timezone.utc)
@@ -361,7 +388,7 @@ def process_item(self, item_id: str):
         db.rollback()
         if job is not None:
             fence_attempt(db, job.id, token)
-            item.status = "ready" if item.summary and item.needs_retry else "pending"
+            item.status = "ready" if item.reprocess_snapshot or (item.summary and item.needs_retry) else "pending"
             item.failure_reason = None
             job.status = JOB_STATUS_PENDING
             job.available_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=exc.retry_after)
@@ -380,12 +407,15 @@ def process_item(self, item_id: str):
             heartbeat.stop()  # before the job is rescheduled, not after
         db.rollback()
         content_id = None
+        kept_previous = False
         try:
             item = db.query(Item).filter(Item.id == item_id).first()
             if item:
                 content_id = item.content_id
-                item.status = "ready" if item.summary and item.needs_retry else "failed"
-                item.failure_reason = str(e)[:1000]
+                kept_previous = reprocessing.fail(item)
+                if not kept_previous:
+                    item.status = "ready" if item.summary and item.needs_retry else "failed"
+                    item.failure_reason = str(e)[:1000]
                 db.commit()
         except AttemptLost:
             db.rollback()
@@ -395,7 +425,10 @@ def process_item(self, item_id: str):
         # and records why, instead of silently disappearing.
         if job is not None:
             try:
-                record_failure(db, job.id, f"{type(e).__name__}: {e}")
+                if kept_previous:
+                    complete_job(db, job.id, success=False)
+                else:
+                    record_failure(db, job.id, f"{type(e).__name__}: {e}")
             except AttemptLost:
                 db.rollback()
                 return {"id": item_id, "status": "skipped", "reason": "attempt superseded"}
@@ -413,6 +446,8 @@ def process_item(self, item_id: str):
             duration_ms=int(round((time.monotonic() - began) * 1000)))
         log.warning("[task] process_item failed: %s",
                     observability.describe_exc(e))
+        if kept_previous:
+            return {"id": item_id, "status": "ready", "reprocess_failure": True}
         raise self.retry(exc=e, countdown=10)
     finally:
         if heartbeat is not None:

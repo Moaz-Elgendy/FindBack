@@ -16,13 +16,63 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 6;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
   static const int maxQueueRetries = 3;
 
   final Database db;
+  final Set<String> _hiddenIds = {};
+  final Set<String> _hiddenUrls = {};
+
+  bool isHidden(ItemDetail item) => _hidden(item);
+  bool isHiddenId(String id) => _hiddenIds.contains(id);
+
+  bool _hidden(ItemDetail item) => _hiddenIds.contains(item.id) ||
+      _hiddenUrls.contains(item.url) || _hiddenUrls.contains(item.canonicalUrl);
+
+  Future<LocalMemorySnapshot> hideMemory(String id) async {
+    final snapshot = await db.transaction((txn) async {
+      final rows = await txn.query('items', where: 'id = ?', whereArgs: [id]);
+      final queues = await txn.query('sync_queue',
+          where: 'client_id = ? OR server_id = ?',
+          whereArgs: [id.startsWith('local-') ? id.substring(6) : '', id]);
+      if (rows.isEmpty) throw StateError('Memory is no longer available');
+      final item = ItemDetail.fromLocalRow(rows.single);
+      _hiddenIds.add(id);
+      _hiddenUrls.addAll([item.url, item.canonicalUrl]);
+      await txn.delete('items', where: 'id = ?', whereArgs: [id]);
+      for (final row in queues) {
+        await txn.delete('sync_queue', where: 'client_id = ?', whereArgs: [row['client_id']]);
+      }
+      return LocalMemorySnapshot(rows.single, queues);
+    });
+    return snapshot;
+  }
+
+  Future<void> restoreMemory(LocalMemorySnapshot snapshot) async {
+    await db.transaction((txn) async {
+      await txn.insert('items', snapshot.item, conflictAlgorithm: ConflictAlgorithm.replace);
+      for (final row in snapshot.queue) {
+        await txn.insert('sync_queue', row, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+    final item = ItemDetail.fromLocalRow(snapshot.item);
+    _hiddenIds.remove(item.id);
+    _hiddenUrls.removeAll([item.url, item.canonicalUrl]);
+  }
+
+  bool _matchesFilters(SearchResult row, Map<String, String>? filters) {
+    final intelligence = Map<String, String>.from(filters ?? {});
+    final cutoff = intelligence.remove('saved_after');
+    if (cutoff != null) {
+      final savedAfter = DateTime.parse(cutoff);
+      if (row.createdAt == null || row.createdAt!.isBefore(savedAfter)) return false;
+    }
+    return matchesIntelligence(row, intelligence);
+  }
+
 
   static Future<LocalDb> openAt(String path) async => LocalDb(
         await openDatabase(
@@ -35,6 +85,7 @@ class LocalDb {
               database.rawQuery('PRAGMA journal_mode = WAL'),
           onCreate: (Database database, int version) async => _onCreate(database),
           onUpgrade: (Database database, int oldVersion, int newVersion) async {
+            if (oldVersion < 6) await _createReminders(database);
             if (oldVersion < 5) await _createCollections(database);
             if (oldVersion < 2) await database.execute("ALTER TABLE items ADD COLUMN brief_payload TEXT DEFAULT '{}'");
             if (oldVersion < 4) {
@@ -60,18 +111,30 @@ class LocalDb {
     for (final row in await guest.db.query('items')) {
       final item = ItemDetail.fromLocalRow(row);
       final existing = await localItemForUrl(item.url);
-      if (existing != null && !existing.id.startsWith('local-')) continue;
+      if (existing != null && !existing.id.startsWith('local-')) {
+        await _importGuestReminder(guest, item.id, existing.id);
+        continue;
+      }
       final client = existing?.id.substring('local-'.length) ?? await queueSave(
           url: item.url, preview: item.briefText, titleHint: item.bestTitle, capturedAt: item.createdAt);
       final cached = Map<String, Object?>.from(row)
         ..['id'] = 'local-$client'..['status'] = 'pending';
       await db.insert('items', cached, conflictAlgorithm: ConflictAlgorithm.replace);
+      await _importGuestReminder(guest, item.id, 'local-$client');
     }
     for (final row in await guest.db.query('collections', where: 'deleted = 0')) {
       final origin = row['origin_id'] ?? row['id'];
       if ((await db.query('collections', where: 'origin_id = ?', whereArgs: [origin])).isNotEmpty) continue;
       await db.insert('collections', Map<String, Object?>.from(row)
         ..['id'] = newCollectionId()..['origin_id'] = origin..['dirty'] = 1);
+    }
+  }
+
+  Future<void> _importGuestReminder(LocalDb guest, String from, String to) async {
+    for (final row in await guest.db.query('reminders',
+        where: 'item_id=? AND delivered=0 AND suspended=0 AND dirty!=?', whereArgs: [from, 'remove'])) {
+      await db.insert('reminders', {'item_id': to, 'scheduled_at': row['scheduled_at'],
+        'time_zone': row['time_zone'], 'dirty': 'set'}, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
   }
 
@@ -84,7 +147,15 @@ class LocalDb {
     )
   """);
 
+  static Future<void> _createReminders(Database db) => db.execute("""
+    CREATE TABLE IF NOT EXISTS reminders (notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id TEXT NOT NULL UNIQUE, scheduled_at TEXT NOT NULL, time_zone TEXT NOT NULL,
+      delivered INTEGER NOT NULL DEFAULT 0, dirty TEXT NOT NULL DEFAULT '',
+      suspended INTEGER NOT NULL DEFAULT 0, scheduled INTEGER NOT NULL DEFAULT 0)
+  """);
+
   static Future<void> _onCreate(Database db) async {
+    await _createReminders(db);
     await _createCollections(db);
     await db.execute('''
       CREATE TABLE items (
@@ -121,6 +192,16 @@ class LocalDb {
   }
 
   Future<void> close() => db.close();
+
+  Future<void> clearAccountData() async {
+    await db.transaction((txn) async {
+      for (final table in ['collections', 'reminders', 'sync_queue', 'items']) {
+        await txn.delete(table);
+      }
+    });
+    _hiddenIds.clear();
+    _hiddenUrls.clear();
+  }
 
   /// Enqueues a save and inserts an optimistic row so search works offline.
   /// Returns the `client_id` the server will later echo back.
@@ -287,13 +368,14 @@ class LocalDb {
       limit: filters?.isNotEmpty == true ? null : limit,
     );
     return rows.map(SearchResult.fromLocalRow)
-        .where((row) => matchesIntelligence(row, filters ?? {})).take(limit).toList(growable: false);
+        .where((row) => _matchesFilters(row, filters)).take(limit).toList(growable: false);
   }
 
   Future<void> upsertRemoteItems(List<ItemDetail> items) async {
     if (items.isEmpty) return;
     await db.transaction((txn) async {
       for (final ItemDetail item in items) {
+        if (_hidden(item)) continue;
         await txn.insert('items', item.toLocalRow(), conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
@@ -306,7 +388,7 @@ class LocalDb {
         whereArgs: filtered ? <Object?>[category] : null,
         orderBy: 'created_at DESC', limit: filters?.isNotEmpty == true ? null : limit);
     return rows.map(SearchResult.fromLocalRow)
-        .where((row) => matchesIntelligence(row, filters ?? {})).take(limit).toList(growable: false);
+        .where((row) => _matchesFilters(row, filters)).take(limit).toList(growable: false);
   }
 
   /// The cached copy of one item, or null when it was never seen online.
@@ -361,3 +443,9 @@ class LocalDb {
   }
 }
 
+
+class LocalMemorySnapshot {
+  const LocalMemorySnapshot(this.item, this.queue);
+  final Map<String, Object?> item;
+  final List<Map<String, Object?>> queue;
+}

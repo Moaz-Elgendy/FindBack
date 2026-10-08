@@ -36,7 +36,7 @@ class CollectionWrite(BaseModel):
 def serialize(db, collection):
     urls = (db.query(Item.canonical_url).join(CollectionItem, CollectionItem.item_id == Item.id)
             .filter(CollectionItem.collection_id == collection.id, CollectionItem.user_id == collection.user_id,
-                    Item.user_id == collection.user_id).order_by(Item.canonical_url).all())
+                    Item.user_id == collection.user_id, Item.deleted_at.is_(None)).order_by(Item.canonical_url).all())
     return {'id': str(collection.id), 'name': collection.name, 'urls': [row[0] for row in urls],
             'created_at': collection.created_at, 'updated_at': collection.updated_at}
 
@@ -52,7 +52,8 @@ def save_collection(collection_id: UUID, body: CollectionWrite, db: Session = De
     collection = db.get(Collection, collection_id)
     if collection is not None and collection.user_id != user.id:
         raise HTTPException(404, 'not found')
-    items = db.query(Item.id).filter(Item.user_id == user.id, Item.canonical_url.in_(body.urls)).all() if body.urls else []
+    items = db.query(Item.id).filter(Item.user_id == user.id, Item.deleted_at.is_(None),
+                                   Item.canonical_url.in_(body.urls)).all() if body.urls else []
     if len(items) != len(body.urls):
         raise HTTPException(404, 'Save these memories before adding them to a collection')
     if collection is None:

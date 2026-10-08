@@ -88,6 +88,22 @@ class User(Base):
     )
 
 
+class WeeklyNotePreference(Base):
+    __tablename__ = 'weekly_note_preferences'
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    weekday = Column(Integer, nullable=False, default=6, server_default='6')
+    hour = Column(Integer, nullable=False, default=18, server_default='18')
+    minute = Column(Integer, nullable=False, default=0, server_default='0')
+    time_zone = Column(String(100), nullable=False, default='UTC', server_default='UTC')
+
+
+class DeletedIdentity(Base):
+    # Old signed JWTs remain valid at the issuer until expiry; never recreate their user.
+    __tablename__ = 'deleted_identities'
+    subject_hash = Column(String(64), primary_key=True)
+
+
 class Item(Base):
     __tablename__ = "items"
 
@@ -108,6 +124,11 @@ class Item(Base):
     content_id = Column(UUID(as_uuid=True), ForeignKey("content_assets.id", ondelete="SET NULL"))
     fetch_metadata = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
     failure_reason = Column(Text)
+    reprocess_snapshot = Column(JSONB)
+    reprocess_failure = Column(Text)
+    edited_title = Column(Text)
+    edited_summary = Column(Text)
+    link_only = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     evidence_bundle = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
     brief_v2 = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
     processing_metadata = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
@@ -119,6 +140,7 @@ class Item(Base):
     intent = Column(String(32))
     tags = Column(ARRAY(String), default=list, server_default=text("'{}'::text[]"), nullable=False)
     status = Column(String(16), default="pending", server_default="pending", nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     # Phase 8: the last pipeline stage that completed. A retry resumes at the
     # stage AFTER this one, so earlier (and expensive) stages are not repeated.
     raw_text = Column(Text)
@@ -165,6 +187,8 @@ class Item(Base):
             name="items_user_content_fk"),
         Index("items_user_created_idx", "user_id", "created_at"),
         Index("items_category_idx", "category"),
+        Index("items_deleted_at_idx", "deleted_at",
+              postgresql_where=text("deleted_at IS NOT NULL")),
         Index("items_evidence_source_idx", text("(evidence_bundle->>'source_platform')"),
               text("(evidence_bundle->>'source_id')"),
               postgresql_where=text("evidence_bundle->>'evidence_level' = 'full_transcript'")),
@@ -403,3 +427,11 @@ class CollectionItem(Base):
                              ondelete="CASCADE", name="collection_items_item_owner_fk"),
         Index("collection_items_item_idx", "item_id", "user_id"),
     )
+
+
+class Reminder(Base):
+    __tablename__ = 'reminders'
+    item_id = Column(UUID(as_uuid=True), ForeignKey('items.id', ondelete='CASCADE'), primary_key=True)
+    scheduled_at = Column(DateTime(timezone=True), nullable=False)
+    time_zone = Column(String(100), nullable=False)
+    delivered_at = Column(DateTime(timezone=True))

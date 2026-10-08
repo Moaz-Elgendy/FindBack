@@ -14,47 +14,46 @@ void main() {
         ),
       );
 
-  for (final queueFirst in [true, false]) {
-    testWidgets('slots follow activation order queueFirst=$queueFirst',
+  testWidgets(
+      'one reading pill combines queue and processing and opens account',
         (tester) async {
       var taps = 0;
-      Future<void> show(int q, int p) async {
-        await tester.pumpWidget(host(
-            TopBarStatus(queued: q, processing: p, onAccount: () => taps++)));
-        await tester.pumpAndSettle();
-      }
-
-      await show(0, 0);
-      expect(find.text('Q 0'), findsNothing);
-      expect(find.text('P 0'), findsNothing);
-      expect(tester.getSize(find.byType(TopBarStatus)).width, 48);
-      await show(queueFirst ? 2 : 0, queueFirst ? 0 : 3);
-      await show(2, 3);
-      final qx = tester.getCenter(find.text('Q 2')).dx;
-      final px = tester.getCenter(find.text('P 3')).dx;
-      expect(queueFirst ? px < qx : qx < px, isTrue);
-      expect(tester.getCenter(find.byIcon(Icons.person_outline)).dx,
-          greaterThan(qx));
-      expect(tester.getCenter(find.byIcon(Icons.person_outline)).dx,
-          greaterThan(px));
+    await tester.pumpWidget(host(
+            TopBarStatus(queued: 2, processing: 3, onAccount: () => taps++)));
+    expect(find.text('Reading 5'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      await show(queueFirst ? 0 : 2, queueFirst ? 3 : 0);
-      await show(2, 3);
-      expect(
-          queueFirst
-              ? tester.getCenter(find.text('Q 2')).dx <
-                  tester.getCenter(find.text('P 3')).dx
-              : tester.getCenter(find.text('P 3')).dx <
-                  tester.getCenter(find.text('Q 2')).dx,
-          isTrue);
       await tester.tap(find.byTooltip('Account'));
       expect(taps, 1);
       final semantics = tester.ensureSemantics();
-      expect(find.bySemanticsLabel('Queued 2'), findsOneWidget);
-      expect(find.bySemanticsLabel('Processing 3'), findsOneWidget);
+      expect(find.bySemanticsLabel('Reading 5'), findsOneWidget);
       semantics.dispose();
-    });
-  }
+    await tester.pumpWidget(
+        host(TopBarStatus(queued: 0, processing: 0, onAccount: () {})));
+    expect(find.text('Reading 0'), findsNothing);
+    expect(tester.getSize(find.byType(TopBarStatus)).width, 48);
+  });
+
+  testWidgets('RTL status fits320dp with huge count at200percent',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Directionality(
+                textDirection: TextDirection.rtl,
+                child: MediaQuery(
+                    data:
+                        const MediaQueryData(textScaler: TextScaler.linear(2)),
+                    child: Row(children: [
+                      const Expanded(child: Text('FindBack')),
+                      TopBarStatus(
+                          queued: 999999999, processing: 1, onAccount: () {})
+                    ]))))));
+    expect(find.text('Reading 1000000000'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('narrow top bar keeps account at right at double text size',
       (tester) async {
@@ -112,7 +111,7 @@ void main() {
         find.byType(TweenAnimationBuilder<double>));
     expect(animation.duration, Duration.zero);
     await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(seconds: 6));
     expect(tester.takeException(), isNull);
   });
 }

@@ -126,8 +126,9 @@ def client(db, sessions):
 
         def as_user(self, user_id):
             def _resolve():
-                return session_factory().query(_user_model()).filter(
-                    _user_model().id == user_id).one()
+                with session_factory() as session:
+                    return session.query(_user_model()).filter(
+                        _user_model().id == user_id).one()
             app.dependency_overrides[get_current_user] = _resolve
 
         def anonymous(self):
@@ -987,4 +988,3 @@ def test_deleting_a_shared_save_leaves_the_other_users_memory(
         assert s.execute(text(
             "SELECT count(*) FROM items WHERE user_id = :u AND content_id = :c"),
             {"u": b, "c": asset_id}).scalar() == 1, "B's item was deleted"
-

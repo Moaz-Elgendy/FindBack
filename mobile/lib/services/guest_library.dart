@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../data/api_client.dart';
 import '../data/local_db.dart';
 import '../models/item.dart';
@@ -17,8 +18,34 @@ class GuestLibrary {
   }
 
   Future<void> cacheAndRelease(ItemDetail item) async {
-    await db.upsertRemoteItems([item]);
-    if (item.hasFinalBrief) {
+    if (db.isHidden(item)) return;
+    final cachedRows = await db.db.query('items', where: 'id = ?', whereArgs: [item.id]);
+    final cached = cachedRows.isEmpty ? null : ItemDetail.fromLocalRow(cachedRows.single);
+    final payload = cachedRows.isEmpty ? <String, dynamic>{} :
+        jsonDecode(cachedRows.single['brief_payload'] as String) as Map<String, dynamic>;
+    final previous = payload['guest_reprocess_previous'];
+    var finishedReprocess = false;
+    if (previous is Map) {
+      if (item.isGeneratingBrief && !item.isFailed) {
+        final row = Map<String, Object?>.from(cachedRows.single)..['status'] = item.status;
+        await db.db.update('items', row, where: 'id = ?', whereArgs: [item.id]);
+        return;
+      }
+      finishedReprocess = true;
+      if (item.isFailed || item.needsRetry || !item.hasFinalBrief) {
+        final row = Map<String, Object?>.from(previous)..['id'] = item.id;
+        final oldPayload = jsonDecode(row['brief_payload'] as String) as Map<String, dynamic>;
+        oldPayload['reprocessing'] = false;
+        oldPayload['reprocess_failure'] = 'This page could not be read. Your previous brief was kept.';
+        row['brief_payload'] = jsonEncode(oldPayload);
+        await db.upsertRemoteItems([ItemDetail.fromLocalRow(row)]);
+      } else {
+        await db.upsertRemoteItems([item]);
+      }
+    } else if (cached?.edited != true && cached?.reprocessFailure == null) {
+      await db.upsertRemoteItems([item]);
+    }
+    if (finishedReprocess || item.hasFinalBrief || (cached?.reprocessFailure != null && item.isFailed)) {
       try {
         await api.deleteItem(item.id);
       } on ApiException catch (error) {
@@ -27,10 +54,22 @@ class GuestLibrary {
     }
   }
 
-  Future<ItemDetail> restartExpired(ItemDetail old) async {
+  Future<ItemDetail> restartExpired(ItemDetail old, {bool reprocess = false}) async {
+    if (db.isHidden(old)) throw StateError('Memory was deleted');
     final result = await api.ingestUrl(old.url, titleHint: old.bestTitle);
-    final row = old.toLocalRow()..['id'] = result.id..['status'] = result.status;
+    final cachedRows = await db.db.query('items', where: 'id = ?', whereArgs: [old.id]);
+    final row = (cachedRows.isEmpty ? old.toLocalRow() : Map<String, Object?>.from(cachedRows.single));
+    if (reprocess) {
+      final payload = jsonDecode(row['brief_payload'] as String) as Map<String, dynamic>;
+      payload['guest_reprocess_previous'] = Map<String, Object?>.from(row);
+      payload['reprocessing'] = true;
+      payload['reprocess_failure'] = null;
+      row['brief_payload'] = jsonEncode(payload);
+    }
+    row['id'] = result.id;
+    row['status'] = result.status;
     await db.db.transaction((transaction) async {
+      if (db.isHidden(old)) return;
       await transaction.delete('items', where: 'id = ?', whereArgs: [old.id]);
       final existing = await transaction.query('items', where: 'id = ?', whereArgs: [result.id]);
       if (existing.isEmpty) await transaction.insert('items', row);

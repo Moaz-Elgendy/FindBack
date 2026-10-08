@@ -48,6 +48,11 @@ class SyncBatchResponse(BaseModel):
     errors: List[Dict[str, Any]] = []
 
 class SearchResponseItem(BaseModel):
+    matched_terms: List[str] = []
+    edited: bool = False
+    description_only: bool = False
+    reprocessing: bool = False
+    reprocess_failure: str | None = None
     id: UUID
     title: Optional[str]
     summary: Optional[str]
@@ -73,7 +78,36 @@ class SearchResponse(BaseModel):
     results: List[SearchResponseItem]
     took_ms: int
 
+class ItemEdit(BaseModel):
+    title: str = Field(default=None, min_length=1, max_length=500)
+    summary: str = Field(default=None, max_length=20000)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("title")
+    @classmethod
+    def nonblank_title(cls, value):
+        if not value.strip():
+            raise ValueError("Title must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def require_edit(self):
+        if not self.model_fields_set:
+            raise ValueError("Provide title or summary")
+        return self
+
+
+class SummarizeAgainRequest(BaseModel):
+    replace_edits: bool = False
+    model_config = ConfigDict(extra="forbid")
+
+
 class ItemDetail(BaseModel):
+    edited: bool = False
+    description_only: bool = False
+    reprocessing: bool = False
+    reprocess_failure: str | None = None
     id: UUID
     url: str
     canonical_url: str
@@ -89,6 +123,8 @@ class ItemDetail(BaseModel):
     intent: Optional[str]
     tags: List[str] = []
     status: str
+    failure_reason: str | None = None
+    link_only: bool = False
     created_at: Optional[datetime]
     processed_at: Optional[datetime]
 
@@ -119,10 +155,20 @@ class ItemDetail(BaseModel):
         if isinstance(value, dict):
             return value
         data = {name: getattr(value, name) for name in cls.model_fields if hasattr(value, name)}
-        brief = getattr(value, "brief_v2", None) or {}
+        snapshot = getattr(value, "reprocess_snapshot", None) or {}
+        data.update({name: val for name, val in snapshot.items() if name in cls.model_fields and name != "status"})
+        brief = snapshot.get("brief_v2", getattr(value, "brief_v2", None)) or {}
         if "topics" not in brief:
             data["topics"] = ((getattr(value, "fetch_metadata", None) or {}).get("brief") or {}).get("topics", [])
-        evidence = getattr(value, "evidence_bundle", None) or {}
+        evidence = snapshot.get("evidence_bundle", getattr(value, "evidence_bundle", None)) or {}
+        data["edited"] = getattr(value, "edited_title", None) is not None or getattr(value, "edited_summary", None) is not None
+        data["reprocessing"] = bool(snapshot)
+        fetch = snapshot.get("fetch_metadata", getattr(value, "fetch_metadata", None)) or {}
+        from app.services.fetcher import video_source
+        only_metadata = evidence.get("evidence_level") == "metadata_only"
+        video_description = bool(video_source(getattr(value, "url", "")) and fetch.get("input_provenance") == "caption")
+        data["description_only"] = (only_metadata or video_description) and not any(evidence.get(name) for name in ("transcript", "ocr_text", "article_text", "frame_notes", "visual_notes"))
+        data["reprocess_failure"] = "This page could not be read. Your previous brief was kept." if getattr(value, "reprocess_failure", None) else None
         metadata = getattr(value, "processing_metadata", None) or {}
         for name in ("instant_brief", "best_takeaway", "content_type", "confidence", "missing_info",
                      "search_phrases", "topics", "likely_intent", "suggested_action", "evidence_used"):
@@ -133,6 +179,25 @@ class ItemDetail(BaseModel):
                     prompt_version=metadata.get("prompt_version"), processing_metadata=metadata,
                     brief_source=brief.get("brief_source"),
                     needs_retry=bool(getattr(value, "needs_retry", False)))
+        title = getattr(value, "edited_title", None)
+        summary = getattr(value, "edited_summary", None)
+        if title is not None:
+            data.update(title=title, title_clean=title)
+        if summary is not None:
+            data.update(summary=summary, instant_brief=summary)
+        reason = getattr(value, "failure_reason", None)
+        if data.get("status") == "failed" or data.get("needs_retry"):
+            message = (reason or "").lower()
+            if any(word in message for word in ("paywall", "403", "401", "sign-in", "login")):
+                data["failure_reason"] = "This page requires access or sign-in."
+            elif any(word in message for word in ("timeout", "temporarily unavailable", "connection")):
+                data["failure_reason"] = "This page was temporarily unavailable. Try again."
+            else:
+                data["failure_reason"] = "This page could not be read. Try again or keep the link."
+        else:
+            data["failure_reason"] = None
+        if data.get("link_only"):
+            data.update(summary=summary, instant_brief=summary, key_points=[], key_points_with_refs=[])
         return data
 
 class Brief(BaseModel):

@@ -82,7 +82,7 @@ def delete_save(db: Session, user_id, content_id=None,
         counts["items"] = result.rowcount or 0
         result = db.execute(text(
             "DELETE FROM user_memories WHERE user_id = :u "
-            "AND content_id = :c"), {"u": str(user_id), "c": str(content_id)})
+            "AND content_id = :c"), {"u": str(user_id), "c": str(content_id) if content_id is not None else None})
         counts["user_memories"] = result.rowcount or 0
     else:
         # Phase 16: the ITEM first, then the memory. `items_user_content_fk`
@@ -154,6 +154,7 @@ def purge_expired_guest_staging(db: Session, limit: int = 50) -> int:
     rows = db.execute(text("""
         SELECT i.id, i.user_id, i.content_id FROM items i JOIN users u ON u.id=i.user_id
         WHERE u.auth_subject LIKE 'guest:%'
+          AND i.deleted_at IS NULL
           AND i.created_at < now() - make_interval(hours => :hours)
         ORDER BY i.created_at LIMIT :limit FOR UPDATE OF i SKIP LOCKED
     """), {"hours": guest_retention_hours(), "limit": limit}).all()

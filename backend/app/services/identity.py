@@ -44,7 +44,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.models import User, DeletedIdentity
 from app.services.privacy import digest
 
 log = logging.getLogger("findback.auth")
@@ -162,6 +162,9 @@ def resolve_user(db: Session, claims: dict) -> tuple[User, str]:
     subject = claims.get("sub")
     if not subject:
         raise HTTPException(status_code=401, detail="Token subject missing")
+    from app.services.account import subject_hash
+    if db.get(DeletedIdentity, subject_hash(subject)) is not None:
+        raise HTTPException(status_code=401, detail="This account has been deleted")
     # Guest identity is server-issued and cannot bind an existing email row.
     from app.services.auth_tokens import GUEST_ISSUER, GUEST_PREFIX
     if subject.startswith(GUEST_PREFIX):

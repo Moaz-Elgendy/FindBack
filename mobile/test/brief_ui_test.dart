@@ -51,66 +51,32 @@ void main() {
     expect(find.byIcon(Icons.article_outlined), findsNothing);
   });
 
-  testWidgets(
-      'detail exposes Full Brief, collapses tags and floats original action',
-      (tester) async {
-    await tester.pumpWidget(
-        MaterialApp(home: DetailPage(itemId: '1', items: service())));
+  testWidgets('detail shows numbered points, collapsible tags and an original dock', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: DetailPage(itemId: '1', items: service())));
     await tester.pumpAndSettle();
-    expect(find.text('Memory'), findsNothing);
     expect(find.text('Short useful Brief.'), findsOneWidget);
-    expect(find.text('2 key points · Tap to expand'), findsOneWidget);
-    expect(find.text('claude skills'), findsNothing);
-    expect(find.widgetWithText(FloatingActionButton, 'Open Original'),
-        findsOneWidget);
-    await tester.tap(find.text('Full Brief'));
-    await tester.pumpAndSettle();
-    expect(find.text('2 key points · Tap to collapse'), findsOneWidget);
     expect(find.text('Use the testing skill.'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
     expect(find.text('00:39'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Tags'), 150,
-        scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Tags'));
-    await tester.pumpAndSettle();
+    expect(find.text('claude skills'), findsNothing);
+    await tester.scrollUntilVisible(find.text('Tags'), 150, scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle(); await tester.tap(find.text('Tags')); await tester.pumpAndSettle();
     expect(find.text('claude skills'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, -600));
-    await tester.pumpAndSettle();
-    expect(find.text('Open Original').hitTestable(), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Full Brief'), -150,
-        scrollable: find.byType(Scrollable).first);
-    await tester.drag(find.byType(ListView), const Offset(0, 600));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Full Brief'));
-    await tester.pumpAndSettle();
-    expect(find.text('Use the testing skill.'), findsNothing);
+    await tester.drag(find.byType(ListView), const Offset(0,-600)); await tester.pumpAndSettle();
+    expect(find.text('Open original').hitTestable(), findsOneWidget);
+    expect(find.text('Share').hitTestable(), findsOneWidget);
   });
-
-  testWidgets('expanded detail fits narrow screens with enlarged text',
-      (tester) async {
-    tester.view.physicalSize = const Size(320, 700);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(MaterialApp(
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context)
-            .copyWith(textScaler: const TextScaler.linear(1.8)),
-        child: child!,
-      ),
-      home: DetailPage(itemId: '1', items: service()),
-    ));
+  testWidgets('detail fits narrow screens with enlarged text', (tester) async {
+    tester.view.physicalSize = const Size(320,700); tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.8)), child: child!),
+      home: DetailPage(itemId:'1', items:service())));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Full Brief'), -150,
-        scrollable: find.byType(Scrollable).first);
-    await tester.drag(find.byType(ListView), const Offset(0, 600));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Full Brief'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Tags'), 150,
-        scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Tags'));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.text('Open Original').hitTestable(), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Tags'),150,scrollable:find.byType(Scrollable).first);
+    await tester.pumpAndSettle(); await tester.tap(find.text('Tags')); await tester.pumpAndSettle();
+    expect(find.text('claude skills'), findsOneWidget); expect(tester.takeException(),isNull);
+    expect(find.text('Open original').hitTestable(),findsOneWidget);
   });
 }

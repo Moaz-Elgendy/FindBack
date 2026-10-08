@@ -19,6 +19,14 @@ class SearchResult {
     this.matchReason,
     this.createdAt,
     this.isGeneratingBrief = false,
+    this.edited = false,
+    this.descriptionOnly = false,
+    this.reprocessing = false,
+    this.reprocessFailure,
+    this.matchedTerms = const [],
+    this.isFailed = false,
+    this.failureReason,
+    this.bestTakeaway,
     this.topics = const [], this.contentType, this.entities = const {}, this.likelyIntent, this.suggestedAction, this.intent,
   });
 
@@ -33,6 +41,16 @@ class SearchResult {
         sourceDomain: json['source_domain'] as String?,
         matchReason: json['match_reason'] as String?,
         createdAt: parseDate(json['created_at']),
+        edited: json['edited'] == true,
+        descriptionOnly: json['description_only'] == true,
+        reprocessing: json['reprocessing'] == true,
+        reprocessFailure: json['reprocess_failure'] as String?,
+        matchedTerms: stringList(json['matched_terms']),
+        isGeneratingBrief:
+            json['reprocessing'] == true || json['is_generating_brief'] == true,
+        isFailed: json['status'] == 'failed',
+        failureReason: json['failure_reason'] as String?,
+        bestTakeaway: json['best_takeaway'] as String?,
         topics: stringList(json['topics']), contentType: json['content_type'] as String?, entities: objectMap(json['entities']),
         likelyIntent: json['likely_intent'] as String?, suggestedAction: json['suggested_action'] as String?, intent: json['intent'] as String?,
       );
@@ -53,6 +71,11 @@ class SearchResult {
   final String? matchReason;
   final DateTime? createdAt;
   final bool isGeneratingBrief;
+  final bool edited, descriptionOnly, reprocessing;
+  final String? reprocessFailure;
+  final List<String> matchedTerms;
+  final bool isFailed;
+  final String? failureReason, bestTakeaway;
   final List<String> topics;
   final Map<String, Object?> entities;
   final String? contentType, likelyIntent, suggestedAction, intent;
@@ -82,6 +105,13 @@ class SearchResult {
         matchReason: 'Recently saved',
         createdAt: item.createdAt,
       isGeneratingBrief: item.isGeneratingBrief,
+        edited: item.edited,
+        descriptionOnly: item.descriptionOnly,
+        reprocessing: item.reprocessing,
+        reprocessFailure: item.reprocessFailure,
+        isFailed: item.isFailed,
+        failureReason: item.failureReason,
+        bestTakeaway: item.bestTakeaway,
         topics: item.topics, contentType: item.contentType, entities: item.entities,
         likelyIntent: item.likelyIntent, suggestedAction: item.suggestedAction, intent: item.intent,
       );
@@ -102,6 +132,14 @@ class SearchResult {
         matchReason: matchReason ?? this.matchReason,
         createdAt: createdAt,
       isGeneratingBrief: isGeneratingBrief,
+        edited: edited,
+        descriptionOnly: descriptionOnly,
+        reprocessing: reprocessing,
+        reprocessFailure: reprocessFailure,
+        matchedTerms: matchedTerms,
+        isFailed: isFailed,
+        failureReason: failureReason,
+        bestTakeaway: bestTakeaway,
         topics: topics, contentType: contentType, entities: entities,
         likelyIntent: likelyIntent, suggestedAction: suggestedAction, intent: intent,
       );

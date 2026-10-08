@@ -21,6 +21,7 @@ class CaptureSheet extends StatefulWidget {
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
+        showDragHandle: true,
         builder: (BuildContext context) => Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: SingleChildScrollView(
@@ -94,7 +95,7 @@ class _CaptureSheetState extends State<CaptureSheet> {
           const SizedBox(height: 4),
           Text(
             'Paste one or more links, or a whole share message.',
-            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -106,19 +107,19 @@ class _CaptureSheetState extends State<CaptureSheet> {
             decoration: const InputDecoration(
               labelText: 'Link or shared text',
               hintText: 'https://example.com/…',
-              border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 12),
-          TextField(
+          Text('What you remember about it (optional)', style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 8),
+          Semantics(label: 'What you remember about it (optional)', child: TextField(
             controller: _hint,
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
-              labelText: 'What you remember about it (optional)',
               helperText: 'Becomes the title until the server reads the page',
-              border: OutlineInputBorder(),
+              helperMaxLines: 3,
             ),
-          ),
+            )),
           if (_error != null) ...<Widget>[
             const SizedBox(height: 12),
             Text(
@@ -127,7 +128,10 @@ class _CaptureSheetState extends State<CaptureSheet> {
             ),
           ],
           const SizedBox(height: 20),
-          FilledButton(
+          Row(children: [
+            Expanded(child: TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel'))),
+            const SizedBox(width: 12),
+            Expanded(child: FilledButton(
             onPressed: _saving ? null : _save,
             child: _saving
                 ? const SizedBox(
@@ -136,7 +140,8 @@ class _CaptureSheetState extends State<CaptureSheet> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Text('Save'),
-          ),
+          )),
+          ]),
         ],
       ),
     );

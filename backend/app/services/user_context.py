@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 import logging
 
+from sqlalchemy import exists
 from sqlalchemy.orm import Session
 
 from app.schemas import INTENT_PHRASES, UserIntent
@@ -47,11 +48,13 @@ def infer_intent(text: str) -> UserIntent | None:
 
 def get_memory(db: Session, user_id, content_id) -> "object | None":
     """This user's memory of this content, and only theirs."""
-    from app.models import UserMemory
+    from app.models import Item, UserMemory
 
     return (db.query(UserMemory)
             .filter(UserMemory.user_id == user_id,
-                    UserMemory.content_id == content_id)
+                    UserMemory.content_id == content_id,
+                    ~exists().where(Item.user_id == user_id, Item.content_id == content_id,
+                                    Item.deleted_at.is_not(None)))
             .first())
 
 

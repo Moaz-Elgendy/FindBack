@@ -69,6 +69,24 @@ class SyncService {
   final Duration _retryBase;
 
   bool _flushing = false;
+  int _exclusiveCount = 0;
+  Future<void> _exclusiveTail = Future.value();
+
+  Future<T> exclusive<T>(Future<T> Function() work) async {
+    _exclusiveCount++;
+    final previous = _exclusiveTail;
+    final done = Completer<void>();
+    _exclusiveTail = done.future;
+    try {
+      await previous;
+      await _flushDone?.future;
+      return await work();
+    } finally {
+      _exclusiveCount--;
+      done.complete();
+    }
+  }
+
   Completer<void>? _flushDone;
   Duration _retryIn = Duration.zero;
   DateTime _nextAttemptAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -82,7 +100,7 @@ class SyncService {
   /// Sends everything currently queued. Never throws: callers include a timer
   /// and a connectivity stream, neither of which has anyone to report to.
   Future<int> flush({bool force = false}) async {
-    if (_flushing) return 0;
+    if (_flushing || _exclusiveCount > 0) return 0;
     if (!force && DateTime.now().isBefore(_nextAttemptAt)) return 0;
     _flushing = true;
     _flushDone = Completer<void>();
@@ -137,6 +155,7 @@ class SyncService {
     _heartbeat = null;
     _onFlushed = null;
     await _flushDone?.future;
+    if (_exclusiveCount > 0) await _exclusiveTail;
   }
 
   /// Doubling from 1s to 5min. The RN client computed this backoff but the 30s

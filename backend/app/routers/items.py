@@ -2,16 +2,21 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, func
+from pydantic import AwareDatetime
 from sqlalchemy.orm import Session, defer
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.models import Item
-from app.schemas import ItemDetail
+from app.models import Item, ProcessingJob, JOB_ACTIVE_STATUSES, JOB_TYPE_PROCESS
+from app.schemas import ItemDetail, ItemEdit, SummarizeAgainRequest
+from app.services import reprocessing
 from app.services import retention
+from app.services.deletion import soft_delete_save, restore_save
 from app.categories import Category
 from app.services.intelligence import query_for, read_filters
+from app.services.outbox import record_job, _pending_item_ids
+from app.routers.ingest import _enqueue, _create_asset_and_memory
 
 router = APIRouter(prefix="/api/v1/items", tags=["items"])
 
@@ -59,9 +64,11 @@ def _decode_cursor(db: Session, user, cursor: str) -> tuple[datetime, UUID]:
 
 @router.get("", response_model=dict)
 def list_items(limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = None,
-               category: Category = None, intelligence: dict = Depends(read_filters),
+               category: Category = None, saved_after: AwareDatetime | None = None, intelligence: dict = Depends(read_filters),
                db: Session = Depends(get_db), user = Depends(get_current_user)):
     q = query_for(db, user.id, intelligence if isinstance(intelligence, dict) else {}).options(*_NOT_NEEDED)
+    if saved_after is not None:
+        q = q.filter(Item.created_at >= saved_after)
     if category is not None:
         q = q.filter(Item.category == category.value)
     if cursor:
@@ -78,12 +85,121 @@ def list_items(limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = N
 @router.get("/{item_id}", response_model=ItemDetail)
 def get_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
     item = (db.query(Item).options(*_NOT_NEEDED)
-              .filter(Item.id == item_id, Item.user_id == user.id).first())
+              .filter(Item.id == item_id, Item.user_id == user.id, Item.deleted_at.is_(None)).first())
     if not item: raise HTTPException(404, "not found")
     return item
 
+
+def _action_item(db, user_id, item_id):
+    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id,
+                                 Item.deleted_at.is_(None)).first()
+    if item is None:
+        raise HTTPException(404, "not found")
+    # Workers fence their writes on the job before updating the item.
+    job = (db.query(ProcessingJob).filter(ProcessingJob.content_id == item.content_id,
+                                        ProcessingJob.job_type == JOB_TYPE_PROCESS,
+                                        ProcessingJob.status.in_(JOB_ACTIVE_STATUSES))
+           .with_for_update().first()) if item.content_id else None
+    item = (db.query(Item).filter(Item.id == item_id, Item.user_id == user_id,
+                                 Item.deleted_at.is_(None))
+            .populate_existing().with_for_update().first())
+    if item is None:
+        raise HTTPException(404, "not found")
+    return item, job
+
+
+@router.patch("/{item_id}", response_model=ItemDetail)
+def edit_item(item_id: UUID, edit: ItemEdit, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    item, _ = _action_item(db, user.id, item_id)
+    if 'title' in edit.model_fields_set:
+        item.edited_title = edit.title
+    if 'summary' in edit.model_fields_set:
+        item.edited_summary = edit.summary
+    db.commit()
+    return item
+
+
+@router.post("/{item_id}/summarize-again", response_model=ItemDetail, status_code=202)
+def summarize_again(item_id: UUID, request: SummarizeAgainRequest = SummarizeAgainRequest(), db: Session = Depends(get_db), user = Depends(get_current_user)):
+    item, job = _action_item(db, user.id, item_id)
+    if reprocessing.edited(item) and not request.replace_edits:
+        raise HTTPException(409, "Replace your edits with a new summary?")
+    if item.reprocess_snapshot:
+        return item
+    if item.status in ('pending', 'processing') or (job and job.attempt_token is not None):
+        raise HTTPException(409, "This memory is being read. Try again when it finishes")
+    if item.content_id is None:
+        asset, _, _ = _create_asset_and_memory(db, user.id, item.url, item.canonical_url, item.title, item.raw_preview)
+        item.content_id = asset.id
+    item.reprocess_snapshot = reprocessing.snapshot(item, request.replace_edits)
+    item.reprocess_failure = None
+    item.link_only = False
+    item.status = 'ready'
+    item.failure_reason = None
+    item.needs_retry = False
+    job = record_job(db, item.content_id, JOB_TYPE_PROCESS)
+    job.last_stage = None
+    job.available_at = func.now()
+    db.commit()
+    _enqueue(db, str(item.id), item.content_id)
+    return item
+
+
+@router.post("/{item_id}/retry", response_model=ItemDetail, status_code=202)
+def retry_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    item, job = _action_item(db, user.id, item_id)
+    if reprocessing.edited(item):
+        raise HTTPException(409, "Edited memories require Summarize again confirmation")
+    if item.link_only:
+        raise HTTPException(409, "This memory is saved as a link only")
+    if item.status in ('pending', 'processing'):
+        return item
+    if item.status != 'failed' and not item.needs_retry:
+        raise HTTPException(409, "This memory does not need a retry")
+    if job and job.attempt_token is not None:
+        raise HTTPException(409, "This memory is being read. Try again when it finishes")
+    if item.content_id is None:
+        asset, _, _ = _create_asset_and_memory(db, user.id, item.url, item.canonical_url,
+                                               item.title, item.raw_preview)
+        item.content_id = asset.id
+    job = record_job(db, item.content_id, JOB_TYPE_PROCESS)
+    job.available_at = func.now()
+    item.status = 'pending'
+    item.failure_reason = None
+    item.needs_retry = False
+    db.commit()
+    _enqueue(db, str(item.id), item.content_id)
+    return item
+
+
+@router.post("/{item_id}/keep-link", response_model=ItemDetail)
+def keep_link(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    item, job = _action_item(db, user.id, item_id)
+    if item.link_only:
+        return item
+    if item.status != 'failed' and not item.needs_retry:
+        raise HTTPException(409, "This memory does not need a fallback")
+    if job and job.attempt_token is not None:
+        raise HTTPException(409, "This memory is being read. Try again when it finishes")
+    item.link_only = True
+    item.status = 'ready'
+    item.needs_retry = False
+    item.failure_reason = None
+    db.flush()
+    if job and not _pending_item_ids(db, item.content_id):
+        job.status = 'READY'
+        job.locked_at = None
+        job.attempt_token = None
+    db.commit()
+    return item
+
 @router.delete("/{item_id}", status_code=204)
-def delete_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
+def delete_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user),
+                undoable: bool = False):
+    if undoable:
+        if not soft_delete_save(db, user.id, item_id):
+            raise HTTPException(404, "not found")
+        return None
     item = db.query(Item).filter(Item.id == item_id, Item.user_id == user.id).first()
     if not item: raise HTTPException(404, "not found")
     if item.content_id is None:
@@ -97,4 +213,14 @@ def delete_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get
     # a later save of the same link would bring them back. delete_save removes
     # the item(s) first and then the memory, in one transaction.
     retention.delete_save(db, user.id, item.content_id)
+    return None
+
+
+@router.post("/{item_id}/restore", status_code=204)
+def restore_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    result = restore_save(db, user.id, item_id)
+    if result == 'missing':
+        raise HTTPException(404, "not found")
+    if result == 'expired':
+        raise HTTPException(409, "Undo window expired")
     return None

@@ -16,6 +16,8 @@ from app.models import (
 from app.schemas import IngestRequest, IngestResponse, SyncBatchRequest, SyncBatchResponse
 from app.services import metrics, observability
 from app.services.outbox import record_job
+from app.services.deletion import restore_save
+from app.services.retention import delete_save
 from app.tasks import process_item
 from app.utils.canonical import canonical_url, source_domain, source_type
 from app.utils.dedupe import dedupe_key
@@ -109,16 +111,25 @@ def _existing_item(db: Session, user_id, canon: str, url: str):
     """
     key = dedupe_key(url=url)
     asset = _find_reusable_asset(db, user_id, key, canon)
+    item = None
     if asset is not None:
         item = (db.query(Item)
                   .filter(Item.user_id == user_id,
                           Item.content_id == asset.id)
                   .first())
-        if item is not None:
-            return item
-    return (db.query(Item)
+    if item is None:
+        item = (db.query(Item)
               .filter(Item.user_id == user_id, Item.canonical_url == canon)
               .first())
+    if item is not None and item.deleted_at is not None:
+        result = restore_save(db, user_id, item.id)
+        if result == 'expired':
+            delete_save(db, user_id, item.content_id,
+                        item_ids=[str(item.id)] if item.content_id is None else None)
+            return None
+        if result == 'missing':
+            return None
+    return item
 
 
 def _reuse_existing_asset(db: Session, user_id, url: str, canon: str,

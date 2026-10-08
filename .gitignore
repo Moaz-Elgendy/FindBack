@@ -43,7 +43,9 @@ mobile/android/**
 !mobile/android/app/src/main/kotlin/com/findback/
 !mobile/android/app/src/main/kotlin/com/findback/findback/
 !mobile/android/app/src/main/kotlin/com/findback/findback/MainActivity.kt
-mobile/ios/
+mobile/ios/**
+!mobile/ios/Runner/
+!mobile/ios/Runner/AppDelegate.swift
 mobile/linux/
 mobile/macos/
 mobile/windows/
@@ -62,3 +64,9 @@ dart_test_output.txt
 # (`testpaths = tests`), flutter from mobile/, and the Docker build context is
 # ./backend, so none of them reach the repository root in the first place.
 termination/
+
+# Native reminder configuration is source, not generated output.
+!mobile/android/app/build.gradle.kts
+!mobile/android/app/src/main/res/
+!mobile/android/app/src/main/res/drawable/
+!mobile/android/app/src/main/res/drawable/ic_notification.xml

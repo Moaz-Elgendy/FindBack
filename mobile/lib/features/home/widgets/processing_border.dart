@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../theme.dart';
 
 /// Repaints only the card outline; its contents do not rebuild every frame.
 class ProcessingBorder extends StatefulWidget {
@@ -48,7 +49,7 @@ class _ProcessingBorderState extends State<ProcessingBorder>
   Widget build(BuildContext context) => CustomPaint(
     key: widget.active ? const ValueKey('processing-border') : null,
     foregroundPainter: widget.active ? _BorderLight(_light, widget.shape,
-        Theme.of(context).colorScheme.primary,
+        FindBackTheme.light[FindBackColor.accent]!,
         MediaQuery.disableAnimationsOf(context)) : null,
     child: widget.child,
   );
@@ -66,10 +67,12 @@ class _BorderLight extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final path = shape.getOuterPath((Offset.zero & size).deflate(1));
     final paint = Paint()..style = PaintingStyle.stroke..strokeWidth = 2;
-    if (still) {
-      canvas.drawPath(path, paint..color = color.withValues(alpha: .6));
-      return;
+    for (final edge in path.computeMetrics()) {
+      for (double start = 0; start < edge.length; start += 10) {
+      canvas.drawPath(edge.extractPath(start, (start + 5).clamp(0, edge.length)), paint..color = color.withValues(alpha: .65));
+      }
     }
+    if (still) return;
     for (final edge in path.computeMetrics()) {
       // A fading light follows the actual rounded outline, including corners.
       for (var i = 0; i < 16; i++) {

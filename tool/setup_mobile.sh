@@ -10,7 +10,7 @@
 #   tool/setup_mobile.sh                 # android + ios
 #   FINDBACK_EXTRA_PLATFORMS=linux tool/setup_mobile.sh
 #
-# Re-running is safe: existing platform folders are left untouched.
+# Re-running is safe: existing native source files are left untouched.
 set -euo pipefail
 
 MOBILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/mobile"
@@ -24,15 +24,16 @@ command -v flutter >/dev/null 2>&1 || {
 }
 [[ -f "$MOBILE/pubspec.yaml" ]] || { echo "missing $MOBILE/pubspec.yaml" >&2; exit 1; }
 
-if [[ ! -d "$MOBILE/android" || ! -d "$MOBILE/ios" ]]; then
+if [[ ! -f "$MOBILE/android/gradlew" || ! -f "$MOBILE/ios/Runner.xcodeproj/project.pbxproj" ]]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   echo "generating platform projects ($platforms) for org $ORG"
   (cd "$tmp" && flutter create --org "$ORG" --project-name findback \
       --platforms "$platforms" --no-pub findback >/dev/null)
   for dir in android ios linux windows macos web; do
-    if [[ -d "$tmp/findback/$dir" && ! -d "$MOBILE/$dir" ]]; then
-      cp -R "$tmp/findback/$dir" "$MOBILE/"
+    if [[ -d "$tmp/findback/$dir" ]]; then
+      mkdir -p "$MOBILE/$dir"
+      cp -Rn "$tmp/findback/$dir/." "$MOBILE/$dir/"
     fi
   done
   echo "created: $(cd "$MOBILE" && ls -d android ios linux 2>/dev/null | tr '\n' ' ')"

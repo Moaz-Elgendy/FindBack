@@ -111,16 +111,24 @@ void main() {
       share: ShareIntentService(),
       sync: SyncService(pending: () async => [], send: (_) async => throw UnimplementedError(),
         apply: (_) async {}, markFailed: (_) async {}, isOnline: () async => false));
-    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services, findMode: true)));
     await tester.pumpAndSettle();
     expect(find.text('article title'), findsOneWidget);
     expect(find.text('recipe title'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilterChip, 'Food'));
+    expect(find.widgetWithText(FilterChip, 'about Food'), findsNothing);
+    await tester.tap(find.text('More filters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Food').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Apply filters'), 200, scrollable: find.byType(Scrollable).last);
+    await tester.tap(find.text('Apply filters'));
     await tester.pumpAndSettle();
     expect(asked.last, 'Food');
     expect(find.text('article title'), findsNothing);
     expect(find.text('recipe title'), findsOneWidget);
-    final tutorial = find.widgetWithText(FilterChip, 'Gym');
+    final tutorial = find.widgetWithText(FilterChip, 'about Gym');
     expect(tutorial, findsOneWidget);
     await tester.ensureVisible(tutorial);
     await tester.pumpAndSettle();

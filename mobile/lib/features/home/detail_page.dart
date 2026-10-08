@@ -1,4 +1,11 @@
 import 'widgets/saved_date.dart';
+import 'widgets/memory_chip.dart';
+import 'widgets/delete_toast.dart';
+import 'edit_sheet.dart';
+import 'reminder_button.dart';
+import '../../app_services.dart';
+import '../../theme.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -13,8 +20,9 @@ import '../../services/items_service.dart';
 /// Port of the RN `DetailScreen`: summary, key points, ingredients, open the
 /// original, copy the summary, Cook Mode, and delete.
 class DetailPage extends StatefulWidget {
-  const DetailPage({super.key, required this.itemId, required this.items, this.onChanged});
+  const DetailPage({super.key, required this.itemId, required this.items, this.onChanged, this.services});
 
+  final AppServices? services;
   final String itemId;
   final ItemsService items;
 
@@ -30,7 +38,9 @@ class _DetailPageState extends State<DetailPage> {
   bool _loading = true;
   String? _error;
   bool _cookMode = false;
-  bool _fullBriefExpanded = false;
+  AppServices? get _services => widget.services ?? AppServicesScope.maybeOf(context);
+  bool _actionBusy = false;
+  String? _reportedFailure;
   Timer? _refreshTimer;
 
   @override
@@ -60,6 +70,12 @@ class _DetailPageState extends State<DetailPage> {
         _item = item;
         _loading = false;
       });
+      if (item?.reprocessFailure != null && item!.reprocessFailure != _reportedFailure) {
+        _reportedFailure = item.reprocessFailure;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showSnack(item.reprocessFailure!);
+        });
+      }
       if (item != null && item.isGeneratingBrief) {
         _refreshTimer = Timer(const Duration(seconds: 5), () => _load(refresh: true));
       }
@@ -102,214 +118,135 @@ class _DetailPageState extends State<DetailPage> {
   void _showSnack(String message) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
-  Future<void> _confirmDelete(ItemDetail item) async {
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('Delete memory?'),
-        content: const Text('This cannot be undone.'),
-        actions: <Widget>[
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    // Capture the messenger before popping: after pop this route's element is
-    // deactivated and looking up an ancestor from it throws.
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+  Future<void> _action(String action) async {
+    final item = _item;
+    final services = _services;
+    if (item == null || _actionBusy) return;
+    if (services == null) return;
+    setState(() => _actionBusy = true);
     try {
-      final DeleteOutcome outcome = await widget.items.remove(item.id);
-      widget.onChanged?.call();
-      if (!mounted) return;
-      Navigator.pop(context);
-      if (outcome.needsNetwork) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Removed from this device. The server copy returns until you reconnect.')),
-        );
+      if (action == 'Edit') {
+        await EditSheet.show(context, title: item.bestTitle, brief: item.briefText,
+          onSave: (title, brief) async {
+            await services.actions.edit(item.id, title: title, summary: brief);
+            widget.onChanged?.call();
+            await _load(refresh: true);
+          });
+      } else if (action == 'Summarize again') {
+        var replace = false;
+        if (item.edited) {
+          replace = await showDialog<bool>(context: context, builder: (dialog) => AlertDialog(
+            title: const Text('Replace your edits with a new summary?'),
+            actions: [TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(dialog, true), child: const Text('Replace'))])) ?? false;
+          if (!replace || !mounted) return;
+        }
+        await services.actions.summarizeAgain(item.id, replaceEdits: replace);
+        widget.onChanged?.call();
+        await _load(refresh: true);
+      } else if (action == 'Delete') {
+        final deletion = await services.actions.delete(item.id);
+        widget.onChanged?.call();
+        if (!mounted) return;
+        DeleteToast.show(context, localOnly: deletion.localOnly, undo: () async {
+          await deletion.undo(); widget.onChanged?.call();
+        });
+        Navigator.pop(context);
       }
     } on ApiException catch (error) {
-      if (!mounted) return;
-      _showSnack('Delete failed: ${error.message}');
-    }
+      if (mounted) _showSnack(error.message);
+    } catch (_) {
+      if (mounted) _showSnack('Could not update this memory. Try again.');
+    } finally { if (mounted) setState(() => _actionBusy = false); }
+  }
+
+  Future<void> _share(ItemDetail item) async {
+    final box = context.findRenderObject() as RenderBox?;
+    try {
+      await SharePlus.instance.share(ShareParams(text: item.url,
+        sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size));
+    } catch (_) { if (mounted) _showSnack('Could not share this link. Try again.'); }
   }
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
+    final theme = Theme.of(context);
+    final item = _item;
     return Scaffold(
-      appBar: AppBar(),
-      floatingActionButton: !_loading && _error == null && _item != null
-          ? FloatingActionButton.extended(
-              onPressed: () => _openOriginal(_item!.url),
-              icon: const Icon(Icons.open_in_new),
-              label: const Text('Open Original'),
-            )
-          : null,
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _ErrorBody(message: _error!, onRetry: _load)
-              : _item == null
-                  ? const _ErrorBody(message: 'That memory is not on this device yet.')
-                  : _buildDetail(theme, _item!),
+      appBar: AppBar(leading: BackButton(onPressed: () => Navigator.maybePop(context)),
+        actions: [if (item != null && _services != null) PopupMenuButton<String>(tooltip: 'Memory actions',
+          enabled: !_actionBusy, onSelected: _action,
+          itemBuilder: (_) => [for (final action in ['Edit', 'Summarize again', 'Delete'])
+            PopupMenuItem(value: action, child: Text(action))])]),
+      bottomNavigationBar: item == null || _error != null ? null : SafeArea(top: false,
+        child: Padding(padding: const EdgeInsetsDirectional.fromSTEB(20, 10, 20, 12),
+          child: Wrap(spacing: 12, runSpacing: 8, alignment: WrapAlignment.center, children: [
+            FilledButton.icon(onPressed: () => _openOriginal(item.url), icon: const Icon(Icons.open_in_new), label: const Text('Open original')),
+            OutlinedButton.icon(onPressed: () => _share(item), icon: const Icon(Icons.ios_share), label: const Text('Share'))]))),
+      body: _loading ? const Center(child: CircularProgressIndicator()) : _error != null
+        ? _ErrorBody(message: _error!, onRetry: _load) : item == null
+        ? const _ErrorBody(message: 'That memory is not on this device yet.') : _buildDetail(theme, item),
     );
   }
 
   Widget _buildDetail(ThemeData theme, ItemDetail item) {
-    final List<String> ingredients = item.ingredients;
-    final briefAction = _fullBriefExpanded ? 'Tap to collapse' : 'Tap to expand';
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 112),
-      children: <Widget>[
-        Text(item.bestTitle, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600, height: 1.2, color: theme.colorScheme.primary)),
-        if (item.sourceDomain?.isNotEmpty == true || item.createdAt != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Wrap(spacing: 12, runSpacing: 4, children: [
-              if (item.sourceDomain?.isNotEmpty == true)
-                Text(item.sourceDomain!, style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              if (item.createdAt != null) SavedDate(date: item.createdAt!),
-            ]),
-          ),
-        if (item.isFailed && !item.hasFinalBrief)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: _Banner(
-              text: "FindBack couldn't read this one, so there's no summary yet. "
-                  'Save the link again to retry, or open the original.',
-              failed: true,
-            ),
-          )
-        else if (item.isGeneratingBrief)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: _Banner(text: 'Generating/processing...'),
-          ),
-        const SizedBox(height: 16),
-        Text(
-          item.briefText.isEmpty ? 'Open the original to view this memory.' : item.briefText,
-          style: theme.textTheme.bodyLarge?.copyWith(height: 1.55),
-        ),
-        if (item.bestTakeaway != null && item.bestTakeaway!.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(top: 10), child: Text(item.bestTakeaway!, style: theme.textTheme.titleSmall)),
-        if (item.pointsWithRefs.isNotEmpty || item.keyPoints.isNotEmpty || (item.missingInfo?.isNotEmpty ?? false))
-          Padding(
-            padding: const EdgeInsets.only(top: 20),
-            child: Card(
-              margin: EdgeInsets.zero,
-              color: theme.colorScheme.primaryContainer,
-              clipBehavior: Clip.antiAlias,
-              child: ExpansionTile(
-                key: PageStorageKey<String>('full-brief-${item.id}'),
-                onExpansionChanged: (expanded) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted && _fullBriefExpanded != expanded) {
-                      setState(() => _fullBriefExpanded = expanded);
-                    }
-                  });
-                },
-                textColor: theme.colorScheme.onPrimaryContainer,
-                collapsedTextColor: theme.colorScheme.onPrimaryContainer,
-                iconColor: theme.colorScheme.onPrimaryContainer,
-                collapsedIconColor: theme.colorScheme.onPrimaryContainer,
-                tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                shape: const Border(),
-                collapsedShape: const Border(),
-                leading: const Icon(Icons.format_list_bulleted_rounded),
-                  title: Text('Full Brief', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                subtitle: Text(item.pointsWithRefs.isEmpty && item.keyPoints.isEmpty
-                    ? 'Details · $briefAction'
-                    : '${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · $briefAction'),
-                childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                children: <Widget>[
-                  if (item.pointsWithRefs.isNotEmpty)
-                    for (final (index, point) in item.pointsWithRefs.indexed) ...<Widget>[
-                      if (index > 0) Divider(color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.2)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(point.point, style: theme.textTheme.bodyLarge?.copyWith(height: 1.55, color: theme.colorScheme.onPrimaryContainer)),
-                            if (point.sourceRef != null)
-                              point.timestampUrl(item.url) == null
-                                  ? Padding(padding: const EdgeInsets.only(top: 6), child: Text(point.sourceRef!, style: theme.textTheme.bodySmall))
-                                  : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text(point.sourceRef!)),
-                          ],
-                        ),
-                      ),
-                    ]
-                  else
-                    for (final String point in item.keyPoints) _Bullet(text: point),
-                  if (item.missingInfo?.isNotEmpty ?? false)
-                    Padding(padding: const EdgeInsets.only(top: 8), child: _Banner(text: item.missingInfo!)),
-                ],
-              ),
-            ),
-          ),
-        if (ingredients.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 20),
-          Text('Ingredients', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 6),
-          for (final String ingredient in ingredients) _Bullet(text: ingredient),
-        ],
-        if (item.tags.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 20),
-          ExpansionTile(
-            key: PageStorageKey<String>('tags-${item.id}'),
-            title: const Text('Tags'),
-            subtitle: Text('${item.tags.length} search tags', style: theme.textTheme.bodySmall),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            children: <Widget>[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: item.tags.map((String tag) => Chip(label: Text(tag))).toList(growable: false),
-                ),
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 28),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _copySummary(item),
-                icon: const Icon(Icons.copy_all),
-                label: const Text('Copy Summary'),
-              ),
-            ),
-            if (item.category == 'recipe') ...<Widget>[
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: _toggleCookMode,
-                  icon: Icon(_cookMode ? Icons.dark_mode : Icons.restaurant),
-                  label: Text(_cookMode ? 'Exit Cook Mode' : 'Cook Mode'),
-                ),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 12),
-        TextButton.icon(
-          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
-          onPressed: () => _confirmDelete(item),
-          icon: const Icon(Icons.delete_outline),
-          label: const Text('Delete'),
-        ),
+    final points = item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs :
+      [for (final point in item.keyPoints) BriefKeyPoint(point: point)];
+    final colors = theme.brightness == Brightness.dark ? FindBackTheme.dark : FindBackTheme.light;
+    return ListView(padding: const EdgeInsetsDirectional.fromSTEB(20, 12, 20, 24), children: [
+      Text(item.bestTitle, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600,
+        height: 1.2, color: theme.colorScheme.onSurface)),
+      const SizedBox(height: 12),
+      Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        MemoryChip(type: item.contentType ?? 'link', category: item.category ?? 'other'),
+        if (item.sourceDomain?.isNotEmpty == true) Text(item.sourceDomain!, style: theme.textTheme.bodySmall),
+        if (item.createdAt != null) SavedDate(date: item.createdAt!),
+      ]),
+      if (item.descriptionOnly) Padding(padding: const EdgeInsetsDirectional.only(top: 8),
+        child: Text('Based on the page description only', style: theme.textTheme.bodySmall)),
+      if (item.isFailed && !item.hasFinalBrief) Padding(padding: const EdgeInsetsDirectional.only(top: 12),
+        child: _Banner(text: item.failureReason ?? 'Could not read this page. Retry or keep the link.', failed: true)),
+      if (item.isGeneratingBrief) const Padding(padding: EdgeInsetsDirectional.only(top: 12),
+        child: _Banner(text: 'Just saved · reading it now')),
+      const SizedBox(height: 20),
+      Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(
+        color: colors[FindBackColor.card], borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: colors[FindBackColor.line]!)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(item.briefText.isEmpty ? 'No summary yet.' : item.briefText, style: FindBackTheme.summaryStyle),
+          if (item.bestTakeaway?.isNotEmpty == true) Padding(padding: const EdgeInsetsDirectional.only(top: 12),
+            child: Text(item.bestTakeaway!, style: FindBackTheme.summaryStyle)),
+          for (final (index, point) in points.indexed) Padding(padding: const EdgeInsetsDirectional.only(top: 20),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Semantics(label: 'Point ${index + 1}', child: Container(width: MediaQuery.textScalerOf(context).scale(28), height: MediaQuery.textScalerOf(context).scale(28),
+                alignment: Alignment.center, decoration: BoxDecoration(color: colors[FindBackColor.soft],
+                  shape: BoxShape.circle), child: Text('${index + 1}', style: TextStyle(color: colors[FindBackColor.brand])))),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(point.point, style: FindBackTheme.summaryStyle),
+                if (point.sourceRef != null) point.timestampUrl(item.url) == null
+                  ? Text(point.sourceRef!, style: theme.textTheme.bodySmall)
+                  : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text('Jump to ${point.sourceRef}')),
+              ])),
+            ])),
+          if (item.missingInfo?.isNotEmpty == true) Padding(padding: const EdgeInsetsDirectional.only(top: 12),
+            child: Text(item.missingInfo!, style: theme.textTheme.bodySmall)),
+        ])),
+      if (_services?.reminders != null) Padding(padding: const EdgeInsetsDirectional.only(top: 20),
+        child: ReminderButton(item: item, service: _services!.reminders!)),
+      if (item.ingredients.isNotEmpty) ...[
+        const SizedBox(height: 20), Text('Ingredients', style: theme.textTheme.titleMedium),
+        for (final ingredient in item.ingredients) _Bullet(text: ingredient),
       ],
-    );
+      if (item.tags.isNotEmpty) ExpansionTile(title: const Text('Tags'), subtitle: Text('${item.tags.length} search tags'),
+        children: [Wrap(spacing: 6, runSpacing: 6, children: [for (final tag in item.tags) Chip(label: Text(tag))])]),
+      const SizedBox(height: 20),
+      Wrap(spacing: 12, runSpacing: 8, children: [
+        OutlinedButton.icon(onPressed: () => _copySummary(item), icon: const Icon(Icons.copy_all), label: const Text('Copy summary')),
+        if (item.category == 'recipe') FilledButton.tonalIcon(onPressed: _toggleCookMode,
+          icon: Icon(_cookMode ? Icons.dark_mode : Icons.restaurant), label: Text(_cookMode ? 'Exit Cook Mode' : 'Cook Mode')),
+      ]),
+    ]);
   }
 }
 

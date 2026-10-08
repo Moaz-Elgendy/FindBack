@@ -3,6 +3,8 @@ import 'package:dio/dio.dart';
 
 import '../config.dart';
 import '../models/item.dart';
+import '../models/reminder.dart';
+import '../models/weekly_note_settings.dart';
 import '../models/memory_collection.dart';
 import '../models/search_result.dart';
 import 'token_store.dart';
@@ -76,7 +78,10 @@ class ApiClient {
     if (category != null && category.isNotEmpty && category != 'All') {
       params['category'] = category.toLowerCase();
     }
-    if (filters?.isNotEmpty == true) params['intelligence'] = jsonEncode(filters);
+    final intelligence = Map<String, String>.from(filters?? {});
+    final savedAfter = intelligence.remove('saved_after');
+    if (savedAfter != null) params['saved_after'] = savedAfter;
+    if (intelligence.isNotEmpty) params['intelligence'] = jsonEncode(intelligence);
     final data = await _get('/api/v1/search', params);
     return SearchResponse.fromJson(data);
   }
@@ -87,9 +92,37 @@ class ApiClient {
     if (category != null && category.isNotEmpty && category != 'All') {
       params['category'] = category.toLowerCase();
     }
-    if (filters?.isNotEmpty == true) params['intelligence'] = jsonEncode(filters);
+    final intelligence = Map<String, String>.from(filters?? {});
+    final savedAfter = intelligence.remove('saved_after');
+    if (savedAfter != null) params['saved_after'] = savedAfter;
+    if (intelligence.isNotEmpty) params['intelligence'] = jsonEncode(intelligence);
     final data = await _get('/api/v1/items', params);
     return ItemPage.fromJson(data);
+  }
+
+  Future<List<MemoryReminder>> listReminders() async {
+    final data = await _get('/api/v1/reminders', const {});
+    return (data['reminders'] as List).map((row) => MemoryReminder.fromJson(Map<String, dynamic>.from(row as Map))).toList();
+  }
+
+  Future<WeeklyNoteSettings> weeklyNoteSettings() async =>
+      WeeklyNoteSettings.fromJson(await _get('/api/v1/account/weekly-note', const {}));
+
+  Future<WeeklyNoteSettings> saveWeeklyNoteSettings(WeeklyNoteSettings value) async =>
+      WeeklyNoteSettings.fromJson(await _send(() async => _dio.putUri<dynamic>(
+        AppConfig.apiUri('/api/v1/account/weekly-note'), data: value.toJson(),
+        options: Options(headers: await _headers(true)))));
+
+  Future<Map<String, dynamic>> exportSaves() => _get('/api/v1/account/export', const {});
+  Future<void> deleteAccount() => _delete('/api/v1/account');
+
+  Future<void> setReminder(MemoryReminder value) async {
+    await _send(() async => _dio.putUri<dynamic>(AppConfig.apiUri('/api/v1/items/${value.itemId}/reminder'),
+      data: value.toJson(), options: Options(headers: await _headers(true))));
+  }
+  Future<void> removeReminder(String id) => _delete('/api/v1/items/$id/reminder');
+  Future<void> acknowledgeReminder(MemoryReminder value) async {
+    await _post('/api/v1/items/${value.itemId}/reminder/delivered', {'scheduled_at': value.scheduledAt.toUtc().toIso8601String()});
   }
 
   Future<ItemDetail> getItem(String id) async =>
@@ -108,6 +141,26 @@ class ApiClient {
 
   Future<void> deleteItem(String id) => _delete('/api/v1/items/$id');
 
+  Future<void> deleteUndoable(String id) => _delete('/api/v1/items/$id', {'undoable': 'true'});
+
+  Future<void> restoreItem(String id) async {
+    await _post('/api/v1/items/$id/restore', const {});
+  }
+
+  Future<ItemDetail> editItem(String id, {required String title, required String summary}) async =>
+      ItemDetail.fromJson(await _send(() async => _dio.patchUri<dynamic>(
+        AppConfig.apiUri('/api/v1/items/$id'), data: {'title': title, 'summary': summary},
+        options: Options(headers: await _headers(true)))));
+
+  Future<ItemDetail> summarizeAgain(String id, {bool replaceEdits = false}) async =>
+      ItemDetail.fromJson(await _post('/api/v1/items/$id/summarize-again', {'replace_edits': replaceEdits}));
+
+  Future<ItemDetail> retryItem(String id) async =>
+      ItemDetail.fromJson(await _post('/api/v1/items/$id/retry', const {}));
+
+  Future<ItemDetail> keepLinkOnly(String id) async =>
+      ItemDetail.fromJson(await _post('/api/v1/items/$id/keep-link', const {}));
+
   // `AppConfig.apiUri` returns a `Uri`, so the calls go through dio's `*Uri`
   // variants — the plain `get`/`post`/`delete` take a `String` path.
   Future<Map<String, dynamic>> _get(String path, Map<String, String> params) => _send(() async {
@@ -125,10 +178,10 @@ class ApiClient {
         );
       });
 
-  Future<void> _delete(String path) async {
+  Future<void> _delete(String path, [Map<String, String> params = const {}]) async {
     await _send(() async {
       return _dio.deleteUri<dynamic>(
-        AppConfig.apiUri(path),
+        AppConfig.apiUri(path, params),
         options: Options(headers: await _headers(false)),
       );
     });

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
-class TopBarStatus extends StatefulWidget {
+import '../../../theme.dart';
+
+class TopBarStatus extends StatelessWidget {
   const TopBarStatus(
       {super.key,
       required this.queued,
@@ -8,80 +10,47 @@ class TopBarStatus extends StatefulWidget {
       required this.onAccount,
       this.signedIn = false});
 
-  final int queued;
-  final int processing;
+  final int queued, processing;
   final VoidCallback onAccount;
   final bool signedIn;
 
   @override
-  State<TopBarStatus> createState() => _TopBarStatusState();
-}
-
-class _TopBarStatusState extends State<TopBarStatus> {
-  final List<bool> _order = [];
-
-  void _updateOrder() {
-    // Simultaneous activations are ordered queue first, then processing.
-    for (final queue in [true, false]) {
-      final active = (queue ? widget.queued : widget.processing) > 0;
-      if (!active) {
-        _order.remove(queue);
-      } else if (!_order.contains(queue)) {
-        _order.add(queue);
-      }
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _updateOrder();
-  }
-
-  @override
-  void didUpdateWidget(TopBarStatus oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _updateOrder();
-  }
-
-  @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context) {
+    final count = queued + processing;
+    final colors = Theme.of(context).brightness == Brightness.dark
+        ? FindBackTheme.dark
+        : FindBackTheme.light;
+    return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (final queue in _order.reversed)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
+      if (count > 0)
+        Flexible(
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(end: 6),
               child: Semantics(
-                label:
-                    '${queue ? 'Queued' : 'Processing'} ${queue ? widget.queued : widget.processing}',
+                label: 'Reading $count',
                 excludeSemantics: true,
                 child: Container(
-                  constraints: const BoxConstraints(maxWidth: 64),
+                  constraints: const BoxConstraints(maxWidth: 120),
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                      '${queue ? 'Q' : 'P'} ${queue ? widget.queued : widget.processing}',
+                    color: colors[FindBackColor.accentSoft],
+                    borderRadius: BorderRadius.circular(99)),
+                        child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                  child: Text('Reading $count',
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSecondaryContainer)),
-                ),
-              ),
-            ),
+                          color: colors[
+                                            FindBackColor.accentInk]))))))),
           SizedBox(
               width: 48,
               height: 48,
               child: IconButton(
                   tooltip: 'Account',
-                  onPressed: widget.onAccount,
-                  icon: Icon(
-                      widget.signedIn ? Icons.person : Icons.person_outline))),
-        ],
-      );
+                  onPressed: onAccount,
+                  icon: Icon(signedIn ? Icons.person : Icons.person_outline))),
+        ]);
+}
 }

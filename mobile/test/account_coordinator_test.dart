@@ -15,6 +15,16 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+class DeletionApi extends ApiClient {
+  DeletionApi({super.tokens});
+  bool failDeletion = false;
+  int deletions = 0;
+  @override Future<void> deleteAccount() async {
+    if (failDeletion) throw ApiException('Deletion unavailable');
+    deletions++;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi;
@@ -27,7 +37,7 @@ void main() {
     final auth = AuthService();
     Future<T> drive<T>(Future<T> future) async {
       var done = false;
-      future.whenComplete(() => done = true);
+      future.then<void>((_) => done = true, onError: (Object _, StackTrace __) { done = true; });
       for (var i = 0; i < 200 && !done; i++) {
         await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
         await tester.pump();
@@ -40,7 +50,7 @@ void main() {
       factory: (scope, guest, tokens) async {
         stores[scope] = tokens;
         final db = await LocalDb.openAt('${directory.path}/${scope ?? 'legacy'}.db');
-        final api = ApiClient(tokens: tokens);
+        final api = DeletionApi(tokens: tokens);
         return AppServices(db: db, api: api, guest: guest,
           items: GuestLibrary(db, api).items,
           capture: CaptureService(ingest: (_, __, ___) async => throw UnimplementedError(),
@@ -82,6 +92,22 @@ void main() {
     await change('a');
     expect(await drive(coordinator.services.db.pendingCount()), 1);
     expect((await drive(coordinator.services.db.pendingQueue())).single.url, 'https://example.test/guest');
+    final deletedApi = coordinator.services.api as DeletionApi;
+    deletedApi.failDeletion = true;
+    await expectLater(drive(coordinator.deleteAccount()), throwsA(isA<ApiException>()));
+    expect(auth.currentSession!.id, 'a');
+    expect(await drive(coordinator.services.db.pendingCount()), 1);
+    deletedApi.failDeletion = false;
+    await drive(coordinator.deleteAccount());
+    expect(auth.currentSession, isNull);
+    expect(deletedApi.deletions, 1);
+    final erased = await drive(LocalDb.openAt('${directory.path}/account-a.db'));
+    expect(await drive(erased.pendingCount()), 0);
+    expect(await drive(erased.recentLocalItems()), isEmpty);
+    await drive(erased.close());
+    final preserved = await drive(LocalDb.openAt('${directory.path}/account-b.db'));
+    expect(await drive(preserved.pendingCount()), 1);
+    await drive(preserved.close());
     await tester.pumpWidget(const SizedBox());
     final closing = coordinator.close();
     var closed = false;

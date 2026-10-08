@@ -52,7 +52,7 @@ def read_filters(intelligence: str | None = Query(None, max_length=4096)) -> dic
 
 
 def query_for(db, user_id, values):
-    q = db.query(Item).filter(Item.user_id == user_id)
+    q = db.query(Item).filter(Item.user_id == user_id, Item.deleted_at.is_(None))
     for key, value in values.items():
         if key in ('topic', 'entity'):
             entries = (func.jsonb_path_query_array(func.coalesce(
