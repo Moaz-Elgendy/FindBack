@@ -305,6 +305,8 @@ def _status_for(queued: bool, fallback: str = "pending") -> str:
 
 @router.post("/ingest", response_model=IngestResponse)
 def ingest(req: IngestRequest, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    from app.services.capacity import intake_limit
+    intake_limit(str(user.id), guest=bool((getattr(user, "auth_subject", None) or "guest:").startswith("guest:")))
     canon = canonical_url(req.url)
     # Phase 2: identity is the content, not the URL text. Two URL forms of the
     # same video canonicalize differently but are the same asset, so the
@@ -402,6 +404,9 @@ def _touch(db: Session, item: Item, canon: str) -> IngestResponse:
 
 @router.post("/sync/batch", response_model=SyncBatchResponse)
 def sync_batch(req: SyncBatchRequest, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    from app.services.capacity import intake_limit
+    if req.items:
+        intake_limit(str(user.id), guest=bool((getattr(user, "auth_subject", None) or "guest:").startswith("guest:")), amount=len(req.items))
     mapped, errors = [], []
     for it in req.items:
         try:

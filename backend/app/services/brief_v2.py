@@ -43,7 +43,7 @@ def evidence_text(evidence: dict) -> str:
     return normalized(' '.join([(clean_source_text(str(evidence.get(k) or ''), title=k == 'title') if k in ('title', 'caption')
         else str(evidence.get(k) or '')) for k in ('title','author','caption','ocr_text')]
                               + [s['text'] for s in evidence.get('transcript', [])]
-                              + list(evidence.get('comments', [])) + list(evidence.get('frame_notes', []))))
+                              + list(evidence.get('comments', [])) + list(evidence.get('frame_notes', [])) + list(evidence.get('visual_notes', []))))
 
 
 
@@ -87,7 +87,7 @@ def rejection_reason(exc: Exception) -> str:
 def model_input(evidence: dict) -> dict:
     # Explicit allowlist: failures and internal processing data cannot become content.
     keys = ('source_platform', 'url', 'source_id', 'title', 'author', 'duration',
-            'caption', 'transcript', 'ocr_text', 'frame_notes', 'comments', 'evidence_level', 'language')
+            'caption', 'transcript', 'ocr_text', 'frame_notes', 'visual_notes', 'comments', 'evidence_level', 'language')
     supplied = {k: evidence[k] for k in keys if k in evidence}
     for key in ('title', 'caption'):
         if key in supplied:
@@ -181,7 +181,7 @@ def validate(data: dict, evidence: dict) -> BriefV2:
             point['source_ref'] = timestamp(min(segments[i]['start'] for i in ids))
     data['key_points'] = points
     corpus = evidence_text(evidence)
-    written = evidence_text(dict(evidence, transcript=[]))
+    written = evidence_text(dict(evidence, transcript=[], visual_notes=[]))
     dropped = drop_unconfirmed_names(data, written)
     if dropped:
         gone = {normalized(name) for name in dropped}
@@ -221,6 +221,8 @@ def validate(data: dict, evidence: dict) -> BriefV2:
             if tag=='agent skills' and not ({'agent','skills'} <= words or bool({'مهارات','مهارة'} & words) and bool({'وكلاء','وكيل'} & words)):
                 raise ValueError('Agent skill phrase tag is unsupported')
     prose = prose_text(brief.model_dump())
+    if re.search(r'\b(?:generic navigation|caption (?:only )?(?:contains|has) (?:only )?navigation links|content (?:wasn t|was not|could not be) (?:captured|extracted)|caption only contains|video (?:id|identifier) (?:only|was not captured))\b', prose):
+        raise ValueError('Forbidden extraction commentary')
     if any(normalized(phrase) in prose for phrase in FORBIDDEN) or re.search(
             r'\bno (?:captions?|transcripts?|ocr)\b|\b(?:captions?|transcripts?|ocr) (?:text )?(?:is |are |was |were )?(?:unavailable|missing|not available)\b', prose):
         raise ValueError('Forbidden extraction commentary')
@@ -234,6 +236,7 @@ def validate(data: dict, evidence: dict) -> BriefV2:
     if evidence.get('transcript'): available.add('transcript')
     if evidence.get('caption'): available.add('caption')
     if evidence.get('ocr_text') or evidence.get('frame_notes'): available.add('ocr')
+    if evidence.get('visual_notes'): available.add('visual')
     if set(brief.evidence_used) - available:
         raise ValueError('evidence_used names unavailable evidence')
     return brief
@@ -275,7 +278,7 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
                              '.'.join(map(str, e['loc'])) + ' (' + e['type'] + ')' for e in exc.errors())
                              if isinstance(exc, ValidationError) else 'Invalid response type'}
             if reason == 'unsupported_name':
-                written = evidence_text(dict(evidence, transcript=[]))
+                written = evidence_text(dict(evidence, transcript=[], visual_notes=[]))
                 rejection['entity_support'] = {name: normalized(name) in written
                     for key in ('tools_products', 'people_orgs') for name in data.get('entities', {}).get(key, [])}
             usage = ai.CHAT_USAGE.get()
@@ -285,7 +288,7 @@ async def _generate(evidence: dict, gateway, *, reduced: list[dict] | None = Non
             if type(exc) is ValueError:
                 error += ' ' + str(exc)
                 if str(exc) == NAME_ERROR:
-                    written = evidence_text(dict(evidence, transcript=[]))
+                    written = evidence_text(dict(evidence, transcript=[], visual_notes=[]))
                     confirmed = [name for key in ('tools_products', 'people_orgs')
                                  for name in data.get('entities', {}).get(key, []) if normalized(name) in written]
                     error += ' Keep only these confirmed named entities: ' + json.dumps(confirmed, ensure_ascii=False) + '. Remove every other name from entities, tags and prose; describe its function instead.'

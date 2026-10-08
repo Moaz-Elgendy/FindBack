@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../models/item.dart';
+import '../models/memory_collection.dart';
 import '../models/json_utils.dart';
 import '../models/search_result.dart';
 import '../utils/share_text.dart';
@@ -14,7 +16,7 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 4;
+  static const int schemaVersion = 5;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
@@ -33,6 +35,7 @@ class LocalDb {
               database.rawQuery('PRAGMA journal_mode = WAL'),
           onCreate: (Database database, int version) async => _onCreate(database),
           onUpgrade: (Database database, int oldVersion, int newVersion) async {
+            if (oldVersion < 5) await _createCollections(database);
             if (oldVersion < 2) await database.execute("ALTER TABLE items ADD COLUMN brief_payload TEXT DEFAULT '{}'");
             if (oldVersion < 4) {
               final columns = await database.rawQuery('PRAGMA table_info(sync_queue)');
@@ -64,9 +67,25 @@ class LocalDb {
         ..['id'] = 'local-$client'..['status'] = 'pending';
       await db.insert('items', cached, conflictAlgorithm: ConflictAlgorithm.replace);
     }
+    for (final row in await guest.db.query('collections', where: 'deleted = 0')) {
+      final origin = row['origin_id'] ?? row['id'];
+      if ((await db.query('collections', where: 'origin_id = ?', whereArgs: [origin])).isNotEmpty) continue;
+      await db.insert('collections', Map<String, Object?>.from(row)
+        ..['id'] = newCollectionId()..['origin_id'] = origin..['dirty'] = 1);
+    }
   }
 
+  static Future<void> _createCollections(Database db) => db.execute("""
+    CREATE TABLE IF NOT EXISTS collections (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, urls TEXT NOT NULL DEFAULT '[]',
+      revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0,
+      deleted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+      origin_id TEXT UNIQUE
+    )
+  """);
+
   static Future<void> _onCreate(Database db) async {
+    await _createCollections(db);
     await db.execute('''
       CREATE TABLE items (
         id TEXT PRIMARY KEY,
@@ -310,7 +329,19 @@ class LocalDb {
     return rows.isEmpty ? null : ItemDetail.fromLocalRow(rows.first);
   }
 
-  Future<int> deleteItem(String id) => db.delete('items', where: 'id = ?', whereArgs: <Object?>[id]);
+  Future<int> deleteItem(String id) => db.transaction((txn) async {
+    final items = await txn.query('items', where: 'id = ?', whereArgs: [id]);
+    if (items.isEmpty) return 0;
+    final url = ItemDetail.fromLocalRow(items.single).canonicalUrl;
+    for (final row in await txn.query('collections', where: 'deleted = 0')) {
+      final urls = (jsonDecode(row['urls'] as String) as List).cast<String>();
+      if (!urls.contains(url)) continue;
+      urls.removeWhere((member) => member == url);
+      await txn.rawUpdate('UPDATE collections SET urls = ?, dirty = 1, revision = revision + 1 WHERE id = ?',
+        [jsonEncode(urls), row['id']]);
+    }
+    return txn.delete('items', where: 'id = ?', whereArgs: [id]);
+  });
 
   /// Drops a queued capture the user deleted before it ever uploaded, so a
   /// cancelled save cannot resurrect itself on the next flush.

@@ -15,7 +15,7 @@ def is_fallback(item) -> bool:
 
 def should_retry(item) -> bool:
     if is_fallback(item): return True
-    return bool(fetcher.video_source(item.url or '')
+    return bool((fetcher.video_source(item.url or '') or (getattr(item, 'evidence_bundle', None) or {}).get('source_platform') in ('youtube', 'facebook', 'instagram', 'tiktok', 'vimeo', 'dailymotion', 'twitch'))
                 and (getattr(item, 'evidence_bundle', None) or {}).get('evidence_level') in ('partial', 'metadata_only')
                 and (getattr(item, 'processing_metadata', None) or {}).get('media_attempts', 0)
                 < max(1, env.get_int('MEDIA_RETRY_MAX_ATTEMPTS', 3)))

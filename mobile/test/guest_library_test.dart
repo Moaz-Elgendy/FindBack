@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:findback/data/api_client.dart';
 import 'package:findback/data/local_db.dart';
@@ -35,6 +36,24 @@ ItemDetail memory(String id, {bool complete = true}) => ItemDetail.fromJson({
 });
 void main() {
   setUpAll(() { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi; });
+  test('navigation-only legacy brief restarts through normal guest path', () async {
+    final db = await LocalDb.openAt(inMemoryDatabasePath);
+    final api = GuestApi(db);
+    final row = memory('old').toLocalRow();
+    final brief = jsonDecode(row['brief_payload'] as String) as Map<String, dynamic>;
+    brief['instant_brief'] = 'The caption only contains generic navigation links and QR-code download URLs.';
+    row['brief_payload'] = jsonEncode(brief);
+    final old = ItemDetail.fromLocalRow(row);
+    expect(old.hasFinalBrief, isFalse);
+    expect(old.isGeneratingBrief, isTrue);
+    await db.upsertRemoteItems([old]);
+    final result = await GuestLibrary(db, api).read(old.id);
+    expect(result.id, 'new-stage');
+    expect(result.url, old.url);
+    expect(api.deletes, 0);
+    await db.close();
+    api.close();
+  });
   test('guest cache precedes deletion and reads stay local', () async {
     final db = await LocalDb.openAt(inMemoryDatabasePath);
     final api = GuestApi(db);

@@ -14,7 +14,7 @@ class ResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     return Card.outlined(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       clipBehavior: Clip.antiAlias,
       child: ProcessingBorder(
         active: result.isGeneratingBrief,
@@ -28,7 +28,7 @@ class ResultCard extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.titleMedium
-              ?.copyWith(fontWeight: FontWeight.w600, color: theme.colorScheme.primary),
+              ?.copyWith(fontWeight: FontWeight.w700, color: theme.colorScheme.primary),
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 8),

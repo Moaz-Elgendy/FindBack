@@ -84,10 +84,13 @@ class ItemDetail {
   final String? contentType, likelyIntent, suggestedAction, intent;
   final List<String> topics;
 
-  bool get hasFinalBrief => briefSource == 'llm' && briefText.trim().isNotEmpty;
+  bool get hasFinalBrief => briefSource == 'llm' &&
+      briefText.trim().isNotEmpty &&
+      !RegExp(r'generic navigation|caption only contains|content (?:was not|could not be) (?:captured|extracted)',
+          caseSensitive: false).hasMatch(briefText);
 
   bool get isGeneratingBrief => !isFailed && !hasFinalBrief &&
-      (!isReady || needsRetry || briefSource == 'fallback');
+      (!isReady || needsRetry || briefSource == 'fallback' || briefSource == 'llm');
   final List<BriefKeyPoint> pointsWithRefs;
 
   String get briefText => instantBrief ?? summary ?? '';

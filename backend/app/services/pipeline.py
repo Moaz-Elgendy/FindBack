@@ -34,6 +34,7 @@ import time
 log = logging.getLogger("findback.pipeline")
 from app.services.extractor import memory_from_brief
 from app.services.limits import AI_LIMIT, EMBEDDING_LIMIT, FETCH_LIMIT
+from app.services.capacity import CapacityPause
 
 STAGE_FETCH = "FETCH"
 STAGE_NORMALIZE = "NORMALIZE"
@@ -72,9 +73,9 @@ async def stage_fetch(item, raw_preview: str = "") -> None:
                        "input_provenance": "caption" if raw_preview else "none",
                        "fetch_errors": ["metadata fetch failed"]}
     if "input_provenance" in fetched:
-        if fetcher.video_source(item.url or ""):
+        if fetcher.video_source(fetched.get("resolved_url") or item.url or "") or fetched.get("source_type") == "video":
             bundle, media_meta = await media_understanding.acquire(
-                item.url, fetched, getattr(item, "user_id", None),
+                fetched.get("resolved_url") or item.url, fetched, getattr(item, "user_id", None),
                 cache_lookup=lambda platform, source_id, owner: media_understanding.cached_evidence(platform, source_id, owner, url=item.url))
         else:
             bundle = media_understanding.initial_bundle(item.url, fetched)
@@ -128,6 +129,8 @@ async def stage_understand(item) -> None:
             item.brief_v2.update(brief_source="llm", evidence_level=evidence.get("evidence_level", "metadata_only"),
                                  prompt_version=brief_v2.PROMPT_VERSION)
             processing["brief_fallback"] = False
+        except CapacityPause:
+            raise
         except Exception as exc:
             log.warning("[brief] item=%s validation/provider failure=%s", getattr(item, "id", ""), type(exc).__name__)
             if not usage.get("validation_rejections") or not isinstance(exc, (ValueError, TypeError)):

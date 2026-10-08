@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 
 import '../config.dart';
 import '../models/item.dart';
+import '../models/memory_collection.dart';
 import '../models/search_result.dart';
 import 'token_store.dart';
 
@@ -22,7 +23,7 @@ class ApiException implements Exception {
   final ApiFailureKind kind;
 
   bool get isRetryableOffline =>
-      kind == ApiFailureKind.connectivity || kind == ApiFailureKind.timeout || kind == ApiFailureKind.server;
+      kind == ApiFailureKind.connectivity || kind == ApiFailureKind.timeout || kind == ApiFailureKind.server || statusCode == 429;
 
   @override
   String toString() => 'ApiException(${statusCode ?? kind.name}): $message';
@@ -93,6 +94,17 @@ class ApiClient {
 
   Future<ItemDetail> getItem(String id) async =>
       ItemDetail.fromJson(await _get('/api/v1/items/$id', const <String, String>{}));
+
+  Future<List<MemoryCollection>> listCollections() async {
+    final data = await _get('/api/v1/collections', const {});
+    return (data['collections'] as List).map((c) => MemoryCollection.fromJson(Map<String, dynamic>.from(c as Map))).toList();
+  }
+
+  Future<MemoryCollection> saveCollection(MemoryCollection value) async => MemoryCollection.fromJson(
+      await _send(() async => _dio.putUri<dynamic>(AppConfig.apiUri('/api/v1/collections/${value.id}'),
+        data: value.toJson(), options: Options(headers: await _headers(true)))));
+
+  Future<void> deleteCollection(String id) => _delete('/api/v1/collections/$id');
 
   Future<void> deleteItem(String id) => _delete('/api/v1/items/$id');
 

@@ -1,9 +1,10 @@
 from sqlalchemy import text
 
 from app.celery_app import celery
+from app.services.capacity import CapacityPause
 from app.database import SessionLocal
 from app.models import (
-    JOB_STATUS_FAILED, JOB_STATUS_READY, JOB_TYPE_PROCESS, VISIBILITY_PUBLIC,
+    JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_READY, JOB_TYPE_PROCESS, VISIBILITY_PUBLIC,
     Chunk, ContentAsset, Item, ProcessingJob,
 )
 from app.services import embedder, observability, retention
@@ -277,7 +278,7 @@ def process_item(self, item_id: str):
             return {"id": str(item.id), "status": item.status,
                     "skipped": "job already finished"}
         if job is not None:
-            if item.needs_retry and job.available_at > datetime.datetime.now(datetime.timezone.utc):
+            if (item.needs_retry or job.last_error == "Provider capacity pause; retry scheduled") and job.available_at > datetime.datetime.now(datetime.timezone.utc):
                 return {"id": str(item.id), "status": item.status, "skipped": "improvement not due"}
             if not claim_job(db, job.id):
                 # Another worker owns this content right now.
@@ -354,6 +355,23 @@ def process_item(self, item_id: str):
             pipeline_version=JOB_TYPE_PROCESS, stage="READY", status="ready",
             duration_ms=int(round((time.monotonic() - began) * 1000)))
         return {"id": str(item.id), "status": "ready"}
+    except CapacityPause as exc:
+        if heartbeat is not None:
+            heartbeat.stop()
+        db.rollback()
+        if job is not None:
+            fence_attempt(db, job.id, token)
+            item.status = "ready" if item.summary and item.needs_retry else "pending"
+            item.failure_reason = None
+            job.status = JOB_STATUS_PENDING
+            job.available_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=exc.retry_after)
+            job.locked_at = None
+            job.claimed_at = None
+            job.attempt_token = None
+            job.updated_at = datetime.datetime.now(datetime.timezone.utc)
+            job.last_error = "Provider capacity pause; retry scheduled"
+            db.commit()
+        return {"id": item_id, "status": "pending", "retry_after": exc.retry_after}
     except AttemptLost:
         db.rollback()
         return {"id": item_id, "status": "skipped", "reason": "attempt superseded"}

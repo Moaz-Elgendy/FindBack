@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.database import SessionLocal, init_db
 from app.celery_app import celery
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import ingest, search, items, user_context, auth
+from app.routers import ingest, search, items, user_context, auth, collections
 from app.services import metrics, observability, privacy, retention
 from app.log_filters import (SecretMask, install_log_filters,
                              install_privacy_filtering,
@@ -128,6 +128,7 @@ app.include_router(search.router)
 app.include_router(items.router)
 app.include_router(user_context.router)
 app.include_router(auth.router)
+app.include_router(collections.router)
 
 @app.get("/metrics", response_class=PlainTextResponse)
 def prometheus_metrics():

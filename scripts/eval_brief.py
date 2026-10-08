@@ -84,7 +84,7 @@ async def main(args) -> int:
         caption = media_understanding.initial_bundle(args.url, dict(fetched, transcript=[]))
         results.append({'name': 'caption_only', 'evidence_level': caption.evidence_level,
                         **await run(caption.model_dump())})
-        bundle, meta = await media_understanding.acquire(args.url, fetched)
+        bundle, meta = await media_understanding.acquire(fetched.get('resolved_url') or args.url, fetched)
         results.append({'name': 'full_pipeline', 'evidence_level': bundle.evidence_level,
                         'acquisition_metadata': meta, 'acquisition_errors': bundle.fetch_errors,
                         **await run(bundle.model_dump())})

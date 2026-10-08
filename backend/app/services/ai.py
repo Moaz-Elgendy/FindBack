@@ -37,6 +37,7 @@ from dataclasses import dataclass
 import httpx
 
 from app import env
+from app.services.capacity import CapacityPause, reserve_provider, pause_provider
 
 log = logging.getLogger("findback.ai")
 CHAT_USAGE = ContextVar("brief_chat_usage", default=None)
@@ -456,6 +457,7 @@ async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
         # token BEFORE sending, instead of sending and being rejected with 429.
         # The bucket is per provider; the same call shapes every AI request.
         await _wait_for_rate_limit(provider)
+        reserve_provider(provider, body)
         try:
             async with httpx.AsyncClient(timeout=timeout, transport=_TRANSPORT) as client:
                 response = await client.post(url, headers=headers, json=body)
@@ -508,6 +510,8 @@ async def _post_json(url: str, headers: dict, payload: dict, *, provider: str,
             await asyncio.sleep(delay)
             waited += delay
 
+    if isinstance(last_error, (AITimeoutError, AIUnreachableError)) or (isinstance(last_error, AIHTTPError) and last_error.status in (429, 503)):
+        pause_provider(provider, int(max(60, _retry_delay(response, 1))))
     raise last_error or AIError(f"{provider} request failed", provider)
 
 
@@ -719,8 +723,8 @@ async def _chat_post(cfg: ChatConfig, body: dict) -> tuple[dict, ChatConfig]:
     """Fail over only after primary transient retries have been exhausted."""
     try:
         return await _post_json(cfg.url, cfg.headers, body, provider=cfg.provider), cfg
-    except AIError as exc:
-        eligible = isinstance(exc, AITimeoutError) or (
+    except (AIError, CapacityPause) as exc:
+        eligible = isinstance(exc, CapacityPause) or isinstance(exc, AITimeoutError) or (
             isinstance(exc, AIHTTPError) and exc.status in (429, 503))
         explicit = env.get("SECONDARY_AI_PROVIDER")
         if not eligible or not explicit:

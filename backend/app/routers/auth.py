@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from jose import JWTError
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,9 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 @router.post("/guest")
-def create_guest(db: Session = Depends(get_db)):
+def create_guest(request: Request, db: Session = Depends(get_db)):
+    from app.services.capacity import guest_creation_limit
+    guest_creation_limit(request.client.host if request.client else "unknown")
     try:
         token, expires = issue_guest_token()
         claims = decode_access_token(token)

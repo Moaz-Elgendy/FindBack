@@ -149,6 +149,7 @@ class Item(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "canonical_url", name="items_user_canonical_uq"),
+        UniqueConstraint("id", "user_id", name="items_id_user_uq"),
         # Phase 16: an item may only point at content THIS user has a memory of.
         # The application checks that on every route; this makes it impossible to
         # violate from any route, present or future.
@@ -377,3 +378,28 @@ class Chunk(Base):
               postgresql_ops={"embedding": "vector_cosine_ops"}),
     )
 
+
+
+class Collection(Base):
+    __tablename__ = "collections"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(80), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    __table_args__ = (UniqueConstraint("id", "user_id", name="collections_id_user_uq"),
+                      Index("collections_user_idx", "user_id"))
+
+
+class CollectionItem(Base):
+    __tablename__ = "collection_items"
+    collection_id = Column(UUID(as_uuid=True), primary_key=True)
+    item_id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    __table_args__ = (
+        ForeignKeyConstraint(["collection_id", "user_id"], ["collections.id", "collections.user_id"],
+                             ondelete="CASCADE", name="collection_items_owner_fk"),
+        ForeignKeyConstraint(["item_id", "user_id"], ["items.id", "items.user_id"],
+                             ondelete="CASCADE", name="collection_items_item_owner_fk"),
+        Index("collection_items_item_idx", "item_id", "user_id"),
+    )

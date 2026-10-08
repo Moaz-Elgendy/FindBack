@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import math
 import re
 import subprocess
@@ -43,6 +44,7 @@ class EvidenceBundle(BaseModel):
     transcript: list[TranscriptSegment] = []
     ocr_text: str = ''
     frame_notes: list[str] = []
+    visual_notes: list[str] = []
     comments: list[str] = []
     evidence_level: str = 'metadata_only'
     fetch_errors: list[str] = []
@@ -57,7 +59,7 @@ class EvidenceBundle(BaseModel):
         words = ' '.join(s.text for s in self.transcript if s.end >= s.start).split()
         if len(words) >= 4:
             self.evidence_level = 'full_transcript'
-        elif self.caption.strip() or self.ocr_text.strip() or self.frame_notes:
+        elif self.caption.strip() or self.ocr_text.strip() or self.frame_notes or self.visual_notes:
             self.evidence_level = 'partial'
         else:
             self.evidence_level = 'metadata_only'
@@ -103,11 +105,11 @@ def transcription_prompt(bundle: EvidenceBundle) -> str | None:
 
 def download_options(directory: Path | None = None, *, audio_only=False) -> dict:
     cap = max(1, env.get_int('MEDIA_MAX_FILESIZE_MB', 150)) * 1024 * 1024
-    options = dict(noplaylist=True, quiet=True, no_warnings=True, socket_timeout=20,
+    options = dict(noplaylist=True, quiet=True, noprogress=True, no_warnings=True, socket_timeout=20,
                    retries=1, fragment_retries=1, max_filesize=cap,
                    format='bestaudio/best' if audio_only else
-                   'bestvideo[height<=480]+bestaudio/bestvideo[width<=480]+bestaudio/best[height<=480]/best[width<=480]/bestaudio',
-                   merge_output_format='mp4', cachedir=False)
+                   'bestvideo[height<=480]+bestaudio/bestvideo[width<=480]+bestaudio/best[height<=480]/best[width<=480]/best[height<=720]/best[width<=720]/bestaudio',
+                   merge_output_format='mp4', cachedir=False, proxy='')
     if directory is not None:
         options['outtmpl'] = str(directory / 'media.%(ext)s')
         def limit(progress):
@@ -122,7 +124,7 @@ def download_options(directory: Path | None = None, *, audio_only=False) -> dict
 
 
 def probe(url: str) -> dict:
-    from yt_dlp import YoutubeDL
+    from app.services.safe_media import PublicYoutubeDL as YoutubeDL
     options = download_options()
     options.pop('format', None)
     with YoutubeDL(options) as downloader:
@@ -133,22 +135,34 @@ def probe(url: str) -> dict:
 
 
 def download(url: str, info: dict, directory: Path) -> Path:
-    from yt_dlp import YoutubeDL
+    from app.services.safe_media import PublicYoutubeDL as YoutubeDL
     duration = info.get('duration')
-    if not duration or duration > max(1, env.get_int('MEDIA_LONG_MAX_SECONDS', 7200)):
-        raise ValueError('Unknown duration or long-video cap exceeded')
-    audio_only = duration > max(1, env.get_int('MEDIA_MAX_DURATION_SECONDS', 1200))
+    if duration and duration > max(1, env.get_int('MEDIA_LONG_MAX_SECONDS', 7200)):
+        raise ValueError('Long-video cap exceeded')
+    audio_only = bool(duration and duration > max(1, env.get_int('MEDIA_MAX_DURATION_SECONDS', 1200)))
     with YoutubeDL(download_options(directory, audio_only=audio_only)) as downloader:
         downloader.process_ie_result(info, download=True)
     files = [p for p in directory.iterdir() if p.is_file() and p.suffix not in ('.part', '.ytdl', '.json')]
     if not files: raise ValueError('No media downloaded')
     cap = max(1, env.get_int('MEDIA_MAX_FILESIZE_MB', 150)) * 1024 * 1024
     if sum(p.stat().st_size for p in files) > cap: raise ValueError('Media filesize cap exceeded')
-    return max(files, key=lambda p: p.stat().st_size)
+    media = max(files, key=lambda p: p.stat().st_size)
+    if duration is None:
+        probe = subprocess.run(
+            ['ffprobe', '-v', 'error', '-protocol_whitelist', 'file,pipe',
+             '-show_entries', 'format=duration', '-of', 'json', str(media)],
+            check=True, capture_output=True, timeout=30)
+        duration = float(json.loads(probe.stdout)['format']['duration'])
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError('Invalid media duration')
+        if duration > max(1, env.get_int('MEDIA_LONG_MAX_SECONDS', 7200)):
+            raise ValueError('Long-video cap exceeded')
+        info['duration'] = duration
+    return media
 
 
 def extract_audio(media: Path, audio: Path) -> None:
-    subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(media), '-vn',
+    subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-protocol_whitelist', 'file,pipe', '-i', str(media), '-vn',
                     '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(audio)],
                    check=True, capture_output=True, timeout=max(30, env.get_int('MEDIA_FFMPEG_TIMEOUT', 300)))
 
@@ -201,6 +215,7 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
             return bundle, metadata
         try:
             path = await asyncio.to_thread(download, url, info, directory)
+            bundle.duration = info.get('duration') or bundle.duration
         except Exception as exc:
             failure(bundle, 'download', exc)
             path = None
@@ -234,6 +249,16 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
                                     cost_known=result.cost is not None)
                 except Exception as exc:
                     failure(bundle, 'audio', exc)
+            if frames and len(' '.join(segment.text for segment in bundle.transcript).split()) < 25 and len(bundle.ocr_text.split()) < 20:
+                from app.services.scene_understanding import describe_frames
+                from app.services.capacity import CapacityPause
+                try:
+                    bundle.visual_notes, vision_meta = await describe_frames(frames, bundle.caption)
+                    metadata.update(vision_meta)
+                except CapacityPause:
+                    raise
+                except Exception as exc:
+                    failure(bundle, 'visual', exc)
     bundle.classify()
     metadata.update(duration=bundle.duration, seconds_taken=time.monotonic() - began)
     return bundle, metadata
@@ -243,7 +268,7 @@ def sample_frames(media: Path, directory: Path, duration: float | None) -> list[
     cap = max(1, min(12, env.get_int('MEDIA_FRAME_CAP', 10)))
     output = str(directory / 'frame-%03d.jpg')
     timeout = max(30, env.get_int('MEDIA_FFMPEG_TIMEOUT', 300))
-    base = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(media)]
+    base = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-protocol_whitelist', 'file,pipe', '-i', str(media)]
     subprocess.run(base + ['-vf', r"select=gt(scene\,0.25),scale=720:-2", '-vsync', 'vfr',
                           '-frames:v', str(cap), '-q:v', '3', output],
                    check=True, capture_output=True, timeout=timeout)

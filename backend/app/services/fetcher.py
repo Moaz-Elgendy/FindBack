@@ -18,9 +18,13 @@ def video_source(url: str) -> str | None:
         return 'youtube'
     if host == 'instagram.com' or host.endswith('.instagram.com') or host == 'fb.watch':
         return 'video'
-    if host == 'tiktok.com' or host.endswith('.tiktok.com'):
+    if host == 'tiktok.com' or host.endswith('.tiktok.com') or host == 'tt.site' or host.endswith('.tt.site'):
         return 'video'
     if (host == 'facebook.com' or host.endswith('.facebook.com')) and re.search(r'/(?:reel|reels|watch|videos|share/r)(?:/|$)', parsed.path):
+        return 'video'
+    if host in ('vimeo.com', 'www.vimeo.com', 'dailymotion.com', 'www.dailymotion.com', 'twitch.tv', 'www.twitch.tv'):
+        return 'video'
+    if re.search(r'\.(?:mp4|webm|mov|m4v|mkv|m3u8)$', parsed.path, re.I):
         return 'video'
     return None
 
@@ -38,6 +42,7 @@ def clean_source_text(text: str, *, title: bool = False) -> str:
     text = text.split('Markdown Content:', 1)[-1]
     controls = r'reels?|.+ sent you (?:a|an) (?:reel|video|post|link)|log\s?in|sign\s?(?:in|up)|forgot (?:password|account)\??|privacy|terms|log in to .+|see more(?: on Facebook)?|see less|like|comment|share|email or phone number|password|create new account|(?:.+\s*[·|–-]\s*)?original audio(?:\s*[·|–-].*)?'
     counts = r'(?:[\d,.]+\s*[KMB]?\s*(?:reactions?|likes?|comments?|shares?|views?))(?:\s*[·|]\s*[\d,.]+\s*[KMB]?\s*(?:reactions?|likes?|comments?|shares?|views?))*'
+    controls += r'|company|about(?: us)?|newsroom|contact(?: us)?|careers|tiktok for good|get tiktok|download (?:now|the app)|qr code|terms of service|privacy policy|help center|community guidelines|transparency|advertise|developers|tiktok rewards|tiktok live'
     lines = []
     for line in text.splitlines():
         plain = re.sub(r'^#{1,6}\s+', '', line.strip(' *\t'))
@@ -87,7 +92,27 @@ def usable_text(text: str, video: bool = False) -> str:
 
 
 async def fetch_content(url: str, preview: str = '') -> dict:
+    from app.utils.url_safety import validate_url
+    url = validate_url(url)
     source = video_source(url)
+    from app import env
+    if env.get_bool('MEDIA_ENABLED', True):
+        from app.utils.url_safety import public_get
+        try:
+            url, page = await public_get(url)
+            source = video_source(url) or source
+            if (page.headers.get('content-type', '').startswith('video/')
+                    or re.search(r'<video\b|(?:property|name)=[\"\']og:(?:video|type)[\"\'][^>]*(?:video|player)', page.text, re.I)):
+                source = source or 'video'
+        except (httpx.TransportError, httpx.TimeoutException, OSError):
+            pass  # Guarded provider/media paths can still retrieve a public URL.
+    host = (urlparse(url).hostname or '').lower()
+    if env.get_bool('MEDIA_ENABLED', True) and (host == 'tt.site' or host.endswith('.tt.site')
+            or host == 'tiktok.com' or host.endswith('.tiktok.com')):
+        # Reader pages can include recommendations from entirely different videos.
+        text = usable_text(preview, video=True)
+        return {'text': text[:12000], 'title': '', 'thumbnail': '', 'resolved_url': url,
+                'source_type': 'video', 'input_provenance': 'caption' if text else 'none'}
     transient = False
     limited = None
     if source == 'youtube':
@@ -122,17 +147,17 @@ async def fetch_content(url: str, preview: str = '') -> dict:
                     title, thumbnail = (match.group(1).strip() if match else ''), ''
                 text = usable_text(text, bool(source))
                 if text:
-                    return {'text': text[:12000], 'title': clean_source_text((limited or {}).get('title') or title, title=True) if source else ((limited or {}).get('title') or title), 'thumbnail': thumbnail or '', 'source_type': source or 'article', 'input_provenance': 'caption' if source else 'page'}
+                    return {'text': text[:12000], 'title': clean_source_text((limited or {}).get('title') or title, title=True) if source else ((limited or {}).get('title') or title), 'thumbnail': thumbnail or '', 'resolved_url': url, 'source_type': source or 'article', 'input_provenance': 'caption' if source else 'page'}
         except (httpx.TimeoutException, httpx.TransportError, TransientFetchError):
             transient = True
         except (ValueError, TypeError):
             continue
     if limited:
-        return limited
+        return dict(limited, resolved_url=url)
     text = usable_text(preview, bool(source))
     if not text and transient:
         raise TransientFetchError('Content providers temporarily unavailable')
-    return {'text': text[:12000], 'title': '', 'thumbnail': '', 'source_type': source or 'article', 'input_provenance': ('caption' if source else 'page') if text else 'none'}
+    return {'text': text[:12000], 'title': '', 'thumbnail': '', 'resolved_url': url, 'source_type': source or 'article', 'input_provenance': ('caption' if source else 'page') if text else 'none'}
 
 
 async def _try_youtube(url: str) -> dict | None:

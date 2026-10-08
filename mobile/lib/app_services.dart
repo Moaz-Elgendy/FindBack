@@ -8,6 +8,7 @@ import 'data/token_store.dart';
 import 'models/item.dart';
 import 'models/search_result.dart';
 import 'services/guest_library.dart';
+import 'services/collections_service.dart';
 import 'services/capture_service.dart';
 import 'services/items_service.dart';
 import 'services/share_intent_service.dart';
@@ -57,6 +58,21 @@ class AppServices {
     );
   }
 
+  late final CollectionsService collections = CollectionsService(db, api, guest: guest);
+  Future<void>? _collectionWork;
+
+  bool _collectionsActive = false;
+  Future<void> refreshCollections() {
+    if (_accountWorkStopped) return Future.value();
+    _collectionsActive = true;
+    return _collectionWork = _syncCollections();
+  }
+
+  Future<void> _syncCollections() async {
+    try { await collections.refresh(); }
+    on ApiException catch (error) { debugPrint('[collections] sync failed: ${error.kind.name}'); }
+  }
+
   final bool guest;
   final List<SearchResult> initialLibrary;
   final GuestLibrary? guestLibrary;
@@ -92,7 +108,10 @@ class AppServices {
 
   Future<void> startSync() async {
     await refreshPending();
-    sync.start(onFlushed: (int flushed) => refreshPending());
+    sync.start(onFlushed: (int flushed) {
+      refreshPending();
+      if (_collectionsActive) refreshCollections();
+    });
   }
 
   /// Handles anything the Share Sheet sends, on launch and afterwards.
@@ -130,6 +149,7 @@ class AppServices {
     await _shareSubscription?.cancel();
     _shareSubscription = null;
     await sync.stop();
+    await _collectionWork;
     await _shareWork;
   }
 

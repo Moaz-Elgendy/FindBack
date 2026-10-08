@@ -12,6 +12,12 @@ MAX_SYNC_BATCH = 100
 
 class IngestRequest(BaseModel):
     url: str = Field(min_length=1, max_length=MAX_URL_CHARS)
+    @field_validator("url")
+    @classmethod
+    def public_url(cls, value):
+        from app.utils.url_safety import validate_url
+        return validate_url(value)
+
     preview: Optional[str] = None
     title_hint: Optional[str] = None
 
@@ -25,6 +31,12 @@ class SyncItem(BaseModel):
     client_id: str
     url: str = Field(min_length=1, max_length=MAX_URL_CHARS)
     captured_at: Optional[str] = None
+    @field_validator("url")
+    @classmethod
+    def public_url(cls, value):
+        from app.utils.url_safety import validate_url
+        return validate_url(value)
+
     preview: Optional[str] = None
     title_hint: Optional[str] = None
 

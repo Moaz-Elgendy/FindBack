@@ -222,7 +222,8 @@ class _DetailPageState extends State<DetailPage> {
                 tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                 shape: const Border(),
                 collapsedShape: const Border(),
-                title: Text('Full Brief', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                leading: const Icon(Icons.format_list_bulleted_rounded),
+                  title: Text('Full Brief', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                 subtitle: Text(item.pointsWithRefs.isEmpty && item.keyPoints.isEmpty
                     ? 'Details · $briefAction'
                     : '${item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.length : item.keyPoints.length} key points · $briefAction'),

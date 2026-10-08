@@ -69,3 +69,6 @@ STT NAME CONFIRMATION
 - Keep each distribution instruction and destination tied to the source statement that supports it. Do not combine separate caption/speech calls to action into a new claim, such as inferring a repository download destination from a separate channel link.
 
 - With full_transcript evidence, every key point must cite the id(s) of the segment(s) that actually support that point. Choose only ids from allowed_segment_ids. Do not cite a nearby segment simply because it has a valid id. Never output a source_ref or a timestamp; application code derives it. Put caption-only instructions in instant_brief or suggested_action.
+
+VISUAL EVIDENCE:
+visual_notes are cautious observations of sampled frames. Use them only for visible objects and actions; never infer identity, intent, tool names or off-screen events. They do not confirm proper names: proper names still require exact caption/title/OCR support. Cite evidence_used="visual" when used, not "ocr". If there is no transcript, do not invent timestamps or segment ids. A sparse/silent clip may need fewer key points or none. Never finalize a description of navigation links, QR-download URLs, an identifier, or the extraction process as the content.

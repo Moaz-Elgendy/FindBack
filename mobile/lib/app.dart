@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'app_services.dart';
-import 'features/home/home_screen.dart';
+import 'features/collections/library_shell.dart';
 import 'features/account/account_page.dart';
 import 'services/account_coordinator.dart';
 
@@ -81,24 +81,29 @@ class _FindBackAppState extends State<FindBackApp> {
   /// the rewrite.
   static const Color _seed = Color(0xFF1769AA);
 
+  static ThemeData _theme(Brightness brightness) {
+    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
+    return ThemeData(colorScheme: scheme, useMaterial3: true,
+      scaffoldBackgroundColor: scheme.surface,
+      cardTheme: CardThemeData(color: scheme.surfaceContainerLowest,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: scheme.outlineVariant))),
+      appBarTheme: AppBarTheme(backgroundColor: scheme.surface, scrolledUnderElevation: 0,
+        titleTextStyle: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: scheme.onSurface)),
+      navigationBarTheme: NavigationBarThemeData(backgroundColor: scheme.surfaceContainerLow),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'FindBack',
       navigatorKey: _navigator,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: _seed,
-        useMaterial3: true,
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        colorSchemeSeed: _seed,
-        useMaterial3: true,
-        brightness: Brightness.dark,
-      ),
+      theme: _theme(Brightness.light),
+      darkTheme: _theme(Brightness.dark),
       themeMode: ThemeMode.system,
-      home: HomeScreen(key: ObjectKey(services), services: services, auth: widget.accounts?.auth),
+      home: LibraryShell(key: ObjectKey(services), services: services, auth: widget.accounts?.auth),
     );
   }
 }
