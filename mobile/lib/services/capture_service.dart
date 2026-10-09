@@ -16,10 +16,12 @@ enum CaptureStatus {
 }
 
 class CaptureOutcome {
-  const CaptureOutcome({required this.status, required this.reference, this.clientId, this.alreadyExists = false});
+  const CaptureOutcome({required this.status, required this.reference, this.clientId, this.alreadyExists = false, this.failure});
 
   final CaptureStatus status;
   final bool alreadyExists;
+  final ApiException? failure;
+  String get queuedMessage => failure?.queuedMessage ?? 'Saved on this phone. Will be read when you’re back online.';
 
   /// Server item id when [status] is `remote`, otherwise the local row id.
   final String reference;
@@ -44,15 +46,19 @@ class CaptureService {
     required IngestUrl ingest,
     required QueueSave queue,
     ConnectivityProbe? isOnline,
+    this.onRetryableFailure,
+    this.canUpload,
     Future<ItemDetail?> Function(String url)? existingItem,
   })  : _ingest = ingest,
         _queue = queue,
         _isOnline = isOnline ?? systemIsOnline,
         _existingItem = existingItem;
 
-  factory CaptureService.of({required ApiClient api, required LocalDb db, ConnectivityProbe? isOnline}) =>
+  factory CaptureService.of({required ApiClient api, required LocalDb db, ConnectivityProbe? isOnline, void Function(ApiException)? onRetryableFailure, bool Function()? canUpload}) =>
       CaptureService(
-        ingest: (String url, String? preview, String? titleHint) =>
+        onRetryableFailure: onRetryableFailure,
+        canUpload: canUpload,
+      ingest: (String url, String? preview, String? titleHint) =>
             api.ingestUrl(url, preview: preview, titleHint: titleHint),
         queue: (String url, String? preview, String? titleHint) =>
             db.queueSave(url: url, preview: preview, titleHint: titleHint),
@@ -60,6 +66,8 @@ class CaptureService {
         existingItem: db.localItemForUrl,
       );
 
+  final bool Function()? canUpload;
+  final void Function(ApiException)? onRetryableFailure;
   final IngestUrl _ingest;
   final QueueSave _queue;
   final ConnectivityProbe _isOnline;
@@ -85,12 +93,15 @@ class CaptureService {
   /// real answer the user should see. Only connectivity problems are absorbed
   /// into the queue.
   Future<CaptureOutcome> capture({required String url, String? preview, String? titleHint, bool queueOnly = false}) async {
-    if (!queueOnly && await _isOnline()) {
+    ApiException? failure;
+    if (!queueOnly && (canUpload?.call() ?? true) && await _isOnline()) {
       try {
         final IngestResult result = await _ingest(url, preview, titleHint);
         return CaptureOutcome(status: CaptureStatus.remote, reference: result.id, alreadyExists: result.alreadyExists);
       } on ApiException catch (error) {
         if (!error.isRetryableOffline) rethrow;
+        failure = error;
+        onRetryableFailure?.call(error);
       }
     }
     final existing = await _existingItem?.call(url);
@@ -102,6 +113,7 @@ class CaptureService {
       status: CaptureStatus.queued,
       reference: 'local-$clientId',
       clientId: clientId,
+      failure: failure,
       alreadyExists: existing != null,
     );
   }

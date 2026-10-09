@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -23,10 +22,11 @@ class _BoundTokens extends TokenStore {
 }
 
 class AccountCoordinator extends ChangeNotifier {
-  AccountCoordinator._(this.auth, this._storage, this._factory);
+  AccountCoordinator._(this.auth, this._storage, this._factory, this._guestApi);
   final AuthService auth;
   final FlutterSecureStorage _storage;
   final ScopedServices _factory;
+  final ApiClient _guestApi;
   late AppServices services;
   late String _guestScope, _legacyScope, _activeScope;
   String? _accountId;
@@ -53,7 +53,7 @@ class AccountCoordinator extends ChangeNotifier {
   static bool _safeScope(String value) => RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(value);
 
   static Future<AccountCoordinator> create({AuthService? auth,
-    FlutterSecureStorage? storage, ScopedServices? factory}) async {
+    FlutterSecureStorage? storage, ScopedServices? factory, ApiClient? guestApi}) async {
     final secure = storage ?? const FlutterSecureStorage();
     final service = auth ?? AuthService(storage: secure);
     await service.restore(); // Local storage only; never gates startup on a network request.
@@ -64,7 +64,7 @@ class AccountCoordinator extends ChangeNotifier {
     final ScopedServices build = factory ?? (scope, guest, tokens) async =>
         AppServices.create(database: await LocalDb.open(scope: scope), tokens: tokens,
             guest: guest, accountId: coordinator._accountIdForScope);
-    coordinator = AccountCoordinator._(service, secure, build);
+    coordinator = AccountCoordinator._(service, secure, build, guestApi ?? ApiClient());
     final savedGuest = await secure.read(key: 'findback.guestScope');
     coordinator._guestScope = savedGuest != null && _safeScope(savedGuest) ? savedGuest : _newGuest();
     coordinator._legacyScope = await secure.read(key: 'findback.legacyGuestScope') ?? coordinator._guestScope;
@@ -82,35 +82,48 @@ class AccountCoordinator extends ChangeNotifier {
     final scope = account == null ? 'guest-$identifier' : 'account-$identifier';
     _activeScope = scope;
     Future<String?>? issuing;
+    ApiException? guestFailure;
+    DateTime guestRetryAt = DateTime.fromMillisecondsSinceEpoch(0);
     Future<String?> guestToken() async {
       if (issuing != null) return issuing!;
       Future<String?> issue() async {
-        final key = 'findback.guestToken.$identifier';
-        final stored = await _storage.read(key: key);
-        if (stored != null) {
-          try {
-            final saved = jsonDecode(stored) as Map;
-            if (DateTime.parse(saved['expires_at'] as String).isAfter(DateTime.now().add(const Duration(minutes: 1)))) {
-              return saved['access_token'] as String;
-            }
-          } on Object {
-            // An invalid or expired local lease is replaced, not shared with another scope.
-          }
-        }
-        final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 20)));
+        final key = 'findback.guestToken.${Uri.parse(AppConfig.apiBaseUrl).origin}.$identifier';
+        final retryError = guestFailure;
+        if (retryError != null && DateTime.now().isBefore(guestRetryAt)) throw retryError;
         try {
-          final response = await dio.post<Map<String, dynamic>>('${AppConfig.apiBaseUrl}/api/v1/auth/guest');
-          final data = response.data;
-          if (data == null || data['access_token'] is! String || data['expires_at'] is! String) {
+          final stored = await _storage.read(key: key);
+          final legacy = stored == null ? await _storage.read(key: 'findback.guestToken.$identifier') : null;
+          final encoded = stored ?? legacy;
+          Map? saved;
+          if (encoded != null) {
+            try {
+              saved = jsonDecode(encoded) as Map;
+              if (!DateTime.parse(saved['expires_at'] as String).isAfter(DateTime.now().add(const Duration(minutes: 1))) || saved['access_token'] is! String) saved = null;
+            } on Object { saved = null; }
+          }
+          if (saved != null) {
+            final token = saved['access_token'] as String;
+            if (legacy == null) return token;
+            try {
+              final identity = await _guestApi.validateGuestSession(token);
+              if (identity['is_guest'] == true) {
+                await _storage.write(key: key, value: encoded);
+                return token;
+              }
+            } on ApiException catch (failure) {
+              if (failure.kind != ApiFailureKind.unauthorized) rethrow;
+            }
+          }
+          final data = await _guestApi.createGuestSession();
+          if (data['access_token'] is! String || data['expires_at'] is! String) {
             throw ApiException('Invalid guest session response', kind: ApiFailureKind.malformed);
           }
           await _storage.write(key: key, value: jsonEncode(data));
           return data['access_token'] as String;
-        } on DioException catch (failure) {
-          throw ApiException('Guest processing is temporarily unavailable.',
-              kind: ApiFailureKind.connectivity, statusCode: failure.response?.statusCode);
-        } finally {
-          dio.close();
+        } on ApiException catch (failure) {
+          guestFailure = failure;
+          guestRetryAt = DateTime.now().add(Duration(seconds: failure.retryAfterSeconds ?? 30));
+          rethrow;
         }
       }
       issuing = issue();
@@ -230,6 +243,7 @@ class AccountCoordinator extends ChangeNotifier {
     auth.session.removeListener(_changed);
     await _switching;
     await services.dispose();
+    _guestApi.close();
     await auth.dispose();
     super.dispose();
   }

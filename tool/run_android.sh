@@ -52,8 +52,8 @@ if [[ "$watch_only" == true ]]; then
   trap 'exit 0' INT TERM
   watch_backend
 else
-  if ! curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/health >/dev/null; then
-    echo 'Local API is unavailable. Start docker compose up --build first.' >&2
+  if ! curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/ready >/dev/null; then
+    echo 'Local API/processing unavailable. Start docker compose up -d --build first (API, worker, outbox and beat).' >&2
     exit 1
   fi
   adb -s "$device_id" reverse tcp:8000 tcp:8000

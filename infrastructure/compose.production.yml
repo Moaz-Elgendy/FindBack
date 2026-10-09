@@ -5,7 +5,9 @@ x-app: &app
     DATABASE_URL: ${TARGET_DATABASE_URL:?Configure TARGET_DATABASE_URL}
     REDIS_URL: redis://redis:6379/0
     DEV_AUTH_ENABLED: "false"
+    SCHEMA_READINESS_HEADS: ${SCHEMA_READINESS_HEADS:-}
     SCHEMA_BOOTSTRAP: none
+    PROCESSING_GENERATION: ${PROCESSING_GENERATION:-local}
     HF_HOME: /root/.cache/huggingface
   restart: unless-stopped
   depends_on:
@@ -24,22 +26,33 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+  migrate:
+    <<: *app
+    command: alembic upgrade head
+    restart: 'no'
+
   api:
     <<: *app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
     expose: ["8000"]
     healthcheck:
-      test: [CMD, curl, --fail, --silent, http://localhost:8000/health]
+      test: [CMD, curl, --fail, --silent, http://localhost:8000/ready]
       interval: 20s
       timeout: 5s
       retries: 5
       start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
   worker:
     <<: *app
     command: celery -A app.celery_app.celery worker --loglevel=info --concurrency=1
     stop_grace_period: 5m
     volumes:
       - model_cache:/root/.cache/huggingface
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
   # Runs the beat_schedule in app/celery_app.py. Without this process nothing
   # fires on a schedule: the worker only consumes messages, so the weekly note
   # would never be published.
@@ -53,9 +66,15 @@ services:
   beat:
     <<: *app
     command: celery -A app.celery_app beat -l info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
   outbox:
     <<: *app
     command: python -m scripts.dispatch_outbox
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

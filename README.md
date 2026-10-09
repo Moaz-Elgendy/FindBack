@@ -33,21 +33,21 @@ From the repository root:
 cp .env.example .env              # Only on first setup; preserve an existing .env.
 # Set a strong API_SECRET_KEY and your chosen AI credentials in .env.
 docker compose up -d postgres redis
-docker compose build
-# For a new LOCAL database; back up existing databases before migrating.
-docker compose run --rm api alembic upgrade head
-docker compose up -d api worker outbox beat
-curl --fail http://localhost:8000/health
+# Back up existing databases first. The one-shot migrate service gates startup.
+docker compose up -d --build api worker outbox beat
+curl --fail http://localhost:8000/ready
 
 tool/setup_mobile.sh              # Generates native scaffolding and runs checks.
 cd mobile
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 ```
 
+Ordinary Flutter builds default to `https://findback.duckdns.org`; `.env` does not
+configure a compiled app. Use `API_BASE_URL` explicitly for local development.
 PostgreSQL is published at `127.0.0.1:55433`; Redis uses port 6379 and the API
 uses port 8000. Android emulators reach the host through `10.0.2.2`; iOS simulators
 use `localhost`. For a physical Android device, `tool/run_android.sh [device-id]`
-maintains ADB forwarding. Android native share intake is implemented; an iOS
+checks processing readiness and maintains ADB forwarding. Android native share intake is implemented; an iOS
 Share Extension is still required.
 
 For a backend without Docker, install the requirements into `backend/.venv`,
@@ -55,6 +55,14 @@ set `DATABASE_URL` to the host PostgreSQL URL and `REDIS_URL` to the host Redis,
 then run Alembic, Uvicorn, Celery worker, Celery beat, and
 `python -m scripts.dispatch_outbox` from `backend`. All four processes are needed
 for automatic processing and weekly scheduling. Run exactly **one beat**.
+
+`/ready` returns 503 unless the API, database, schema revision, Redis, worker,
+dispatcher and beat are ready. `/health` includes the same diagnostics but remains
+a 200 response for inspection. Processor heartbeats expire after 60 seconds.
+An unversioned existing database needs a backed-up schema comparison and controlled
+adoption before migration; never stamp `head` to hide missing migrations. The app
+retains failed uploads, distinguishes backend failures from offline captures, and
+honors guest-session and upload `Retry-After` delays.
 
 ## Configuration
 
@@ -164,8 +172,14 @@ CI tests pushes/PRs; successful `master` pushes or manual runs build an immutabl
 ECR image and deploy through AWS OIDC/SSM. Repository variables:
 `AWS_REGION`, `ECR_REPOSITORY_URL`, `EC2_INSTANCE_ID`, `AWS_DEPLOY_ROLE_ARN`.
 `infrastructure/deploy.sh` serializes updates and rolls back image/config on failed
-readiness. Schema migrations remain a separate, backed-up operation. Never use
-Terraform teardown as application rollback. Retain private Terraform state and
+readiness. A one-shot migration service runs before API/processing startup; back up
+before schema changes. Image/config rollback does not downgrade the database, so
+migrations must remain compatible with the previous release. Never use
+Terraform teardown as application rollback. Processing heartbeats are scoped to each
+deployment generation so a previous worker cannot approve a new release. Rollback
+starts the previous services without rerunning its migrator, verifies health, and
+records the database’s applied revision for readiness; migrations must remain
+compatible with the preceding application image. Retain private Terraform state and
 backups outside Git; commit dependency lockfiles and handwritten native sources.
 
 Project history, phase status, and remaining validation are consolidated in

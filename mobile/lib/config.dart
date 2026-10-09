@@ -10,7 +10,7 @@ class AppConfig {
   /// FindBack API root, no trailing slash.
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
+    defaultValue: 'https://findback.duckdns.org',
   );
 
   /// Supabase project URL, empty until auth is wired up.

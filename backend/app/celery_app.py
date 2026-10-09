@@ -1,7 +1,7 @@
 import os
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_process_init
+from celery.signals import worker_process_init, heartbeat_sent
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # `include` is what registers the task with the worker. Without it the
@@ -10,6 +10,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 celery = Celery("findback", broker=REDIS_URL, backend=REDIS_URL,
                 include=["app.tasks"])
 celery.conf.update(task_serializer="json", accept_content=["json"],
+                   beat_scheduler='app.services.readiness:HeartbeatScheduler',
                    result_serializer="json", timezone="UTC",
                    # Nothing reads a task result: success and failure live in
                    # `processing_jobs`. Leaving this False makes every publish
@@ -57,3 +58,9 @@ def _install_worker_log_filters(**_kwargs) -> None:
     from app.log_filters import install_log_filters
 
     install_log_filters()
+
+
+@heartbeat_sent.connect
+def _worker_heartbeat(**_kwargs):
+    from app.services.readiness import pulse
+    pulse('worker')

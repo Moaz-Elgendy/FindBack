@@ -327,7 +327,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           batch.outcomes.length != 1 || batch.failedUrls.isNotEmpty
               ? '${batch.outcomes.length} saved${batch.failedUrls.isEmpty ? "" : "; ${batch.failedUrls.length} could not be saved"}.'
               : batch.isQueued
-              ? 'Saved on this phone. Will be read when you’re back online.'
+              ? batch.outcomes.single.queuedMessage
               : 'Saved. Reading it now.')));
     });
     WidgetsBinding.instance.scheduleFrame();
@@ -534,9 +534,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 16, 8),
                               child: Wrap(
                 crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, children: [
-                  Text(error.kind == ApiFailureKind.unauthorized
-                                    ? 'Sign in to upload your saved links.'
-                                    : 'Your links are saved on this phone. Waiting to upload.',
+                  Text(error.queuedMessage,
                                     style: theme.textTheme.bodySmall),
                                 TextButton(onPressed: _retryQueued, child: const Text('Retry upload')),
                               ])))),

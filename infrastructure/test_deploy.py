@@ -27,11 +27,12 @@ for healthy in (True, False):
 import json,os,sys
 args=sys.argv[1:]
 with open(os.environ['DOCKER_LOG'],'a') as f: f.write(json.dumps(args)+'\\n')
-if args[0]=='run': print('mock-token')
+if args[0]=='run': print('0025_snapshot_reconciliation' if '--entrypoint' in args else 'mock-token')
 elif args[0]=='login': sys.stdin.read()
 elif args[0]=='inspect': print('findback-backend:production')
+elif 'run' in args and 'api' in args: print('0025_snapshot_reconciliation')
 elif 'ps' in args: print('previous-api')
-elif 'exec' in args and 'api' in args: sys.exit(0 if os.environ['HEALTHY']=='true' else 1)
+elif 'exec' in args and 'api' in args: sys.exit(0 if os.environ['HEALTHY']=='true' or os.environ.get('BACKEND_IMAGE')=='findback-backend:production' else 1)
 ''')
         docker.chmod(0o755)
         sleep = binary / 'sleep'
@@ -52,8 +53,9 @@ elif 'exec' in args and 'api' in args: sys.exit(0 if os.environ['HEALTHY']=='tru
             assert not any('never' in call for call in calls)
         else:
             assert result.returncode != 0
-            assert 'BACKEND_IMAGE=' not in envfile.read_text()
+            assert 'BACKEND_IMAGE=findback-backend:production' in envfile.read_text()
+            assert 'SCHEMA_READINESS_HEADS=0025_snapshot_reconciliation' in envfile.read_text()
             assert (root / 'infrastructure/Caddyfile').read_text() == 'old Caddyfile'
             assert (root / 'infrastructure/compose.production.yml').read_text() == 'old compose.production.yml'
-            assert any('never' in call for call in calls), 'Previous image must be restored without pulling'
+            assert any('never' in call and '--no-deps' in call and 'migrate' not in call for call in calls), 'Previous image must be restored without pulling'
 print('PASS: 2 deployment cases; healthy image persists; failed readiness rolls back image/config; provider secret unchanged')

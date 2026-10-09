@@ -14,7 +14,7 @@ def run_launcher(tmp_path, devices="phone device", api_ok=True, reverse_ok=True,
     log = tmp_path / "calls"
     stubs = {
         "adb": 'if [ "$1" = devices ]; then printf "List of devices attached\\n%s\\n" "$MOCK_DEVICES"; elif [ "$3" = shell ]; then echo mock-phone-serial; elif [ "$4" = --list ]; then printf "phone tcp:8000 tcp:8000\\n"; else echo "adb $*" >> "$MOCK_LOG"; [ "$REVERSE_OK" = 1 ]; fi',
-        "curl": '[ "$API_OK" = 1 ]',
+        "curl": 'echo "$*" >> "$MOCK_CURL_LOG"; [ "$API_OK" = 1 ]',
         "flutter": 'echo "flutter $* cwd=$PWD" >> "$MOCK_LOG"',
     }
     for name, body in stubs.items():
@@ -22,7 +22,7 @@ def run_launcher(tmp_path, devices="phone device", api_ok=True, reverse_ok=True,
         file.write_text("#!/bin/sh\n" + body + "\n")
         file.chmod(0o755)
     env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
-               MOCK_DEVICES=devices, MOCK_LOG=str(log), API_OK=str(int(api_ok)),
+               MOCK_DEVICES=devices, MOCK_LOG=str(log), MOCK_CURL_LOG=str(tmp_path / 'curlcalls'), API_OK=str(int(api_ok)),
                REVERSE_OK=str(int(reverse_ok)))
     result = subprocess.run(["bash", str(ROOT / "tool/run_android.sh"), *args],
                             cwd=tmp_path, env=env, capture_output=True, text=True, timeout=10)
@@ -31,6 +31,7 @@ def run_launcher(tmp_path, devices="phone device", api_ok=True, reverse_ok=True,
 
 def test_launcher_forwards_api_before_starting_flutter(tmp_path):
     result, calls = run_launcher(tmp_path)
+    assert 'http://127.0.0.1:8000/ready' in (tmp_path / 'curlcalls').read_text()
     assert result.returncode == 0, result.stderr
     lines = calls.splitlines()
     assert lines[0] == "adb -s phone reverse tcp:8000 tcp:8000"

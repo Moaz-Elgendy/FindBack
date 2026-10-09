@@ -43,7 +43,10 @@ class AppServices {
     MessagingService? messaging, String? accountId}) async {
     final LocalDb db = database ?? await LocalDb.open();
     final ApiClient api = ApiClient(tokens: tokens);
+    final sync = SyncService.of(db: db, api: api);
     final CaptureService capture = guest ? CaptureService(
+      onRetryableFailure: sync.deferAfter,
+      canUpload: () => sync.canUpload,
       ingest: (url, preview, hint) async {
         final saved = await db.localItemForUrl(url);
         if (saved != null && !saved.id.startsWith('local-')) {
@@ -54,7 +57,7 @@ class AppServices {
       },
       queue: (url, preview, hint) => db.queueSave(url: url, preview: preview, titleHint: hint),
       existingItem: db.localItemForUrl,
-    ) : CaptureService.of(db: db, api: api);
+    ) : CaptureService.of(db: db, api: api, onRetryableFailure: sync.deferAfter, canUpload: () => sync.canUpload);
     // One instance for both: reminders schedule through it and a foreground
     // weekly note is rendered through it, so the two share a channel and a
     // private-visibility setting.
@@ -63,7 +66,7 @@ class AppServices {
     return AppServices(
       db: db,
       api: api,
-      sync: SyncService.of(db: db, api: api),
+      sync: sync,
       capture: capture,
       items: guestStore?.items ?? ItemsService.of(db: db, api: api),
       guestLibrary: guestStore,

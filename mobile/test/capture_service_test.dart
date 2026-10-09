@@ -6,6 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 const IngestResult _ok = IngestResult(id: 'uuid-1', status: 'pending', canonicalUrl: 'https://x/1');
 
 void main() {
+  test('a backend outage retains the capture and is not presented as offline', () async {
+    final failure = ApiException('unavailable', statusCode: 503, kind: ApiFailureKind.server);
+    final service = CaptureService(ingest: (_, __, ___) async => throw failure,
+        queue: (_, __, ___) async => 'pending', isOnline: () async => true);
+    final outcome = await service.capture(url: 'https://example.com');
+    expect(outcome.isQueued, isTrue);
+    expect(outcome.failure, same(failure));
+    expect(outcome.queuedMessage, contains('processing service is unavailable'));
+    expect(outcome.queuedMessage, isNot(contains('back online')));
+  });
+
   for (final id in ['remote-1', 'local-1']) {
     test('offline repeat of $id is reported without a second memory', () async {
       var queued = 0;

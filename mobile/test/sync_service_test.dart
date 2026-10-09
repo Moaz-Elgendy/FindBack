@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:findback/data/api_client.dart';
 import 'package:findback/models/item.dart';
 import 'package:findback/services/sync_service.dart';
+import 'package:findback/services/capture_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 SyncItem _item(String clientId) => SyncItem(
@@ -21,6 +22,45 @@ class _Recorder {
 }
 
 void main() {
+  test('capture Retry-After defers batch flush and subsequent direct uploads', () async {
+    var direct = 0;
+    var batches = 0;
+    var queued = 0;
+    final sync = SyncService(pending: () async => [_item('a')],
+      send: (_) async { batches++; return const SyncBatchResult(mapped: [], failedClientIds: []); },
+      apply: (_) async {}, markFailed: (_) async {},
+      isOnline: () async => true, changes: () => const Stream.empty());
+    final capture = CaptureService(ingest: (_, __, ___) async {
+      direct++;
+      throw ApiException('Busy', statusCode: 429, retryAfterSeconds: 3600);
+    }, queue: (_, __, ___) async => '${++queued}', isOnline: () async => true,
+      onRetryableFailure: sync.deferAfter, canUpload: () => sync.canUpload);
+    expect((await capture.capture(url: 'https://example.com/a')).isQueued, isTrue);
+    expect(await sync.flush(force: true), 0);
+    expect((await capture.capture(url: 'https://example.com/b')).isQueued, isTrue);
+    expect(direct, 1);
+    expect(batches, 0);
+    expect(queued, 2);
+  });
+
+  test('HTTP Retry-After is respected even beyond the normal retry ceiling', () async {
+    final rec = _Recorder();
+    var calls = 0;
+    final error = ApiException('Please try again later.', statusCode: 429,
+        kind: ApiFailureKind.rejected, retryAfterSeconds: 3600);
+    final sync = SyncService(pending: () async => [_item('a')],
+        send: (_) async { calls++; throw error; }, apply: rec.apply,
+        markFailed: rec.markFailed, isOnline: () async => true,
+        changes: () => const Stream.empty());
+    await sync.flush();
+    await sync.flush();
+    expect(calls, 1);
+    expect(sync.retryDelay, const Duration(hours: 1));
+    expect(sync.lastError.value, same(error));
+    expect(rec.applied, isEmpty);
+    expect(rec.failed, isEmpty);
+  });
+
   test('stop waits for an in-flight memory action', () async {
     final started = Completer<void>();
     final release = Completer<void>();

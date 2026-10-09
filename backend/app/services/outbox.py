@@ -539,6 +539,8 @@ def run_forever(db_factory, publisher=None, interval: int = 5,
         db = db_factory()
         try:
             stats = dispatch_once(db, publisher=publisher, limit=limit)
+            from app.services.readiness import pulse
+            pulse('dispatcher')
             if stats["claimed"]:
                 log.info("[outbox] %s", stats)
         except Exception as exc:  # noqa: BLE001 - the loop must not die

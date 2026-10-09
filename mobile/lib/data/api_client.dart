@@ -18,11 +18,20 @@ class ApiException implements Exception {
   /// from a real HTTP response names its kind explicitly, so the only things
   /// left relying on the default are hand-thrown errors, and for those the safe
   /// mistake is to keep the data and try again rather than treat it as final.
-  ApiException(this.message, {this.statusCode, this.kind = ApiFailureKind.connectivity});
+  ApiException(this.message, {this.statusCode, this.kind = ApiFailureKind.connectivity, this.retryAfterSeconds});
 
   final String message;
   final int? statusCode;
   final ApiFailureKind kind;
+  final int? retryAfterSeconds;
+
+  String get queuedMessage => statusCode == 429
+      ? 'Saving is temporarily rate-limited. Your links are safe and will retry later.'
+      : kind == ApiFailureKind.unauthorized
+      ? 'Sign in again to upload your saved links.'
+      : kind == ApiFailureKind.server
+      ? 'The processing service is unavailable. Your links are safe and will retry.'
+      : 'Cannot reach the processing service. Your links are safe and will retry.';
 
   bool get isRetryableOffline =>
       kind == ApiFailureKind.connectivity || kind == ApiFailureKind.timeout || kind == ApiFailureKind.server || statusCode == 429;
@@ -34,6 +43,12 @@ class ApiException implements Exception {
 /// Typed wrapper over the FindBack API. Everything is `Future`-based and throws
 /// [ApiException]; no raw `Map` escapes to the UI.
 class ApiClient {
+  Future<Map<String, dynamic>> validateGuestSession(String token) => _send(() =>
+      _dio.getUri<dynamic>(AppConfig.apiUri('/api/v1/auth/me'),
+          options: Options(headers: {'Authorization': 'Bearer $token'})));
+
+  Future<Map<String, dynamic>> createGuestSession() => _send(() =>
+      _dio.postUri<dynamic>(AppConfig.apiUri('/api/v1/auth/guest')));
   ApiClient({Dio? dio, TokenStore? tokens})
       : _dio = dio ??
             Dio(
@@ -237,6 +252,7 @@ class ApiClient {
       throw ApiException(
         detail,
         statusCode: status,
+        retryAfterSeconds: int.tryParse(response.headers.value('retry-after') ?? ''),
         kind: status == 401 || status == 403
             ? ApiFailureKind.unauthorized
             : status != null && status >= 500
@@ -264,7 +280,8 @@ class ApiClient {
                   ? ApiFailureKind.server
                   : ApiFailureKind.rejected,
     };
-    return ApiException(_detail(error) ?? error.message ?? error.type.name, statusCode: status, kind: kind);
+    return ApiException(_detail(error) ?? error.message ?? error.type.name, statusCode: status, kind: kind,
+        retryAfterSeconds: int.tryParse(error.response?.headers.value('retry-after') ?? ''));
   }
 
   String? _detail(DioException error) {

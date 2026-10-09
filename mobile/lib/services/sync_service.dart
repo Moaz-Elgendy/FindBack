@@ -115,15 +115,26 @@ class SyncService {
   Duration get retryDelay => _retryIn;
   final ValueNotifier<ApiException?> lastError = ValueNotifier(null);
 
+  DateTime _serverRetryAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool get canUpload => !DateTime.now().isBefore(_serverRetryAt);
+
+  void deferAfter(ApiException error) {
+    lastError.value = error;
+    _backOff(minimumSeconds: error.retryAfterSeconds);
+  }
+
   /// Sends everything currently queued. Never throws: callers include a timer
   /// and a connectivity stream, neither of which has anyone to report to.
   Future<int> flush({bool force = false}) async {
-    if (_flushing || _exclusiveCount > 0) return 0;
+    if (_flushing || _exclusiveCount > 0 || !canUpload) return 0;
     if (!force && DateTime.now().isBefore(_nextAttemptAt)) return 0;
     _flushing = true;
     _flushDone = Completer<void>();
     try {
-      if (!await _isOnline()) return 0;
+      if (!await _isOnline()) {
+        lastError.value = null;
+        return 0;
+      }
       final queue = await _pending();
       final opens = _sendOpen == null || _markOpenDone == null
           ? const <String>[]
@@ -168,7 +179,7 @@ class SyncService {
       }
       if (openFailure != null) {
         lastError.value = openFailure;
-        _backOff();
+        _backOff(minimumSeconds: openFailure.retryAfterSeconds);
         return flushed;
       }
       if (openError != null) {
@@ -180,7 +191,7 @@ class SyncService {
       return flushed;
     } on ApiException catch (error) {
       lastError.value = error;
-      _backOff();
+      _backOff(minimumSeconds: error.retryAfterSeconds);
       debugPrint('[sync] batch rejected (${error.kind.name}): ${error.message}');
       return 0;
     } catch (error) {
@@ -216,9 +227,16 @@ class SyncService {
 
   /// Doubling from 1s to 5min. The RN client computed this backoff but the 30s
   /// timer ignored it, so a downed API was retried at full rate forever.
-  void _backOff() {
+  void _backOff({int? minimumSeconds}) {
+    if (minimumSeconds != null) {
+      final deadline = DateTime.now().add(Duration(seconds: minimumSeconds));
+      if (deadline.isAfter(_serverRetryAt)) _serverRetryAt = deadline;
+    }
     _retryIn = _retryIn <= Duration.zero ? _retryBase : _retryIn * 2;
     if (_retryIn > _retryCeiling) _retryIn = _retryCeiling;
+    if (minimumSeconds != null && Duration(seconds: minimumSeconds) > _retryIn) {
+      _retryIn = Duration(seconds: minimumSeconds);
+    }
     _nextAttemptAt = DateTime.now().add(_retryIn);
   }
 

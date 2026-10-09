@@ -23,14 +23,14 @@ Files: .github/workflows/ci-cd.yml, backend/tests/conftest.py,
 backend/tests/test_test_environment.py, and any failing boundary identified in logs.
 
 - [x] Read latest GitHub failure and reproduce the failing test without removing checks.
-- [ ] Fix the test-database configuration boundary: require TEST_DATABASE_URL from
+- [x] Fix the test-database configuration boundary: require TEST_DATABASE_URL from
   the process environment before loading local .env values.
-- [ ] Verify safety regressions, full backend tests against a dedicated test DB,
+- [x] Verify safety regressions, full backend tests against a dedicated test DB,
   flutter analyze and flutter test, deployment regression, compilation, Compose
   configuration, and migration checks exercised by backend CI.
-- [ ] Publish the phase commit to the feature branch and verify GitHub CI. Feature
+- [x] Publish the phase commit to the feature branch and verify GitHub CI. Feature
   branch CI must not trigger master-only production deployment.
-- [ ] Report changes, evidence, and any untested deployment behavior.
+- [x] Report changes, evidence, and any untested deployment behavior.
 
 ## Phase 1 — Processing
 
@@ -62,3 +62,18 @@ backend health/ingest/outbox/tasks, Compose/deployment startup, and covering tes
 Explicit test DB absence even when .env supplies one; no destructive test access
 to developer DBs; offline captures never expire; server errors never masquerade as
 device offline; feature-branch verification never deploys production.
+
+
+## Phase 0 verification
+
+Commit `500ab8b`; GitHub run https://github.com/Moaz-Elgendy/FindBack/actions/runs/37986965261 passed. Backend baseline 1068 passed/1 existing skip; Flutter 432 passed/1 existing skip; analyze, Docker build, Compose, migration checks and deployment regressions passed. No production deployment.
+
+## Phase 1 investigation and verification
+
+The installed debug APK matched the original local build exactly and compiled `http://localhost:8000`. There were no flavors or hosted URL override, and no ADB reverse. Local API/worker/dispatcher/beat were stopped although PostgreSQL and Redis were running. Starting the API also exposed an unmigrated local database; guest creation failed with 500 and then 429. Flutter misclassified those responses as connectivity failures and repeated guest lease requests. Guest tokens were not scoped by backend origin, so switching endpoints could reuse a foreign lease.
+
+Fixed startup migration gates, schema and processing readiness, release-scoped heartbeats, data-preserving rollback, guest error classification/cooldown/origin-scoped leases, shared capture/sync Retry-After deadlines, and visible backend failure messages. Normal builds now default to `https://findback.duckdns.org`; explicit local dart defines remain supported. No saved capture expiry was introduced.
+
+Local database backup: `/home/moaz/.local/state/findback/backups/phase1-2026-10-09/local-before-migrations.dump`. Before stamping the previously unversioned database at 0013, compared its schema to a disposable database migrated to that revision (columns, constraints, indexes and defaults matched). Upgraded to 0025 without resetting data. ADB reverse enabled for reproducing the original local configuration. Worker-stop experiment made `/ready` return 503 after heartbeat expiry and return 200 following service recovery.
+
+Full backend verification before the final review fixes: 1078 passed, 1 existing skip. Final readiness regressions: 9 passed. Deployment rollback and launcher regressions pass. Flutter full suite after retry fixes: 440 passed, 1 existing skip; legacy-token migration cases and guest API regressions: 6 passed. Valid legacy guest tokens are authenticated by the selected backend before adopting the origin-scoped key, preserving existing guest ownership. Final phone verification and GitHub CI are reported at the phase checkpoint. Phases 2–6 remain unstarted.

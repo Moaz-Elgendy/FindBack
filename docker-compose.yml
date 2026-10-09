@@ -26,6 +26,20 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: alembic upgrade head
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://findback:findback@postgres:5432/findback
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
   api:
     build:
       context: ./backend
@@ -43,6 +57,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
 
@@ -56,8 +72,10 @@ services:
       DATABASE_URL: postgresql://findback:findback@postgres:5432/findback
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
 
@@ -79,8 +97,10 @@ services:
       DATABASE_URL: postgresql://findback:findback@postgres:5432/findback
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
 
@@ -103,6 +123,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
 

@@ -25,3 +25,6 @@ def test_resolved_compose_api_disables_bootstrap():
     )
     config = json.loads(result.stdout)
     assert config["services"]["api"]["environment"].get("SCHEMA_BOOTSTRAP") == "none"
+    assert config['services']['migrate']['command'] == ['alembic', 'upgrade', 'head']
+    for role in ('api', 'worker', 'outbox', 'beat'):
+        assert config['services'][role]['depends_on']['migrate']['condition'] == 'service_completed_successfully'

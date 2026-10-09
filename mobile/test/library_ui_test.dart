@@ -348,14 +348,14 @@ void main() {
     services.pending.value = 1;
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
-    expect(find.text('Your links are saved on this phone. Waiting to upload.'), findsOneWidget);
+    expect(find.text('Cannot reach the processing service. Your links are safe and will retry.'), findsOneWidget);
     reachable = true;
     await tester.tap(find.text('Retry upload'));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
     expect(queue, isEmpty);
     expect(sync.lastError.value, isNull);
-    expect(find.text('Your links are saved on this phone. Waiting to upload.'), findsNothing);
+    expect(find.text('Cannot reach the processing service. Your links are safe and will retry.'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });

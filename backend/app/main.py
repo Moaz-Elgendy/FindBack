@@ -4,7 +4,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 from sqlalchemy import text
 from app.database import SessionLocal, init_db
 from app.celery_app import celery
@@ -160,7 +160,8 @@ def prometheus_metrics():
 
 @app.get("/health")
 def health():
-    checks = {"db": "down", "redis": "down"}
+    from app.services import readiness
+    checks = {"api": "ok", "db": "down", "redis": "down", "schema": "outdated"}
     queue = {}
     # One session for both reads. The queue counts are best-effort: failing to
     # collect them says nothing about whether the database answers.
@@ -168,6 +169,8 @@ def health():
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
             checks["db"] = "ok"
+            if readiness.schema_current(db):
+                checks['schema'] = 'ok'
             try:
                 queue = metrics.collect_queue_metrics(db)["counts"]
             except Exception as exc:  # noqa: BLE001
@@ -180,7 +183,8 @@ def health():
         checks["redis"] = "ok"
     except Exception:
         pass
-    status = "ok" if checks["db"] == "ok" else "degraded"
+    checks.update(readiness.checks())
+    status = "ok" if all(value == 'ok' for value in checks.values()) else "degraded"
     # Phase 14: the retention policy is part of the service's public contract,
     # so an operator can see what is kept and for how long without reading code.
     # Phase 18: the same reasoning for how much work is outstanding (collected
@@ -192,3 +196,9 @@ def health():
 @app.get("/")
 def root():
     return {"service": "FindBack", "docs": "/docs", "health": "/health"}
+
+
+@app.get('/ready')
+def ready():
+    result = health()
+    return JSONResponse(result, status_code=200 if result['status'] == 'ok' else 503)
