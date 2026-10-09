@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
@@ -39,6 +39,18 @@ jobs:
       - run: python -m compileall backend/app backend/alembic
       - name: Deployment rollback regression
         run: python infrastructure/test_deploy.py
+      # tests/test_schema_bootstrap.py shells out to `docker compose config`.
+      # The real .env is gitignored, so on a clean runner Compose can fail on a
+      # missing env file. Give it a placeholder one, and run the exact command
+      # here first so any Compose error prints its stderr in the log (the
+      # pytest failure only shows "exit status 1").
+      - name: Prepare Docker Compose environment
+        run: |
+          docker compose version
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then cp .env.example .env; else touch .env; fi
+          fi
+          docker compose config --no-env-resolution --format json > /dev/null
       - run: pytest
         working-directory: backend
         env:
