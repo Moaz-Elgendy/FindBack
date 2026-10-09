@@ -15,8 +15,6 @@ from functools import wraps
 import pytest
 from sqlalchemy.engine import make_url
 
-from app import env
-
 
 def require_test_database(url, setting):
     try:
@@ -28,12 +26,13 @@ def require_test_database(url, setting):
             f"Refusing {setting} database {name!r}; use fb_* or a test database")
 
 
-# Load once, then clear leaked settings before test modules capture globals.
-env.load_dotenv()
+# Require the test target before importing app.env, which loads local .env values.
 test_url = os.environ.get("TEST_DATABASE_URL", "").strip()
 if not test_url:
     raise pytest.UsageError("TEST_DATABASE_URL is required; use a test database")
 require_test_database(test_url, "TEST_DATABASE_URL")
+from app import env
+env.load_dotenv()
 for key in ("DATABASE_URL", "DEV_AUTH_ENABLED", "JOB_MAX_ATTEMPTS"):
     os.environ.pop(key, None)
 
