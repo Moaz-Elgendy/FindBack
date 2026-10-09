@@ -13,6 +13,9 @@ typedef MappedApplier = Future<void> Function(List<MappedSave>);
 typedef FailureMarker = Future<void> Function(String clientId);
 typedef ConnectivityProbe = Future<bool> Function();
 typedef ConnectivityChanges = Stream<bool> Function();
+typedef PendingOpensLoader = Future<List<String>> Function();
+typedef OpenSender = Future<void> Function(String itemId);
+typedef OpenDoneMarker = Future<void> Function(String itemId);
 
 bool anyConnection(List<ConnectivityResult> results) =>
     results.any((ConnectivityResult result) => result != ConnectivityResult.none);
@@ -22,7 +25,8 @@ Future<bool> systemIsOnline() async => anyConnection(await Connectivity().checkC
 ConnectivityChanges systemConnectivityChanges() =>
     () => Connectivity().onConnectivityChanged.map(anyConnection);
 
-/// Drains the offline write queue to `POST /api/v1/sync/batch`.
+/// Drains the offline write queue: captures to `POST /api/v1/sync/batch`,
+/// queued mark-opened calls to `POST /api/v1/items/{id}/open`.
 ///
 /// Dependencies are function-typed so the whole thing runs in a plain `flutter
 /// test` with fakes — no emulator, no server.
@@ -34,6 +38,9 @@ class SyncService {
     required FailureMarker markFailed,
     ConnectivityProbe? isOnline,
     ConnectivityChanges? changes,
+    PendingOpensLoader? pendingOpens,
+    OpenSender? sendOpen,
+    OpenDoneMarker? markOpenDone,
     Duration heartbeatInterval = heartbeat,
     Duration retryCeiling = const Duration(minutes: 5),
     Duration retryBase = const Duration(seconds: 1),
@@ -43,6 +50,9 @@ class SyncService {
         _markFailed = markFailed,
         _isOnline = isOnline ?? systemIsOnline,
         _changes = changes ?? systemConnectivityChanges(),
+        _pendingOpens = pendingOpens ?? _noOpens,
+        _sendOpen = sendOpen,
+        _markOpenDone = markOpenDone,
         _heartbeatInterval = heartbeatInterval,
         _retryCeiling = retryCeiling,
         _retryBase = retryBase;
@@ -52,14 +62,22 @@ class SyncService {
         send: api.syncBatch,
         apply: db.applyMapped,
         markFailed: db.markQueueFailed,
+        pendingOpens: db.pendingOpens,
+        sendOpen: api.markOpened,
+        markOpenDone: db.markOpenDone,
       );
 
   static const Duration heartbeat = Duration(seconds: 30);
+
+  static Future<List<String>> _noOpens() async => const <String>[];
 
   final PendingLoader _pending;
   final BatchSender _send;
   final MappedApplier _apply;
   final FailureMarker _markFailed;
+  final PendingOpensLoader _pendingOpens;
+  final OpenSender? _sendOpen;
+  final OpenDoneMarker? _markOpenDone;
   final ConnectivityProbe _isOnline;
   final ConnectivityChanges _changes;
   // The heartbeat interval is configurable so a test can drive the timer rather
@@ -107,20 +125,58 @@ class SyncService {
     try {
       if (!await _isOnline()) return 0;
       final queue = await _pending();
-      if (queue.isEmpty) {
+      final opens = _sendOpen == null || _markOpenDone == null
+          ? const <String>[]
+          : await _pendingOpens();
+      if (queue.isEmpty && opens.isEmpty) {
         lastError.value = null;
         return 0;
       }
 
-      final result = await _send(queue);
-      await _apply(result.mapped);
-      for (final String clientId in result.failedClientIds) {
-        await _markFailed(clientId);
+      int flushed = 0;
+      if (queue.isNotEmpty) {
+        final result = await _send(queue);
+        await _apply(result.mapped);
+        for (final String clientId in result.failedClientIds) {
+          await _markFailed(clientId);
+        }
+        flushed = result.mapped.length;
+        if (flushed > 0) _onFlushed?.call(flushed);
+      }
+      // Mark-opened calls ride the same triggers, backoff and parking rules
+      // as captures: one POST per id, and the row is dropped only when the
+      // server has it. Each id is caught on its own so one bad row cannot
+      // strand the ones behind it; a failure still backs off and surfaces,
+      // and the rows that did land stay landed.
+      ApiException? openFailure;
+      Object? openError;
+      for (final String itemId in opens) {
+        try {
+          await _sendOpen!(itemId);
+          await _markOpenDone!(itemId);
+        } on ApiException catch (error) {
+          if (error.statusCode == 404 || error.statusCode == 410) {
+            await _markOpenDone!(itemId);
+            continue;
+          }
+          openFailure ??= error;
+          debugPrint('[sync] mark-opened rejected (${error.kind.name}) for $itemId: ${error.message}');
+        } catch (error) {
+          openError ??= error;
+          debugPrint('[sync] mark-opened failed for $itemId: $error');
+        }
+      }
+      if (openFailure != null) {
+        lastError.value = openFailure;
+        _backOff();
+        return flushed;
+      }
+      if (openError != null) {
+        _backOff();
+        return flushed;
       }
       _resetRetry();
       lastError.value = null;
-      final flushed = result.mapped.length;
-      if (flushed > 0) _onFlushed?.call(flushed);
       return flushed;
     } on ApiException catch (error) {
       lastError.value = error;

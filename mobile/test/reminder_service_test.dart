@@ -21,6 +21,7 @@ class FakeNotifications extends ReminderNotifications {
   @override Future<bool> requestPermission() async { requests++; return allowed; }
   @override Future<void> schedule(MemoryReminder r, ItemDetail i) async { scheduled.add(r.notificationId); alarms[r.notificationId] = r.scheduledAt; }
   @override Future<void> show(MemoryReminder r, ItemDetail i, DateTime now) async { shown++; }
+  @override Future<void> showNote({required int id, required String title, required String body, required String payload}) async {}
   @override Future<void> cancel(int id) async { scheduled.remove(id); alarms.remove(id); }
   @override Future<void> cancelAll() async { scheduled.clear(); alarms.clear(); }
   @override Future<Set<int>> pending() async => {...scheduled};

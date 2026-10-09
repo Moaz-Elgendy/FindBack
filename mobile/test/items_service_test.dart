@@ -2,6 +2,7 @@ import 'package:findback/data/api_client.dart';
 import 'package:findback/models/item.dart';
 import 'package:findback/models/search_result.dart';
 import 'package:findback/services/items_service.dart';
+import 'package:findback/services/sync_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ItemDetail _item(String id, {String title = 'Server'}) => ItemDetail.fromJson(
@@ -20,6 +21,8 @@ class _Harness {
     RemoteRecentFetch? remoteRecent,
     Future<void> Function(String id)? remoteDelete,
     List<SearchResult>? localRecent,
+    RemoteOpen? markRemoteOpened,
+    OpenQueuer? queueOpen,
   }) =>
       ItemsService(
         remoteItem: remoteItem ??
@@ -50,6 +53,8 @@ class _Harness {
           return 1;
         },
         isOnline: () async => online,
+        markRemoteOpened: markRemoteOpened,
+        queueOpen: queueOpen,
       );
 }
 
@@ -162,5 +167,41 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 5));
     expect(h.deleted, <String>['uuid-7']);
+  });
+
+  test('a failed mark-opened call is queued and drains on the next flush', () async {
+    final _Harness h = _Harness();
+    final List<String> queued = <String>[];
+    final ItemsService service = h.service(
+      markRemoteOpened: (String id) async => throw ApiException('offline'),
+      queueOpen: (String itemId, {required String url}) async => queued.add(itemId),
+    );
+
+    // The detail screen opens while the network is down: the call fails, the
+    // screen is never told, and the open waits in the queue.
+    await service.markOpened(_item('uuid-open-1'));
+    expect(queued, <String>['uuid-open-1']);
+
+    // An unsaved local row was never uploaded, so there is nothing to mark.
+    await service.markOpened(_item('local-9', title: 'Offline'));
+    expect(queued, <String>['uuid-open-1']);
+
+    // Reconnect: the existing sync loop carries the queued open to the server.
+    final List<String> sent = <String>[];
+    final SyncService sync = SyncService(
+      pending: () async => const <SyncItem>[],
+      send: (_) async => const SyncBatchResult(mapped: <MappedSave>[], failedClientIds: <String>[]),
+      apply: (_) async {},
+      markFailed: (_) async {},
+      pendingOpens: () async => List<String>.of(queued),
+      sendOpen: (String id) async => sent.add(id),
+      markOpenDone: (String id) async => queued.remove(id),
+      isOnline: () async => true,
+    );
+    addTearDown(sync.stop);
+
+    await sync.flush();
+    expect(sent, <String>['uuid-open-1']);
+    expect(queued, isEmpty, reason: 'a delivered open must leave the queue');
   });
 }

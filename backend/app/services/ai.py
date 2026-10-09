@@ -829,7 +829,7 @@ def _guard_dimensions(vector, cfg: EmbeddingConfig, position: int) -> list[float
         log.error(
             "[embed] %s returned %d dimensions but the database column is %d: "
             "set EMBEDDING_MODEL/EMBEDDING_DIMS to a matching pair and re-embed "
-            "existing rows (see docs/OPERATIONS.md). Skipping this vector.",
+            "existing rows (see README.md). Skipping this vector.",
             cfg.label, len(vector), cfg.dims)
         return None
     result = [float(value) for value in vector]

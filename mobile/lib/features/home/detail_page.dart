@@ -42,6 +42,7 @@ class _DetailPageState extends State<DetailPage> {
   bool _actionBusy = false;
   String? _reportedFailure;
   Timer? _refreshTimer;
+  bool _openSent = false;
 
   @override
   void initState() {
@@ -70,6 +71,12 @@ class _DetailPageState extends State<DetailPage> {
         _item = item;
         _loading = false;
       });
+      if (item != null && !_openSent) {
+        _openSent = true;
+        // Fire-and-forget on purpose: the screen never waits on this stamp,
+        // and a failure lands in the sync queue instead of an error dialog.
+        unawaited(widget.items.markOpened(item));
+      }
       if (item?.reprocessFailure != null && item!.reprocessFailure != _reportedFailure) {
         _reportedFailure = item.reprocessFailure;
         WidgetsBinding.instance.addPostFrameCallback((_) {

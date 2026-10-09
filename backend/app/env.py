@@ -121,7 +121,7 @@ def first_env(*names: str) -> tuple[str, str]:
 PROVIDERS = ("groq", "gemini", "openai", "openai_compatible")
 
 # The column width in models.py/migration 0001 is 1536. Keep this default so an
-# existing database stays valid; see docs/OPERATIONS.md before changing it.
+# existing database stays valid; see README.md before changing it.
 EMBEDDING_DIMS = get_int("EMBEDDING_DIMS", 1536)
 # Gemini's batchEmbedContents accepts at most 100 contents per request; the
 # OpenAI-style endpoints take more but a small batch keeps a failed ingest
@@ -134,7 +134,7 @@ AI_MAX_ATTEMPTS = max(1, get_int("AI_MAX_RETRIES", 3))
 # Phase 14. Hours a fetched page is kept before it is discarded. Zero means
 # "drop it as soon as the pipeline finishes", which is the default: the stages
 # need the raw text only while they run, and afterwards it is a verbatim copy
-# of something the user read. See docs/OPERATIONS.md.
+# of something the user read. See README.md.
 RAW_TEXT_RETENTION_HOURS = max(0, get_int("RAW_TEXT_RETENTION_HOURS", 0))
 # Hard cap on the extractor's completion, so a rambling model cannot hold an
 # ingest request open indefinitely. ~900 tokens is ample for a 6-field object.

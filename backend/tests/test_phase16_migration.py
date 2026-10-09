@@ -494,7 +494,7 @@ def test_the_whole_chain_applies_to_an_empty_database(admin_engine):
         with eng.connect() as conn:
             version = conn.execute(text(
                 "SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0019_account_settings", version
+        assert version == "0025_snapshot_reconciliation", version
     finally:
         _drop(admin, name, eng)
 
@@ -544,7 +544,7 @@ def test_the_migration_downgrades_and_the_chain_reapplies(admin_engine):
         with eng.connect() as conn:
             assert conn.execute(text(
                 "SELECT version_num FROM alembic_version")).scalar() \
-                == "0019_account_settings"
+                == "0025_snapshot_reconciliation"
             # The backfilled memories are ordinary data and must survive.
             assert conn.execute(text(
                 "SELECT count(*) FROM user_memories")).scalar() == 0

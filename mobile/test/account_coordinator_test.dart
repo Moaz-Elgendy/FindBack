@@ -97,6 +97,16 @@ void main() {
     await expectLater(drive(coordinator.deleteAccount()), throwsA(isA<ApiException>()));
     expect(auth.currentSession!.id, 'a');
     expect(await drive(coordinator.services.db.pendingCount()), 1);
+    // ignore: deprecated_member_use
+    await tester.runAsync(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.handlePlatformMessage(
+        ShareIntentService.channelName,
+        const StandardMethodCodec().encodeMethodCall(
+            const MethodCall('onShare', 'https://example.test/after-failed-delete')),
+        (_) {}));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+    await tester.pump();
+    expect((await drive(coordinator.services.db.pendingQueue())).map((row) => row.url),
+        contains('https://example.test/after-failed-delete'));
     deletedApi.failDeletion = false;
     await drive(coordinator.deleteAccount());
     expect(auth.currentSession, isNull);

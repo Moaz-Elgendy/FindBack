@@ -128,6 +128,32 @@ class ApiClient {
   Future<ItemDetail> getItem(String id) async =>
       ItemDetail.fromJson(await _get('/api/v1/items/$id', const <String, String>{}));
 
+  /// The saves one weekly note counted, for the "Worth another look" screen.
+  ///
+  /// The ids are the frozen set the notification was built from, not a
+  /// recomputation, so the list matches the count on the lock screen. Both
+  /// counts come back because a save deleted since the note was sent is omitted
+  /// from `items`, and the screen has to be able to say so honestly.
+  Future<SnapshotPage> snapshotItems(String id) async =>
+      SnapshotPage.fromJson(await _get('/api/v1/snapshots/$id', const <String, String>{}));
+
+  /// Tell the backend where to reach this device.
+  ///
+  /// Safe to call on every launch: the backend upserts on the token, so a
+  /// repeated call neither duplicates the row nor fails. Registering a token
+  /// that another account already holds moves it to this account, which is what
+  /// makes a shared device follow whoever signed in to it.
+  Future<void> registerDevice(String token, String platform) async {
+    await _post('/api/v1/devices', {'token': token, 'platform': platform});
+  }
+
+  /// Forget this device, so it stops being notified for the signed-in account.
+  ///
+  /// Answers 404 when the token is unknown or belongs to another account; the
+  /// caller treats that as already-gone rather than as a failure.
+  Future<void> removeDevice(String token) =>
+      _delete('/api/v1/devices/${Uri.encodeComponent(token)}');
+
   Future<List<MemoryCollection>> listCollections() async {
     final data = await _get('/api/v1/collections', const {});
     return (data['collections'] as List).map((c) => MemoryCollection.fromJson(Map<String, dynamic>.from(c as Map))).toList();
@@ -160,6 +186,12 @@ class ApiClient {
 
   Future<ItemDetail> keepLinkOnly(String id) async =>
       ItemDetail.fromJson(await _post('/api/v1/items/$id/keep-link', const {}));
+
+  /// Tells the server this memory was opened. The endpoint stamps
+  /// `first_opened_at` only while it is NULL, so repeat calls are harmless.
+  Future<void> markOpened(String id) async {
+    await _post('/api/v1/items/$id/open', const {});
+  }
 
   // `AppConfig.apiUri` returns a `Uri`, so the calls go through dio's `*Uri`
   // variants — the plain `get`/`post`/`delete` take a `String` path.

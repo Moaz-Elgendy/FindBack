@@ -22,6 +22,13 @@ abstract class ReminderNotifications {
   Future<void> initialize(void Function(String) onTap);
   Future<void> schedule(MemoryReminder reminder, ItemDetail item);
   Future<void> show(MemoryReminder reminder, ItemDetail item, DateTime now);
+  /// Shows text the server already composed, for a notification the OS
+  /// delivered but did not render because the app was in the foreground.
+  ///
+  /// [id] is chosen by the caller so a repeat replaces the previous note
+  /// rather than stacking another copy of it.
+  Future<void> showNote({required int id, required String title,
+    required String body, required String payload});
   Future<void> cancel(int id);
   Future<void> cancelAll();
   Future<Set<int>> pending();
@@ -81,6 +88,12 @@ class NativeReminderNotifications implements ReminderNotifications {
   Future<void> show(MemoryReminder reminder, ItemDetail item, DateTime now) => _plugin.show(
     id: reminder.notificationId, title: 'You asked to be reminded',
     body: reminderBody(item, now), payload: reminder.itemId, notificationDetails: details);
+  @override
+  Future<void> showNote({required int id, required String title,
+      required String body, required String payload}) => _plugin.show(
+    // The shared `details`, so a foreground note is indistinguishable from a
+    // background one -- including the private visibility on Android.
+    id: id, title: title, body: body, payload: payload, notificationDetails: details);
   @override
   Future<void> cancel(int id) => _plugin.cancel(id: id);
   @override

@@ -224,3 +224,16 @@ def restore_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(ge
     if result == 'expired':
         raise HTTPException(409, "Undo window expired")
     return None
+
+
+@router.post("/{item_id}/open", status_code=204)
+def open_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
+    # Own and non-deleted only; anything else is 404, like every action here.
+    item, _ = _action_item(db, user.id, item_id)
+    # `_action_item` locked the row, so a racing second open waits and then
+    # re-reads the committed value; the NULL check means the first open is the
+    # only write. Repeat calls return the same 204 and change nothing.
+    if item.first_opened_at is None:
+        item.first_opened_at = func.now()
+        db.commit()
+    return None

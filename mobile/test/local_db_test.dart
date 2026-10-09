@@ -246,4 +246,25 @@ void main() {
     expect(await db.pendingCount(), 1);
     expect(await db.recentLocalItems(), hasLength(1), reason: 'no duplicate');
   });
+
+  test('a queued open rides the queue without ever becoming a save', () async {
+    await db.queueOpen('uuid-open-1', url: 'https://example.com/opened');
+
+    // The open is its own kind of work: it never rides the capture batch,
+    // and the saves badge does not count it.
+    expect(await db.pendingQueue(), isEmpty);
+    expect(await db.pendingOpens(), <String>['uuid-open-1']);
+    expect(await db.pendingCount(), 0);
+
+    // A later save of the same URL is a new capture, not the open.
+    final String clientId = await db.queueSave(url: 'https://example.com/opened');
+    expect((await db.pendingQueue()).single.clientId, clientId);
+    expect(await db.pendingCount(), 1);
+
+    // Delivering the open clears only the open.
+    await db.markOpenDone('uuid-open-1');
+    expect(await db.pendingOpens(), isEmpty);
+    expect((await db.pendingQueue()).single.clientId, clientId,
+        reason: 'delivering the open must not touch queued saves');
+  });
 }

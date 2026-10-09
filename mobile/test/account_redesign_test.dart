@@ -18,6 +18,10 @@ class AccountApi extends ApiClient {
   WeeklyNoteSettings settings = const WeeklyNoteSettings();
   bool offline = false;
   int writes = 0, exports = 0;
+
+  /// Every settings object the PUT carried, so a test can assert what the
+  /// backend would actually have stored.
+  final saved = <WeeklyNoteSettings>[];
   Completer<Map<String, dynamic>>? exportGate;
   @override Future<WeeklyNoteSettings> weeklyNoteSettings() async {
     if (offline) throw ApiException('Could not reach your account.');
@@ -26,6 +30,7 @@ class AccountApi extends ApiClient {
   @override Future<WeeklyNoteSettings> saveWeeklyNoteSettings(WeeklyNoteSettings value) async {
     if (offline) throw ApiException('Could not save your settings.');
     writes++;
+    saved.add(value);
     return settings = value;
   }
   @override Future<Map<String, dynamic>> exportSaves() async {
@@ -92,6 +97,70 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.settings.enabled, isFalse);
     expect(notifications.requests, 1);
+  });
+
+  testWidgets('the saved row carries the day, time and zone the user chose',
+      (tester) async {
+    // Asserting on the object the page holds would pass even if the PUT were
+    // never made, so this checks what the backend would read back.
+    api.settings = const WeeklyNoteSettings(enabled: true);
+    notifications.zoneName = 'Europe/Berlin';
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.textContaining('Sunday at'));
+    await tester.tap(find.textContaining('Sunday at'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Monday'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    expect(api.saved, hasLength(1), reason: 'exactly one PUT reached the API');
+    expect(api.saved.single.weekday, 0);
+    expect(api.saved.single.timeZone, 'Europe/Berlin',
+        reason: 'the device zone is what the schedule is anchored to');
+    expect(api.saved.single.enabled, isTrue);
+  });
+
+  testWidgets('turning the note off reaches the backend and keeps the zone',
+      (tester) async {
+    api.settings = const WeeklyNoteSettings(
+        enabled: true, weekday: 3, hour: 9, minute: 15,
+        timeZone: 'Asia/Tokyo');
+    // A device that has travelled must not rewrite the stored schedule when
+    // the user only turned the note off.
+    notifications.zoneName = 'Europe/Berlin';
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byType(Switch));
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(api.saved, hasLength(1));
+    expect(api.saved.single.enabled, isFalse);
+    expect(api.saved.single.timeZone, 'Asia/Tokyo',
+        reason: 'turning it off must not move the day and time the user set');
+    expect(api.saved.single.weekday, 3);
+  });
+
+  testWidgets('a denied permission is reported, not silently accepted',
+      (tester) async {
+    notifications.allowed = false;
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(find.textContaining("We'll send one notification a week"),
+        findsOneWidget);
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    // The preference is saved -- the user asked for it and may grant the OS
+    // permission later -- but the refusal must be visible rather than leaving
+    // the switch looking like it took effect.
+    expect(api.settings.enabled, isTrue);
+    expect(find.textContaining('Notifications are off'), findsOneWidget);
+    expect(notifications.requests, 1, reason: 'permission was asked for once');
   });
 
   testWidgets('cancel permission context leaves weekly preference off', (tester) async {

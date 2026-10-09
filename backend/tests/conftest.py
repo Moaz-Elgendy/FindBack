@@ -82,6 +82,10 @@ def offline_providers(monkeypatch):
     monkeypatch.setenv("CAPACITY_LIMITS_ENABLED", "false")
     for key in AI_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    # Local credentials must not change test auth mode or enable real push delivery.
+    for key in ('SUPABASE_URL', 'SUPABASE_JWT_SECRET', 'SUPABASE_SERVICE_ROLE_KEY',
+                'AUTH_EMAIL_VERIFIED_CLAIM', 'FCM_SERVICE_ACCOUNT_FILE', 'FCM_PROJECT_ID'):
+        monkeypatch.delenv(key, raising=False)
 
 
 @pytest.fixture(autouse=True)

@@ -13,6 +13,10 @@ redis==5.0.3
 httpx==0.28.1
 pgvector==0.3.5
 python-jose[cryptography]==3.5.0
+# Push delivery via FCM HTTP v1: the service-account JSON is exchanged for an
+# OAuth token with the firebase.messaging scope. Only the credential is used --
+# the send itself is plain httpx, already a dependency above.
+google-auth==2.40.3
 passlib[bcrypt]==1.7.4
 boto3==1.34.0
 beautifulsoup4==4.12.3

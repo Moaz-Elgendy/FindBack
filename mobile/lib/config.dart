@@ -3,7 +3,7 @@
 /// Values come from `--dart-define`, not from `.env` at runtime: a compiled
 /// mobile binary has no .env to read, and baking secrets in is the classic
 /// mobile leak. Everything here is safe to ship (public API base URL, Supabase
-/// *public* anon key). See `mobile/README.md` for the exact `flutter run` line.
+/// *public* anon key). See `README.md` for the exact `flutter run` line.
 class AppConfig {
   const AppConfig._();
 

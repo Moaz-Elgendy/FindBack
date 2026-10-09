@@ -1,310 +1,177 @@
-# FindBack — AI-Powered Memory for the Internet
+# FindBack
 
-> **"You don't need to remember where you saved it. Just remember what you remember about it."**
+Save links now. Find them later using what you remember.
 
-FindBack is a personal memory engine for everything you save online. Share any
-post, video, article, recipe or product from any app, and FindBack fetches it,
-understands it, extracts the useful parts, and makes it findable later through a
-vague natural-language description such as *"that video about an AI tool for
-making presentations"*.
+FindBack is a Flutter app backed by FastAPI, PostgreSQL 16 + pgvector, Redis 7,
+and Celery. Saves enter a durable SQLite queue before network access; workers
+fetch content, extract a structured Brief, and build hybrid semantic/keyword
+search indexes. Optional Supabase accounts keep libraries isolated. Guests keep
+completed memories on their device and use temporary server processing.
 
-The core loop is **Save → Find → Use** in under 15 seconds. Less a bookmark
-manager, more a second brain.
+## Features
 
----
+- Offline capture, multi-link Android sharing, automatic sync and cached reads.
+- Search by meaning, topic, type, entity, intent, source, or saved date.
+- Evidence-grounded Briefs with video timestamps, bilingual transcription/OCR,
+  and bounded provider retries. Unavailable evidence is shown honestly.
+- Private collections, editable memories, explicit re-summarizing, deletion/Undo,
+  and device reminders. Failed re-summarizing preserves the previous Brief.
+- Optional accounts, JSON export, account deletion, and an opt-in weekly note
+  linking to a frozen “Worth another look” list.
+- Light/dark/system appearance, Arabic font fallback, RTL and large-text support.
 
-## Overview
+## Run locally
 
-Saving is local-first and instant; the AI work happens afterwards in the
-background. Search is hybrid — semantic (vectors) fused with keyword matching —
-so it answers both "what was this about?" and "where was that thing called AWS?".
+Requires Docker Compose and Flutter **3.47.6** (the CI version). A native Python
+setup also needs Python 3.11+, ffmpeg, Tesseract with English/Arabic data, and the
+packages in `backend/requirements.txt`. CPU transcription downloads its model
+on first use.
 
-```
- ┌──────────────────────────────┐
- │ Flutter app                  │  share sheet / capture sheet
- │  SQLite mirror + write queue │  saves offline, syncs later
- └──────────────┬───────────────┘
-                │  HTTPS  ·  POST /api/v1/ingest, /sync/batch
-                │           GET  /api/v1/search, /items, /memories
-                ▼
- ┌──────────────────────────────┐        ┌────────────────────────────┐
- │ FastAPI API  (:8000)         │ ─────► │ Redis + Celery worker      │
- │ auth · validation · search   │  jobs  │ fetch → extract → brief →  │
- └──────────────┬───────────────┘        │ chunk → embed              │
-                │                        └──────────────┬─────────────┘
-                ▼                                       │
- ┌──────────────────────────────────────────────────────┴─────────────┐
- │ PostgreSQL 16 + pgvector — content assets, per-user memories,     │
- │ chunks, HNSW vectors, full-text index, job state machine          │
- └────────────────────────────────────────────────────────────────────┘
-```
-
-**Design rules the code follows** (see `PRODUCT.md`): a save never waits for AI,
-public content is processed once and reused, user notes/intents are always
-private, search is by meaning rather than title, and no AI provider is hard-wired
-into the app.
-
----
-
-## Key Features
-
-### Mobile (Flutter)
-
-- **Offline-first capture** — a save is written to SQLite first (optimistic row
-  plus queue entry), so it is searchable immediately and survives an app kill.
-  The app-bar badge shows the pending queue depth.
-- **Self-healing sync** — the queue drains on launch, on every connectivity
-  transition and on a 30 s heartbeat, with exponential backoff from 1 s to a 5
-  minute ceiling. A row the server refuses three times is parked instead of
-  looping forever, and local ids are replaced by server ids once a save lands.
-- **Share-sheet intake** — the Dart half of *Any app → Share → FindBack →
-  Saved* is implemented over the `findback/share` method channel and a shared
-  payload is queued exactly like a typed save, so a share taken with no signal
-  is never lost (`docs/NATIVE_SHARE.md` covers the remaining native work).
-- **Reads that degrade gracefully** — search, Recent and detail fall back to the
-  local mirror and are labelled "Offline"; deletes are local first and the
-  server copy is removed when reachable.
-- **Search-first UI** — auto-focused search box, debounced queries, category
-  chips, match reason on every result, detail page, capture sheet, and a
-  keep-awake Cook Mode.
-- **Build-time configuration** — everything (API base URL, Supabase URL, anon
-  key, optional token) is passed with `--dart-define`; the binary reads no `.env`
-  and ships no secrets.
-
-### Backend / cloud services (FastAPI · Celery · Postgres)
-
-- **REST API** — ingest, batch sync from the phone, hybrid search, paginated
-  item list, item detail/delete, per-content user context (note + intent), and a
-  `/health` endpoint that reports database/Redis state and the active retention
-  policy.
-- **Staged processing pipeline** — `FETCH → NORMALIZE → UNDERSTAND → BRIEF →
-  CHUNK → EMBED`, each stage committing its own output and recording progress,
-  so a retry resumes after the last stage that succeeded.
-- **Durable job state machine** — jobs are claimed atomically, retried with
-  backoff and written through an outbox, so a Redis outage delays work instead of
-  losing it.
-- **Content dedupe with privacy rules** — `ContentAsset` holds the content and
-  may be shared, `UserMemory` holds one user's notes, intent and save count and
-  is never shared. `PUBLIC` assets are reusable by anyone; `PRIVATE`/`UNKNOWN`
-  only by their owner (`UNKNOWN` is treated as private).
-- **Hybrid search** — pgvector cosine recall plus Postgres full-text recall,
-  fused with Reciprocal Rank Fusion (`RRF_K`, `VECTOR_WEIGHT`, `BM25_WEIGHT`),
-  chunk-level max score, and a human-readable `match_reason`.
-- **Provider-agnostic AI gateway** — Groq, Gemini, OpenAI or any
-  OpenAI-compatible endpoint for chat and embeddings, chosen in `.env`. With no
-  keys the pipeline still runs: heuristic extraction and keyword-only search.
-- **Privacy by default** — a log filter redacts saved content and secrets from
-  every log record, raw fetched text is dropped when the pipeline finishes
-  (`RAW_TEXT_RETENTION_HOURS`), and deleting one user's save never deletes the
-  shared asset another user still holds.
-- **Auth** — Supabase-compatible JWT verification, plus a local dev identity
-  (`DEV_AUTH_ENABLED`) for development.
-- **Schema management** — Alembic migrations `0001`–`0011`. The Compose API
-  sets `SCHEMA_BOOTSTRAP=none`; development migrations are manual.
-
----
-
-## Technology stack
-
-| Layer | Technology |
-| --- | --- |
-| Mobile app | Flutter / Dart ≥ 3.4 — Dio, sqflite, connectivity_plus, flutter_secure_storage, wakelock_plus |
-| API | FastAPI, Pydantic, SQLAlchemy 2, Alembic |
-| Database | PostgreSQL 16 + pgvector (HNSW indexes), `tsvector` full-text search |
-| Queue / workers | Redis 7 + Celery, with a transactional outbox dispatcher |
-| AI | Groq · Gemini · OpenAI (or compatible) behind one gateway; embeddings at 1536 dims |
-| Content fetching | Firecrawl, Jina Reader, youtube-transcript-api, BeautifulSoup/lxml |
-| Object storage | Optional S3/R2 snapshots via boto3 |
-| Auth | Supabase JWT (python-jose) + local dev identity |
-| Tooling | pytest, Flutter test, offline Recall@5 eval, Postman collection + OpenAPI spec |
-
----
-
-## Repository structure
-
-```
-FindBack/
-├── README.md               # this file
-├── SETUP.md                # install, configure, run and verify everything
-├── PRODUCT.md              # product rules the implementation must not break
-├── AGENTS.md               # working rules for AI coding agents
-├── docker-compose.yml      # Postgres + Redis + API + worker + outbox dispatcher
-├── termination/            # superseded files, moved not deleted; git-ignored
-├── .env.example            # every backend/config variable, documented
-│
-├── backend/                # Python services
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── alembic/            # migrations 0001 … 0011
-│   ├── app/
-│   │   ├── main.py         # FastAPI entry point (CORS, /health, routers)
-│   │   ├── auth.py         # JWT verification + local dev identity
-│   │   ├── database.py     # engine, sessions, schema bootstrap
-│   │   ├── models.py       # User, ContentAsset, UserMemory, Item, Chunk, ProcessingJob
-│   │   ├── schemas.py      # request/response models
-│   │   ├── env.py          # the single place that reads .env
-│   │   ├── celery_app.py   # Celery broker/backend
-│   │   ├── tasks.py        # process_item worker task
-│   │   ├── routers/        # ingest, search, items, user_context
-│   │   ├── services/       # fetcher, extractor, embedder, ai, ai_gateway,
-│   │   │                   # pipeline, search, outbox, identity, privacy,
-│   │   │                   # retention, limits, profiles, storage
-│   │   └── utils/          # canonical URL, dedupe key, text helpers
-│   ├── scripts/            # check_ai.py, dispatch_outbox.py
-│   └── tests/              # pytest suite (unit + optional live-Postgres tests)
-│
-├── mobile/                 # Flutter client (entry point: lib/main.dart)
-│   ├── lib/
-│   │   ├── main.dart       # app bootstrap: services → UI → sync → share
-│   │   ├── app_services.dart   # composition root
-│   │   ├── config.dart     # --dart-define configuration
-│   │   ├── data/           # api_client, local_db (mirror + queue), token_store
-│   │   ├── services/       # capture, items, sync, share_intent
-│   │   ├── features/home/  # home screen, search controller, detail, capture sheet
-│   │   └── models/         # item, search_result, json utils
-│   ├── test/               # 67 Flutter tests (offline queue, sync, search, share)
-│   ├── plugins/            # legacy Expo config plugin (reference for share intake)
-│   ├── pubspec.yaml
-│   └── README.md           # client architecture and offline behaviour
-│
-├── tool/setup_mobile.sh    # generates android/ + ios/, then pub get/analyze/test
-├── eval/                   # golden set + offline Recall@5 harness
-├── docs/                   # PRD, ARCHITECTURE, OPERATIONS, NATIVE_SHARE
-├── postman/                # collection, local environment, OpenAPI spec
-└── .github/workflows/      # CI definition
-```
-
-`mobile/android/`, `mobile/ios/`, `backend/.venv/` and `.env` are generated
-locally and deliberately not committed.
-
----
-
-## Quick start
+From the repository root:
 
 ```bash
-# 1. Configure (docker-compose requires .env to exist)
-cp .env.example .env          # add GEMINI_API_KEY or GROQ_API_KEY for full AI
+cp .env.example .env              # Only on first setup; preserve an existing .env.
+# Set a strong API_SECRET_KEY and your chosen AI credentials in .env.
+docker compose up -d postgres redis
+docker compose build
+# For a new LOCAL database; back up existing databases before migrating.
+docker compose run --rm api alembic upgrade head
+docker compose up -d api worker outbox beat
+curl --fail http://localhost:8000/health
 
-# 2. Start Postgres + Redis + API + worker
-docker compose up --build     # use "docker-compose up --build" without the plugin
-
-# 3. Check the API, then browse http://localhost:8000/docs
-curl http://localhost:8000/health
-
-# 4. Generate the native projects, then run the app
-tool/setup_mobile.sh
+tool/setup_mobile.sh              # Generates native scaffolding and runs checks.
 cd mobile
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 ```
 
-`10.0.2.2` is how the Android emulator reaches the host machine's `localhost`;
-use `http://localhost:8000` for the iOS simulator and your machine's LAN address
-for a physical device.
+PostgreSQL is published at `127.0.0.1:55433`; Redis uses port 6379 and the API
+uses port 8000. Android emulators reach the host through `10.0.2.2`; iOS simulators
+use `localhost`. For a physical Android device, `tool/run_android.sh [device-id]`
+maintains ADB forwarding. Android native share intake is implemented; an iOS
+Share Extension is still required.
 
-Full prerequisites, the three supported setups (fully local, Supabase, AWS),
-every configuration variable, a Docker-free backend setup, release builds, the
-end-to-end verification walkthrough and a troubleshooting table are in
-**[SETUP.md](SETUP.md)**.
+For a backend without Docker, install the requirements into `backend/.venv`,
+set `DATABASE_URL` to the host PostgreSQL URL and `REDIS_URL` to the host Redis,
+then run Alembic, Uvicorn, Celery worker, Celery beat, and
+`python -m scripts.dispatch_outbox` from `backend`. All four processes are needed
+for automatic processing and weekly scheduling. Run exactly **one beat**.
 
----
+## Configuration
 
-## Manual development migrations
+`.env.example` is the configuration reference; `.env` and credentials stay local.
 
-The Compose API skips schema bootstrap on startup, including Alembic checks.
-A new database needs migrations before API requests can use it. Run the following
-from the repository root in Bash only when you intend to migrate the Compose
-Postgres database `findback`. It requires an explicit confirmation; cancelling or
-entering anything else leaves the database untouched.
-
-```bash
-read -r -p 'Type MIGRATE findback to migrate the dev database: ' migration_confirmation
-if [ "$migration_confirmation" = 'MIGRATE findback' ]; then
-  docker compose exec -T api alembic upgrade head
-else
-  echo 'Migration cancelled.'
-fi
-```
-
-This runs inside the API container against the Compose Postgres service, rather
-than a PostgreSQL instance on the host. Disposable test databases continue to be
-migrated by their fixtures after the test-database name guard passes.
-
----
-
-## API at a glance
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Service status, database/Redis checks, retention policy |
-| `GET` | `/docs` | Interactive Swagger UI |
-| `POST` | `/api/v1/ingest` | Queue a URL for background processing |
-| `POST` | `/api/v1/sync/batch` | Flush the phone's offline write queue |
-| `GET` | `/api/v1/search?q=…` | Hybrid search (`category`, `limit`) |
-| `GET` | `/api/v1/items` | Paginated list (`limit`, `cursor`) |
-| `GET`/`DELETE` | `/api/v1/items/{id}` | Item detail / delete |
-| `GET`/`PATCH`/`DELETE` | `/api/v1/memories/{content_id}` | This user's note and intent for a piece of content |
-
-```bash
-curl --get --data-urlencode 'q=chicken cream mushroom' http://localhost:8000/api/v1/search
-```
-
-All `/api/v1` routes require a Bearer token unless the backend runs with
-`DEV_AUTH_ENABLED=true`.
-
----
-
-## Validation
-
-```bash
-(cd backend && python -m pytest -q)        # unit suite; add TEST_DATABASE_URL for the live-DB tests
-(cd mobile && flutter analyze && flutter test)
-python eval/eval_offline.py                # Recall@5 gate (must reach 0.85)
-```
-
-Expected output for each command, plus the end-to-end mobile ↔ backend
-walkthrough, is documented in [SETUP.md](SETUP.md).
-
----
-
-## Documentation
-
-| Document | What it covers |
+| Setting | Purpose |
 | --- | --- |
-| [SETUP.md](SETUP.md) | Prerequisites, the three setups (local / Supabase / AWS), every environment variable, running and verifying the backend and the app, troubleshooting |
-| [PRODUCT.md](PRODUCT.md) | The product rules the implementation must not break |
-| [mobile/README.md](mobile/README.md) | Client architecture, offline-first contract, what each service owns |
-| [docs/PRD.md](docs/PRD.md) | Vision, personas, user stories, UX spec, metrics |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data model, AI pipeline, search algorithm |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Retention/deletion, log privacy, AI provider configuration, embedding-width changes |
-| [docs/NATIVE_SHARE.md](docs/NATIVE_SHARE.md) | The remaining native work for Android/iOS share intake |
-| [AGENTS.md](AGENTS.md) | Working agreement for AI coding agents on this repository |
+| `DATABASE_URL`, `REDIS_URL`, `API_SECRET_KEY` | Database, queue and guest-token signing |
+| `DEV_AUTH_ENABLED` | Local development identity only; disable publicly |
+| `AI_PROVIDER`, `AI_MODEL`, provider keys | Groq, Gemini, OpenAI or compatible chat |
+| `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` | Separate embeddings; stored vectors are 1536-wide |
+| `SUPABASE_URL`, `SUPABASE_JWT_SECRET` | Account issuer/JWKS; legacy local HS256 configuration |
+| `SUPABASE_SERVICE_ROLE_KEY` | Backend-only authentication identity deletion |
+| `CAPACITY_LIMITS_ENABLED`, provider budgets | Shared Redis quotas; unavailable enforcement pauses work |
+| `MEDIA_*`, `STT_*`, `VISION_AI_*` | Video download, speech, OCR and optional frame understanding |
+| `FCM_SERVICE_ACCOUNT_FILE`, `FCM_PROJECT_ID` | Optional server-side weekly push credentials/project |
+| `TARGET_DATABASE_URL`, `API_DOMAIN`, `BACKEND_IMAGE` | Production database, HTTPS domain and immutable image |
 
-Postman artifacts live under `postman/collections`, `postman/environments` and
-`postman/specs`.
+No provider credentials means limited evidence/fallback Briefs and lexical search;
+it does not establish successful AI processing. Provider failures retain retryable
+work. Changing the embedding model/width requires a deliberate compatible data
+migration/re-embedding plan. Private/unknown content is never deduplicated across
+owners; user notes and edits remain private. Raw fetched text is discarded by
+default after processing; summaries, chunks and vectors remain while saved.
 
----
+The app reads build defines, not `.env`:
 
-## Status
+```bash
+flutter run --dart-define=API_BASE_URL=https://findback.duckdns.org \
+  --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
+  --dart-define=SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_KEY
+```
 
-Implemented: offline save with a durable write queue, batch sync, background
-ingest pipeline with a resumable stage machine, content dedupe and per-user
-memory model, hybrid semantic + keyword search with RRF, privacy/retention
-rules, and the Flutter client with search, detail and offline fallback.
+Configure Supabase email verification and recovery redirect
+`findback://auth/recovery`. Never put a service-role key, private key or provider
+credential into a mobile build. Account export requires an online server read;
+provider deletion failure preserves the application account and its saves.
 
-Not yet implemented: the native share targets (Android `ACTION_SEND` filter and
-the iOS Share Extension) and the sign-in UI — the app runs on the local dev
-token path. See `docs/NATIVE_SHARE.md` and `mobile/README.md`.
+For weekly push, provide ignored `mobile/android/app/google-services.json`; its
+Gradle plugin is applied only when that file exists. On iOS, add the ignored
+`GoogleService-Info.plist` to the Runner target, enable Push Notifications and
+Remote notifications, and configure APNs in Firebase. Mount a service-account
+JSON **inside the worker container** at `FCM_SERVICE_ACCOUNT_FILE`; an absolute
+host path alone is insufficient. Without this setup, push is unavailable and the
+rest of the app continues working. Local reminders use native scheduling and
+resume reconciliation; OS policies can delay delivery.
 
-## License
+## API
 
-Private — all rights reserved.
+Interactive contracts: `/docs` and `/openapi.json`. All `/api/v1` routes except
+guest-token issuance require bearer authentication, unless local dev auth is on.
 
+| Routes | Purpose |
+| --- | --- |
+| `POST /auth/guest`, `POST /ingest`, `POST /sync/batch` | Guest identity, capture, queued uploads |
+| `GET /search`, `GET /items`, `GET /items/{id}` | Search, paginated library, detail |
+| `PATCH /items/{id}`, item retry/keep-link/summarize-again | Private edits and explicit processing actions |
+| Item delete/restore and reminder routes | Memory lifecycle and absolute UTC reminders with IANA zones |
+| `/memories/{content_id}`, `/collections` | Owner notes/intents and collection membership |
+| `/account/weekly-note`, `/account/export`, `DELETE /account` | Preferences, JSON export, permanent account deletion |
+| `POST /items/{id}/open`, `/devices`, `GET /snapshots/{id}` | Open tracking, push registration, frozen weekly lists |
 
-## Brief v2
+Paths in this table use the `/api/v1` prefix. `/health` reports database/Redis
+readiness; `/metrics` exposes operational metrics. Snapshots and item reads are
+owner-scoped; another account's identifiers return 404. Weekly notifications
+contain a count and generic text, never memory titles.
 
-Worker-only media acquisition, bilingual STT/OCR, timestamped evidence, structured
-Briefs, richer search handles, and bounded evidence-improvement retries are described
-in [Brief v2 operations](docs/BRIEF_V2.md). Install ffmpeg and Tesseract English/Arabic
-data outside Docker; the Dockerfile installs them. Apply migration `0012_brief_v2`
-before starting the updated backend. Run `python scripts/eval_brief.py` for offline
-fixture evaluation.
+## Checks
+
+Use a dedicated test database; the suite refuses production-style database names.
+Its PostgreSQL role needs `CREATE DATABASE` because integration fixtures create
+and drop disposable databases. With local Compose services running:
+
+```bash
+# Once, if this test database does not already exist:
+docker compose exec postgres createdb -U findback findback_test
+
+python3 -m venv backend/.venv
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
+TEST_DATABASE_URL=postgresql://findback:findback@127.0.0.1:55433/findback_test \
+  REDIS_URL=redis://127.0.0.1:6379/15 \
+  backend/.venv/bin/python -m pytest -q backend/tests
+(cd mobile && flutter pub get && flutter analyze && flutter test --reporter expanded)
+python3 infrastructure/test_deploy.py
+python3 tool/tests/test_run_android.py
+python3 eval/eval_offline.py
+backend/.venv/bin/python scripts/eval_brief.py
+```
+
+`eval/eval_offline.py` is a small lexical fixture gate, not production semantic
+search quality. Backend evaluation/load tests measure the real pipeline with
+external boundaries mocked. Live provider evaluation is explicitly opt-in;
+`scripts/eval_search_brief.py` seeds database records and must use a disposable
+database. Keep test output and generated artifacts outside Git.
+
+## Repository and deployment
+
+`mobile/lib` contains the app; `backend/app` contains the API/workers;
+`backend/alembic` contains schema history through `0025_snapshot_reconciliation`.
+`backend/tests` and `mobile/test` cover behavior. `tool` contains mobile launchers;
+`scripts`, `eval` and `backend/evals` contain evaluation tools;
+`infrastructure` contains Terraform, production Compose, Caddy and deployment checks.
+
+The existing hosted endpoint is `https://findback.duckdns.org`. Production uses
+EC2 in `eu-west-1`, Supabase PostgreSQL/auth, private Redis, and Caddy HTTPS.
+CI tests pushes/PRs; successful `master` pushes or manual runs build an immutable
+ECR image and deploy through AWS OIDC/SSM. Repository variables:
+`AWS_REGION`, `ECR_REPOSITORY_URL`, `EC2_INSTANCE_ID`, `AWS_DEPLOY_ROLE_ARN`.
+`infrastructure/deploy.sh` serializes updates and rolls back image/config on failed
+readiness. Schema migrations remain a separate, backed-up operation. Never use
+Terraform teardown as application rollback. Retain private Terraform state and
+backups outside Git; commit dependency lockfiles and handwritten native sources.
+
+Project history, phase status, and remaining validation are consolidated in
+[docs/PHASES.md](docs/PHASES.md). Private project; all rights reserved.
+
+Migration `0025` reconciles snapshot privacy and preserves original counts for
+databases that already applied an earlier `0021`. After backing up the database,
+run `alembic upgrade head` before deploying. Previously lost snapshot IDs cannot
+be recovered; downgrading `0025` deliberately retains its privacy/count fixes.

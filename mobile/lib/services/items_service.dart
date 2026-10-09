@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../data/api_client.dart';
 import '../data/local_db.dart';
 import '../models/item.dart';
@@ -12,6 +14,8 @@ typedef ItemCache = Future<void> Function(List<ItemDetail> items);
 typedef RemoteDelete = Future<void> Function(String id);
 typedef LocalDelete = Future<int> Function(String id);
 typedef QueueDrop = Future<int> Function(String clientId);
+typedef RemoteOpen = Future<void> Function(String id);
+typedef OpenQueuer = Future<void> Function(String itemId, {required String url});
 
 enum DeleteStatus {
   /// Gone from the server and the device.
@@ -47,6 +51,8 @@ class ItemsService {
     ConnectivityProbe? isOnline,
     bool Function(ItemDetail)? isHidden,
     Future<String?> Function(String localId)? resolveLocalId,
+    RemoteOpen? markRemoteOpened,
+    OpenQueuer? queueOpen,
   })  : _remoteItem = remoteItem,
         _localItem = localItem,
         _isHidden = isHidden,
@@ -57,7 +63,9 @@ class ItemsService {
         _localDelete = localDelete,
         _dropQueued = dropQueued,
         _isOnline = isOnline ?? systemIsOnline,
-        _resolveLocalId = resolveLocalId;
+        _resolveLocalId = resolveLocalId,
+        _markRemoteOpened = markRemoteOpened,
+        _queueOpen = queueOpen;
 
   factory ItemsService.of({required ApiClient api, required LocalDb db, ConnectivityProbe? isOnline}) =>
       ItemsService(
@@ -74,6 +82,8 @@ class ItemsService {
         dropQueued: db.dropQueued,
         isOnline: isOnline,
         resolveLocalId: db.syncedItemId,
+        markRemoteOpened: api.markOpened,
+        queueOpen: db.queueOpen,
       );
 
   static const String localPrefix = 'local-';
@@ -90,6 +100,8 @@ class ItemsService {
   final QueueDrop _dropQueued;
   final ConnectivityProbe _isOnline;
   final Future<String?> Function(String localId)? _resolveLocalId;
+  final RemoteOpen? _markRemoteOpened;
+  final OpenQueuer? _queueOpen;
 
   static bool isLocalId(String id) => id.startsWith(localPrefix);
 
@@ -167,5 +179,28 @@ class ItemsService {
 
     await _localDelete(id);
     return const DeleteOutcome(DeleteStatus.localOnly, detail: 'offline');
+  }
+
+  /// Records that the user opened this memory.
+  ///
+  /// The API stamps `first_opened_at` server-side; when that call fails for
+  /// any reason (offline first among them) the open waits in the sync queue
+  /// instead. Never throws and never blocks: the detail screen fires this
+  /// without awaiting it, and a `local-*` row was never uploaded, so there is
+  /// nothing to mark.
+  Future<void> markOpened(ItemDetail item) async {
+    if (isLocalId(item.id)) return;
+    try {
+      await _markRemoteOpened?.call(item.id);
+      return;
+    } catch (error) {
+      debugPrint('[items] mark-opened failed, queued for retry: $error');
+    }
+    try {
+      final OpenQueuer? queue = _queueOpen;
+      if (queue != null) await queue(item.id, url: item.url);
+    } catch (error) {
+      debugPrint('[items] could not queue the open: $error');
+    }
   }
 }

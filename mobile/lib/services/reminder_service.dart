@@ -181,10 +181,21 @@ class ReminderService extends ChangeNotifier {
       whereArgs: [value.itemId, value.scheduledAt.toIso8601String()]);
   }
 
+  /// Stop scheduling and clear this account's notifications.
+  ///
+  /// The `cancelAll` is guarded because this runs on the sign-out path: a
+  /// notification plugin that throws must not propagate out of [stop] and
+  /// abandon the rest of the teardown, which would leave the user in a
+  /// signed-in-looking state with no account behind it.
   Future<void> stop() async {
     _stopped = true;
     if (_serialCount > 0) await _tail;
-    await notifications.cancelAll();
+    try {
+      await notifications.cancelAll();
+    } on Object catch (failure) {
+      debugPrint('[reminders] could not clear notifications: '
+          '${failure.runtimeType}');
+    }
   }
   @override
   void dispose() { _taps.close(); super.dispose(); }

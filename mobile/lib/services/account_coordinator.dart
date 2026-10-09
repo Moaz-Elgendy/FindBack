@@ -30,6 +30,9 @@ class AccountCoordinator extends ChangeNotifier {
   late AppServices services;
   late String _guestScope, _legacyScope, _activeScope;
   String? _accountId;
+
+  /// The account whose push scope is currently open, for the tap guard.
+  String? _accountIdForScope;
   Future<void> _switching = Future.value();
   bool _closed = false;
   String? error;
@@ -54,8 +57,14 @@ class AccountCoordinator extends ChangeNotifier {
     final secure = storage ?? const FlutterSecureStorage();
     final service = auth ?? AuthService(storage: secure);
     await service.restore(); // Local storage only; never gates startup on a network request.
-    final coordinator = AccountCoordinator._(service, secure, factory ?? (scope, guest, tokens) async =>
-        AppServices.create(database: await LocalDb.open(scope: scope), tokens: tokens, guest: guest));
+    // `_accountIdForScope` is set by `_open` immediately before the factory
+    // runs, so the push registration knows which account this scope belongs to
+    // and can refuse a note addressed to a different one.
+    late final AccountCoordinator coordinator;
+    final ScopedServices build = factory ?? (scope, guest, tokens) async =>
+        AppServices.create(database: await LocalDb.open(scope: scope), tokens: tokens,
+            guest: guest, accountId: coordinator._accountIdForScope);
+    coordinator = AccountCoordinator._(service, secure, build);
     final savedGuest = await secure.read(key: 'findback.guestScope');
     coordinator._guestScope = savedGuest != null && _safeScope(savedGuest) ? savedGuest : _newGuest();
     coordinator._legacyScope = await secure.read(key: 'findback.legacyGuestScope') ?? coordinator._guestScope;
@@ -121,6 +130,9 @@ class AccountCoordinator extends ChangeNotifier {
             ? ApiFailureKind.connectivity : ApiFailureKind.unauthorized, statusCode: failure.statusCode);
       }
     });
+    // `accountId` lets the push registration refuse a note addressed to a
+    // different account than the one signed in on this scope.
+    _accountIdForScope = account;
     return _factory(account == null && identifier == _legacyScope ? null : scope, account == null, tokens);
   }
 
@@ -181,9 +193,27 @@ class AccountCoordinator extends ChangeNotifier {
         throw const AuthException('Sign in to delete your account.');
       }
       final previous = services;
-      await previous.api.deleteAccount();
+      // Unregister the device BEFORE the account is deleted. The token delete
+      // is owner-scoped, so once the user row is gone it answers 404 and the
+      // only thing left removing the token is the database cascade. Doing it
+      // first lets the app ask properly and lets the server report a refusal.
+      //
+      // A failure here must not stop the deletion: the cascade still removes
+      // the token, and leaving an account undeleted is far worse.
       try {
         await previous.stopAccountWork();
+      } on Object catch (_) {
+        // Deliberately swallowed; see above.
+      }
+      try {
+        await previous.api.deleteAccount();
+      } catch (_) {
+        // Deletion failed; this is still the active account and must keep working.
+        await previous.startSync();
+        await previous.startShareHandling();
+        rethrow;
+      }
+      try {
         previous.api.close();
         await previous.db.clearAccountData();
       } finally {

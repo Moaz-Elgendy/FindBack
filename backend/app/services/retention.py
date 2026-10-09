@@ -28,7 +28,7 @@ from app.env import RAW_TEXT_RETENTION_HOURS
 log = logging.getLogger("findback.retention")
 
 # How long a fetched page is kept, read once at import from the environment.
-# Zero: drop it as soon as the pipeline is done. See docs/OPERATIONS.md for the
+# Zero: drop it as soon as the pipeline is done. See README.md for the
 # full retention policy.
 
 

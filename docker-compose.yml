@@ -61,6 +61,29 @@ services:
     volumes:
       - ./backend:/app
 
+  # Runs the beat_schedule in app/celery_app.py. Without this process nothing
+  # fires on a schedule: the worker only consumes messages, so the weekly note
+  # would never be published.
+  #
+  # Exactly ONE instance, deliberately. Two beats would publish every scheduled
+  # task twice on the same 15-minute tick. The weekly note survives that
+  # (weekly_snapshots_user_week_uq makes the second run a no-op), but nothing
+  # else on the schedule would -- so do not scale this service.
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.celery_app beat -l info
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://findback:findback@postgres:5432/findback
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./backend:/app
+
   # Phase 5: republish processing jobs that a queue outage stranded. The worker
   # cannot recover them on its own -- a publish that failed at save time leaves
   # no Celery message anywhere -- so without this service a save taken while

@@ -40,6 +40,19 @@ services:
     stop_grace_period: 5m
     volumes:
       - model_cache:/root/.cache/huggingface
+  # Runs the beat_schedule in app/celery_app.py. Without this process nothing
+  # fires on a schedule: the worker only consumes messages, so the weekly note
+  # would never be published.
+  #
+  # Exactly ONE instance, deliberately: two beats publish every scheduled task
+  # twice on the same tick. The weekly note survives that
+  # (weekly_snapshots_user_week_uq makes the second run a no-op), but nothing
+  # else on the schedule would -- so do not scale this service. It is a separate
+  # service from the worker precisely so `--concurrency` on the worker can never
+  # multiply the scheduler.
+  beat:
+    <<: *app
+    command: celery -A app.celery_app beat -l info
   outbox:
     <<: *app
     command: python -m scripts.dispatch_outbox

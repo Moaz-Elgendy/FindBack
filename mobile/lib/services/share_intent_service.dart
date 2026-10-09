@@ -86,6 +86,8 @@ class ShareIntentService {
   /// sharing is an entry point, and the app must still launch normally without
   /// it.
   Future<String?> readInitialShare() async {
+    // Disposing the previous account clears this shared channel's handler.
+    if (!_disposed) _channel.setMethodCallHandler(_onPlatformCall);
     try {
       final String? text = await _channel.invokeMethod<String>('getInitialShare');
       return (text == null || text.isEmpty) ? null : text;

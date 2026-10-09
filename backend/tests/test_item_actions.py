@@ -217,3 +217,50 @@ def test_item_actions_migration_preserves_edits_on_rollback(db, sessions, two_us
     with db.connect() as conn:
         assert conn.execute(text('SELECT link_only FROM items WHERE id=:id'),
                             {'id': two_users['a_item']}).scalar() is False
+
+
+# --- opening a save (first_opened_at) ---------------------------------------
+
+def test_open_records_the_first_open_of_an_own_save(client, sessions, two_users):
+    client.as_user(two_users['a'])
+    item_id = two_users['a_item']
+    assert client.request('POST', f'/api/v1/items/{item_id}/open').status_code == 204
+    with sessions() as session:
+        opened = session.execute(text('SELECT first_opened_at FROM items WHERE id=:id'),
+                                 {'id': item_id}).scalar()
+    assert opened is not None
+
+
+def test_open_of_another_users_save_is_not_found_and_stores_nothing(client, sessions, two_users):
+    client.as_user(two_users['b'])
+    assert client.request('POST', f"/api/v1/items/{two_users['a_item']}/open").status_code == 404
+    with sessions() as session:
+        assert session.execute(text('SELECT first_opened_at FROM items WHERE id=:id'),
+                               {'id': two_users['a_item']}).scalar() is None
+
+
+def test_open_of_a_deleted_save_is_not_found(client, sessions, two_users):
+    client.as_user(two_users['a'])
+    item_id = two_users['a_item']
+    assert client.request('DELETE', f'/api/v1/items/{item_id}?undoable=true').status_code == 204
+    assert client.request('POST', f'/api/v1/items/{item_id}/open').status_code == 404
+    with sessions() as session:
+        assert session.execute(text('SELECT first_opened_at FROM items WHERE id=:id'),
+                               {'id': item_id}).scalar() is None
+
+
+def test_open_is_idempotent_and_keeps_the_first_timestamp(client, sessions, two_users):
+    client.as_user(two_users['a'])
+    item_id = two_users['a_item']
+    assert client.request('POST', f'/api/v1/items/{item_id}/open').status_code == 204
+    with sessions() as session:
+        first = session.execute(text('SELECT first_opened_at FROM items WHERE id=:id'),
+                                {'id': item_id}).scalar()
+    assert first is not None
+    # Repeat calls answer the same way and must not move the stored instant.
+    for _ in range(2):
+        assert client.request('POST', f'/api/v1/items/{item_id}/open').status_code == 204
+    with sessions() as session:
+        again = session.execute(text('SELECT first_opened_at FROM items WHERE id=:id'),
+                                {'id': item_id}).scalar()
+    assert again == first

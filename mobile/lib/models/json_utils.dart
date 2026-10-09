@@ -48,3 +48,12 @@ List<Map<String, dynamic>> asObjectList(Object? value) =>
 /// Ids arrive as UUID strings, but never trust the wire format enough to crash
 /// a whole list over one unexpected type.
 String asId(Object? value) => value?.toString() ?? '';
+
+/// Counts arrive as JSON numbers, but a missing or unexpected type must be
+/// distinguishable from a real zero -- the caller supplies the fallback.
+int? asInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value);
+  return null;
+}

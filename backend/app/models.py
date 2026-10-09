@@ -2,8 +2,8 @@ import uuid
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, Column, Computed, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer,
-    String, Text, UniqueConstraint, func, text,
+    Boolean, CheckConstraint, Column, Computed, DateTime, ForeignKey, ForeignKeyConstraint, Index,
+    Integer, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 
@@ -168,6 +168,11 @@ class Item(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     processed_at = Column(DateTime(timezone=True))
+    # When the owner first opened this save. NULL means "never opened", which
+    # is how a save becomes forgotten (see services/forgotten.py). Nullable and
+    # never backfilled: rows older than the column stay NULL, so older saves
+    # count as forgotten rather than needing to be re-marked.
+    first_opened_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("user_id", "canonical_url", name="items_user_canonical_uq"),
@@ -435,3 +440,70 @@ class Reminder(Base):
     scheduled_at = Column(DateTime(timezone=True), nullable=False)
     time_zone = Column(String(100), nullable=False)
     delivered_at = Column(DateTime(timezone=True))
+
+
+class DeviceToken(Base):
+    """One registered push device, for delivery in a later phase.
+
+    `token` is UNIQUE across all users, not per user: a push registration
+    belongs to the DEVICE, and the device belongs to whoever is signed in on it
+    now. Registering from a second account therefore moves the row rather than
+    leaving the previous account holding a token for a phone it no longer has.
+    """
+    __tablename__ = 'device_tokens'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=GEN_RANDOM_UUID)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    token = Column(Text, nullable=False)
+    platform = Column(String(16), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    __table_args__ = (
+        # Named rather than `unique=True` so the model and the migration
+        # produce the same constraint name and cannot drift.
+        UniqueConstraint('token', name='device_tokens_token_uq'),
+        # A closed vocabulary, enforced here as well as in the route.
+        CheckConstraint("platform IN ('android', 'ios')", name='device_tokens_platform_ck'),
+        Index('device_tokens_user_idx', 'user_id'),
+    )
+
+
+class WeeklySnapshot(Base):
+    """One weekly note's frozen list of saves (redesign addendum, section 1.3).
+
+    The note promises a count, and the "Worth another look" screen has to show
+    exactly those saves. Recomputing the forgotten set at tap time would let the
+    list drift away from the number on the lock screen, so the ids are stored.
+    """
+    __tablename__ = 'weekly_snapshots'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=GEN_RANDOM_UUID)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # The ISO week (e.g. '2026-W44') this note was sent for, in the user's own
+    # zone. NULL for a snapshot created outside the weekly task. Nullable on
+    # purpose: PostgreSQL treats NULLs as distinct, so an unkeyed snapshot never
+    # collides with another one and never occupies the real weekly key.
+    iso_week = Column(String(8))
+    # Set when at least one device accepted the note, which is the only case in
+    # which the claim may be kept. NULL with an old `created_at` therefore means
+    # a claim nobody delivered -- usually a worker killed mid-tick -- and the
+    # next tick gives the week back.
+    delivered_at = Column(DateTime(timezone=True))
+    __table_args__ = (
+        # One note per user per ISO week. The task runs every fifteen minutes
+        # and its window is wider than one tick, so a beat restart, a redeploy
+        # or two overlapping beat instances can all reach the same user in the
+        # same window; this makes the second one send nothing.
+        UniqueConstraint('user_id', 'iso_week', name='weekly_snapshots_user_week_uq'),
+        Index('weekly_snapshots_user_idx', 'user_id'),
+    )
+
+
+class SnapshotItem(Base):
+    """The saves one weekly note counted, in the order the note promised them."""
+    __tablename__ = 'snapshot_items'
+    snapshot_id = Column(UUID(as_uuid=True), ForeignKey('weekly_snapshots.id', ondelete='CASCADE'),
+                         primary_key=True)
+    # Keep counted ids after a save is purged; account deletion cascades via the snapshot.
+    save_id = Column(UUID(as_uuid=True), primary_key=True)

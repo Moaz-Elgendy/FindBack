@@ -113,7 +113,7 @@ void main() {
     expect((await upgraded.db.query('items')).single['summary'], 'Keep this brief');
     expect((await upgraded.db.query('sync_queue')).single['client_id'], 'queued');
     expect(await upgraded.db.query('collections'), isEmpty);
-    expect(await upgraded.db.getVersion(), 6);
+    expect(await upgraded.db.getVersion(), 7);
     await upgraded.close(); await directory.delete(recursive: true);
   });
   test('guest import copies memberships without exposing another cache', () async {

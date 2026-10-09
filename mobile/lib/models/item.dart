@@ -217,6 +217,52 @@ class ItemPage {
   final String? nextCursor;
 }
 
+/// One weekly note's frozen list of saves — the "Worth another look" screen.
+///
+/// The note promised a count, and the ids are stored server-side so the list
+/// cannot drift away from it. `originalCount` is what the notification said and
+/// `availableCount` is what is still there now: a save deleted after the note
+/// was sent is dropped from `items`, so the two can differ, and the screen says
+/// so rather than quietly showing a shorter list than the lock screen claimed.
+class SnapshotPage {
+  const SnapshotPage({
+    required this.items,
+    required this.originalCount,
+    required this.availableCount,
+    this.snapshotId = '',
+    this.createdAt,
+  });
+
+  factory SnapshotPage.fromJson(Map<String, dynamic> json) {
+    final items = asObjectList(json['items'])
+        .map(ItemDetail.fromJson)
+        .toList(growable: false);
+    return SnapshotPage(
+      items: items,
+      snapshotId: asId(json['snapshot_id']),
+      createdAt: parseDate(json['created_at']),
+      // Fall back to the list length so an older server response without the
+      // counts still renders, rather than claiming saves went missing.
+      originalCount: asInt(json['original_count']) ?? items.length,
+      availableCount: asInt(json['available_count']) ?? items.length,
+    );
+  }
+
+  final String snapshotId;
+  final DateTime? createdAt;
+  final List<ItemDetail> items;
+
+  /// How many saves the notification counted, including ones since deleted.
+  final int originalCount;
+
+  /// How many of those are still available, which is `items.length`.
+  final int availableCount;
+
+  /// True when at least one counted save is gone, so the screen must not imply
+  /// it is showing everything the note promised.
+  bool get hasUnavailable => availableCount < originalCount;
+}
+
 class IngestResult {
   const IngestResult({required this.id, required this.status, required this.canonicalUrl, this.alreadyExists = false});
 

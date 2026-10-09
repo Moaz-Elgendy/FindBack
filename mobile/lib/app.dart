@@ -5,9 +5,49 @@ import 'app_services.dart';
 import 'features/collections/library_shell.dart';
 import 'features/account/account_page.dart';
 import 'features/home/detail_page.dart';
+import 'features/weekly_note/worth_another_look_page.dart';
 import 'services/account_coordinator.dart';
+import 'services/messaging_service.dart';
+import 'services/push_registration.dart';
 import 'services/appearance.dart';
 import 'theme.dart';
+
+/// Opens whatever a LOCAL notification tap refers to. Returns whether it did.
+///
+/// Reminders and the foreground weekly note share one
+/// `flutter_local_notifications` instance and therefore one tap handler, so the
+/// payload is dispatched here. A bare payload is a memory id and opens the
+/// detail screen exactly as it always has; only a `weekly_note:` payload takes
+/// the other branch. **Reminder payloads are unchanged**, so no existing
+/// notification behaves differently.
+///
+/// A weekly note tapped while signed out is held in the same slot a push tap
+/// uses and opened after sign-in, because there is no account to read the
+/// snapshot with and opening it immediately would only ever show the
+/// unavailable state.
+///
+/// Returns false when the payload addresses nothing -- an empty or blank id --
+/// in which case nothing is opened, rather than a permanently unavailable list.
+bool openNotificationTap(String payload, GlobalKey<NavigatorState> navigator,
+    AppServices bound) {
+  if (payload.startsWith(kWeeklyNotePayloadPrefix)) {
+    final snapshotId = payload.substring(kWeeklyNotePayloadPrefix.length);
+    if (snapshotId.trim().isEmpty) return false;
+    final push = bound.push;
+    if (push == null) return false;
+    if (push.guest) {
+      PushRegistration.holdUntilSignIn(PushPayload(
+          type: 'weekly_note', snapshotId: snapshotId));
+      return true;
+    }
+    navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) =>
+        WorthAnotherLookPage(snapshotId: snapshotId, services: bound)));
+    return true;
+  }
+  navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) =>
+      DetailPage(itemId: payload, items: bound.items, services: bound)));
+  return true;
+}
 
 /// Root widget. Theme only — dependencies arrive through [AppServices].
 class FindBackApp extends StatefulWidget {
@@ -25,7 +65,9 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
   final _navigator = GlobalKey<NavigatorState>();
   StreamSubscription<String>? _authLinks;
   StreamSubscription<String>? _reminderTaps;
+  StreamSubscription<String>? _pushTaps;
   AppServices? _boundReminders;
+  AppServices? _boundPush;
   late final Appearance _appearance;
   AppServices get services => widget.accounts?.services ?? widget.services;
 
@@ -37,6 +79,63 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
     _bindLinks();
     WidgetsBinding.instance.addObserver(this);
     _bindReminders();
+    _bindWeeklyNote();
+  }
+
+  /// Weekly-note taps from the push notification.
+  ///
+  /// A tap carries only a snapshot id -- no account, and no memory content --
+  /// so the screen decides what it may show by asking the server. Someone
+  /// else's snapshot answers 404 and the screen says so; nothing is inferred
+  /// from the id here.
+  void _bindWeeklyNote() {
+    if (_boundPush == services) return;
+    _boundPush = services;
+    _pushTaps?.cancel();
+    final push = services.push;
+    if (push == null) return;
+    final bound = services;
+    // A note for another account cannot be opened, so send the user home
+    // rather than leaving the tap looking like a no-op.
+    push.onForeignTap = _goHome;
+    _pushTaps = push.taps.listen((id) => _openWeeklyNote(id, bound));
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        // A tap that launched the app from a terminated state arrives on the
+        // stream above, because the listener is bound before start().
+        await push.start();
+        if (!mounted) return;
+        // A tap that arrived while signed out, replayed now that there is an
+        // account to read the snapshot with.
+        //
+        // The account guard runs HERE, not when the tap was held: a guest scope
+        // had no account to compare the note against, and the note may turn out
+        // to belong to a different account than the one just signed in.
+        final replay = PushRegistration.replayPendingTapFor(push.accountId);
+        // A refused replay goes home, so the tap is not a silent no-op. An empty
+        // one means no tap was pending at all, which is the ordinary case.
+        if (replay.refused) {
+          _goHome();
+          return;
+        }
+        final pending = replay.snapshotId;
+        if (pending != null) _openWeeklyNote(pending, bound);
+      } catch (_) {
+        /* A device plugin failure cannot prevent opening the library. */
+      }
+    });
+  }
+
+  /// Back to the library, wherever the user currently is.
+  void _goHome() {
+    if (!mounted) return;
+    _navigator.currentState?.popUntil((route) => route.isFirst);
+  }
+
+  void _openWeeklyNote(String snapshotId, AppServices bound) {
+    if (!mounted || services != bound) return;
+    _navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) =>
+      WorthAnotherLookPage(snapshotId: snapshotId, services: bound)));
   }
 
   void _bindReminders() {
@@ -46,27 +145,47 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
     final reminder = services.reminders;
     if (reminder == null) return;
     final bound = services;
-    _reminderTaps = reminder.taps.listen((id) => _openReminder(id, bound));
+    _reminderTaps =
+        reminder.taps.listen((payload) => _openNotification(payload, bound));
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         await reminder.start();
-        final id = reminder.initialTap;
+        final payload = reminder.initialTap;
         reminder.initialTap = null;
-        if (id != null) _openReminder(id, bound);
+        if (payload != null) _openNotification(payload, bound);
       } catch (_) { /* A device plugin failure cannot prevent opening the library. */ }
     });
   }
 
-  void _openReminder(String id, AppServices bound) {
+  /// Opens whatever a LOCAL notification tap refers to.
+  ///
+  /// The body lives in [openNotificationTap] so it can be exercised directly;
+  /// this only adds the "is this still the live account?" guard.
+  void _openNotification(String payload, AppServices bound) {
     if (!mounted || services != bound) return;
-    _navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) =>
-      DetailPage(itemId: id, items: bound.items, services: bound)));
+    openNotificationTap(payload, _navigator, bound);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       services.reminders?.reconcile().catchError((Object _) {});
+      _resumePush();
+    }
+  }
+
+  /// Re-check notification permission every time the app comes back.
+  ///
+  /// Permission is granted in system settings, which takes the app out of the
+  /// foreground and back, so the app cannot tell the moment it changes. The
+  /// token is only registered when permission was allowed, so without this a
+  /// user who turns notifications on in Settings would never receive a note
+  /// until they happened to sign in again.
+  Future<void> _resumePush() async {
+    try {
+      await services.push?.start();
+    } catch (_) {
+      // A device plugin failure must never stop the library from opening.
     }
   }
 
@@ -110,12 +229,14 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
     setState(() {});
     _bindLinks();
     _bindReminders();
+    _bindWeeklyNote();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _reminderTaps?.cancel();
+    _pushTaps?.cancel();
     widget.accounts?.removeListener(_changed);
     _authLinks?.cancel();
     if (widget.appearance == null) _appearance.dispose();

@@ -1,5 +1,6 @@
 import os
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_process_init
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -28,7 +29,20 @@ celery.conf.update(task_serializer="json", accept_content=["json"],
                    # well above a normal run; override per deployment with
                    # TASK_SOFT_TIME_LIMIT / TASK_TIME_LIMIT (seconds).
                    task_soft_time_limit=int(os.getenv("TASK_SOFT_TIME_LIMIT", "900")),
-                   task_time_limit=int(os.getenv("TASK_TIME_LIMIT", "960")))
+                   task_time_limit=int(os.getenv("TASK_TIME_LIMIT", "960")),
+                   # The weekly note. Beat fires this every fifteen minutes;
+                   # the task itself decides whose chosen moment that tick
+                   # covers, because the user's day/hour/minute are in their
+                   # own saved zone and cannot be expressed as a UTC schedule.
+                   #
+                   # Requires a `celery beat` process alongside the worker --
+                   # the worker alone never runs a beat_schedule entry.
+                   beat_schedule={
+                       'weekly-note': {
+                           'task': 'run_weekly_note',
+                           'schedule': crontab(minute='*/15'),
+                       },
+                   })
 
 
 @worker_process_init.connect

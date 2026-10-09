@@ -12,6 +12,8 @@ import 'services/collections_service.dart';
 import 'services/capture_service.dart';
 import 'services/items_service.dart';
 import 'services/memory_actions.dart';
+import 'services/messaging_service.dart';
+import 'services/push_registration.dart';
 import 'services/reminder_service.dart';
 import 'services/reminder_notifications.dart';
 import 'services/share_intent_service.dart';
@@ -28,12 +30,17 @@ class AppServices {
     required this.items,
     required this.share,
     this.reminders,
+    // Nullable only so widget tests that build AppServices directly do not
+    // have to stand up a messaging plugin. `create` -- the sole production
+    // path -- always supplies one.
+    this.push,
     this.guest = false,
     this.guestLibrary,
     this.initialLibrary = const [],
   });
 
-  static Future<AppServices> create({LocalDb? database, TokenStore? tokens, bool guest = false}) async {
+  static Future<AppServices> create({LocalDb? database, TokenStore? tokens, bool guest = false,
+    MessagingService? messaging, String? accountId}) async {
     final LocalDb db = database ?? await LocalDb.open();
     final ApiClient api = ApiClient(tokens: tokens);
     final CaptureService capture = guest ? CaptureService(
@@ -48,6 +55,10 @@ class AppServices {
       queue: (url, preview, hint) => db.queueSave(url: url, preview: preview, titleHint: hint),
       existingItem: db.localItemForUrl,
     ) : CaptureService.of(db: db, api: api);
+    // One instance for both: reminders schedule through it and a foreground
+    // weekly note is rendered through it, so the two share a channel and a
+    // private-visibility setting.
+    final notifications = NativeReminderNotifications();
     final guestStore = guest ? GuestLibrary(db, api) : null;
     return AppServices(
       db: db,
@@ -56,7 +67,9 @@ class AppServices {
       capture: capture,
       items: guestStore?.items ?? ItemsService.of(db: db, api: api),
       guestLibrary: guestStore,
-      reminders: ReminderService(db: db, api: api, notifications: NativeReminderNotifications(), guest: guest),
+      reminders: ReminderService(db: db, api: api, notifications: notifications, guest: guest),
+      push: PushRegistration(api: api, messaging: messaging ?? FirebaseMessagingService(),
+        guest: guest, notifications: notifications, accountId: accountId),
       guest: guest,
       initialLibrary: await db.recentLocalItems(limit: 20),
       share: ShareIntentService(),
@@ -81,6 +94,11 @@ class AppServices {
   }
 
   final ReminderService? reminders;
+
+  /// Keeps the backend's device list in step with this installation, so the
+  /// weekly note can reach this phone. Started with the account, stopped on
+  /// the way out.
+  final PushRegistration? push;
   final bool guest;
   final List<SearchResult> initialLibrary;
   final GuestLibrary? guestLibrary;
@@ -115,6 +133,11 @@ class AppServices {
   }
 
   Future<void> startSync() async {
+    _accountWorkStopped = false;
+    // Registered here rather than at sign-in directly: startSync runs after
+    // every account switch, which is exactly when a new account needs this
+    // device on file. Guests are skipped by the registration itself.
+    await push?.start();
     await refreshPending();
     sync.start(onFlushed: (int flushed) {
       refreshPending();
@@ -153,6 +176,10 @@ class AppServices {
   Future<void> stopAccountWork() async {
     if (_accountWorkStopped) return;
     _accountWorkStopped = true;
+    // Before anything else: a sign-out must take this device off the list, so
+    // the next person to sign in on this phone does not inherit the previous
+    // account's weekly notes.
+    await push?.stop();
     await share.pauseDelivery();
     await _shareSubscription?.cancel();
     _shareSubscription = null;
@@ -164,6 +191,7 @@ class AppServices {
 
   Future<void> dispose() async {
     await stopAccountWork();
+    await push?.dispose();
     await share.dispose();
     reminders?.dispose();
     api.close();

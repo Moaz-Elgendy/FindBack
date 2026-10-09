@@ -1,3 +1,5 @@
 # Shell scripts must keep LF endings: a CRLF shebang or command makes bash fail
 # with "syntax error near unexpected token $'\r'".
 *.sh text eol=lf
+# Existing CRLF source uses carriage returns as line endings, not whitespace.
+* whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

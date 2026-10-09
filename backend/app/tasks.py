@@ -250,6 +250,24 @@ def _reuse_derived_data(db, item, source) -> int:
     return result.rowcount or 0
 
 
+@celery.task(name="run_weekly_note")
+def run_weekly_note_task():
+    """Beat tick: build the weekly note for everyone whose moment is now.
+
+    Registered as `run_weekly_note` on the beat schedule every 15 minutes. The
+    matching rule, the DST handling and the once-per-week guard all live in
+    `app/services/weekly_note.py`; this is only the Celery entry point, so the
+    rule is testable without a broker.
+    """
+    from app.services.weekly_note import run_weekly_note
+
+    db = SessionLocal()
+    try:
+        return run_weekly_note(db)
+    finally:
+        db.close()
+
+
 @celery.task(name="process_item", bind=True, max_retries=2)
 def process_item(self, item_id: str):
     db = SessionLocal()

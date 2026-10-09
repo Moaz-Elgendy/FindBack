@@ -16,7 +16,7 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 6;
+  static const int schemaVersion = 7;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
@@ -92,6 +92,17 @@ class LocalDb {
               final columns = await database.rawQuery('PRAGMA table_info(sync_queue)');
               if (!columns.any((column) => column['name'] == 'server_id')) {
                 await database.execute('ALTER TABLE sync_queue ADD COLUMN server_id TEXT');
+              }
+            }
+            // v7: a queue row can now be a save OR a mark-opened call; every
+            // pre-existing row is a save. The presence guard mirrors the v4
+            // one: tests reopen a new-shape database with an old version
+            // stamp, so the column may already exist.
+            if (oldVersion < 7) {
+              final queueColumns = await database.rawQuery('PRAGMA table_info(sync_queue)');
+              if (!queueColumns.any((column) => column['name'] == 'kind')) {
+                await database.execute(
+                    "ALTER TABLE sync_queue ADD COLUMN kind TEXT NOT NULL DEFAULT 'save'");
               }
             }
           },
@@ -184,7 +195,8 @@ class LocalDb {
         captured_at TEXT NOT NULL,
         retries INTEGER DEFAULT 0,
         status TEXT DEFAULT 'pending',
-        server_id TEXT
+        server_id TEXT,
+        kind TEXT NOT NULL DEFAULT 'save'
       )
     ''');
     await db.execute('CREATE INDEX idx_items_created ON items(created_at DESC)');
@@ -263,7 +275,7 @@ class LocalDb {
     final rows = await db.query(
       'sync_queue',
       columns: const ['client_id', 'status'],
-      where: "url = ? AND status IN ('pending', 'failed')",
+      where: "url = ? AND kind = 'save' AND status IN ('pending', 'failed')",
       whereArgs: <Object?>[url],
       orderBy: 'captured_at ASC',
       limit: 1,
@@ -286,12 +298,56 @@ class LocalDb {
     final rows = await db.query(
       'sync_queue',
       columns: const ['client_id', 'url', 'preview', 'title_hint', 'captured_at'],
-      where: "status = 'pending'",
+      where: "status = 'pending' AND kind = 'save'",
       orderBy: 'captured_at ASC',
       limit: limit,
     );
     return rows.map(SyncItem.fromRow).toList(growable: false);
   }
+
+  /// Prefix of a `sync_queue` row that is a pending "memory opened" call
+  /// rather than a queued capture.
+  static const String openPrefix = 'open:';
+
+  /// Records that the user opened a server save, for the sync loop to POST
+  /// when a connection is back.
+  ///
+  /// Idempotent: re-opening while the row is still queued only refreshes it,
+  /// so one detail visit offline stays exactly one retry later.
+  Future<void> queueOpen(String itemId, {required String url}) => db.insert(
+        'sync_queue',
+        <String, Object?>{
+          'client_id': '$openPrefix$itemId',
+          'url': url,
+          'captured_at': DateTime.now().toUtc().toIso8601String(),
+          'status': 'pending',
+          'kind': 'open',
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+  /// Server ids of opens still waiting for a connection.
+  Future<List<String>> pendingOpens({int limit = queueBatchSize}) async {
+    final rows = await db.query(
+      'sync_queue',
+      columns: const ['client_id'],
+      where: "kind = 'open' AND status = 'pending'",
+      orderBy: 'captured_at ASC',
+      limit: limit,
+    );
+    return rows
+        .map((row) => (row['client_id'] as String).substring(openPrefix.length))
+        .toList(growable: false);
+  }
+
+  /// The server has the open, so the row has nothing left to say.
+  ///
+  /// The `kind` filter is belt-and-braces: the `open:` prefix already cannot
+  /// collide with a capture's client id, but stating it keeps the invariant
+  /// local to the statement that depends on it.
+  Future<void> markOpenDone(String itemId) => db.delete('sync_queue',
+      where: "client_id = ? AND kind = 'open'",
+      whereArgs: <Object?>['$openPrefix$itemId']);
 
 
   /// Marks queue rows done and adopts the server ids, so the optimistic
@@ -438,7 +494,8 @@ class LocalDb {
   /// something is stuck rather than in flight.
   Future<int> pendingCount() async {
     final row = await db.rawQuery(
-        "SELECT COUNT(*) AS c FROM sync_queue WHERE status IN ('pending', 'failed')");
+        'SELECT COUNT(*) AS c FROM sync_queue '
+        "WHERE status IN ('pending', 'failed') AND kind = 'save'");
     return row.first['c'] as int? ?? 0;
   }
 }
