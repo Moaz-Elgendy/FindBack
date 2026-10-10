@@ -91,7 +91,8 @@ migration/re-embedding plan. Private/unknown content is never deduplicated acros
 owners; user notes and edits remain private. Raw fetched text is discarded by
 default after processing; summaries, chunks and vectors remain while saved.
 
-The app reads build defines, not `.env`:
+Normal builds include the public production API and Supabase settings. The app
+does not read `.env`; use build defines to override those settings:
 
 ```bash
 flutter run --dart-define=API_BASE_URL=https://findback.duckdns.org \

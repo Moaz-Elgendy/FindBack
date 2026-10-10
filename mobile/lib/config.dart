@@ -13,12 +13,15 @@ class AppConfig {
     defaultValue: 'https://findback.duckdns.org',
   );
 
-  /// Supabase project URL, empty until auth is wired up.
-  static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  /// Public production settings; build defines can select another project.
+  static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL',
+      defaultValue: 'https://otcrcugnuvfdewdsneco.supabase.co');
 
   /// Supabase public anon key (never the service role key).
-  static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY',
-      defaultValue: String.fromEnvironment('SUPABASE_ANON_KEY'));
+  static const String supabaseAnonKey = String.fromEnvironment(
+      'SUPABASE_PUBLISHABLE_KEY',
+      defaultValue: String.fromEnvironment('SUPABASE_ANON_KEY',
+          defaultValue: 'sb_publishable_QbvNAIfEYP6FDWdH9ZWJfw_NsG8EgsQ'));
 
   /// Optional bearer token for pointing the app at a backend that runs with
   /// `DEV_AUTH_ENABLED=false`. Ignored when a token is already in secure storage.

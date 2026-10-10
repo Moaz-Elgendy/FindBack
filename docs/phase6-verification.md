@@ -156,9 +156,15 @@ The feed updated automatically to a complete summary; SQLite recorded the card
 as `ready`. Worker logs referenced that exact card ID, and its production asset
 and job reached `READY`/`EMBED`. Android verified the production domain on this
 phone as well. A later direct item lookup was empty because API logs recorded
-an explicit `DELETE /api/v1/items/<test-card-id>` returning 204; this is not
-classified as an unexplained processing failure. No actual notification delivery
-or live sign-in continuation is claimed from this phone check.
+`DELETE /api/v1/items/<test-card-id>` returning 204. The sender did not delete
+that memory: `GuestLibrary.cacheAndRelease` automatically releases temporary
+server staging after caching a completed guest brief in SQLite. This is the
+documented guest storage model, not a user deletion or lost local memory. The
+existing guest-library regression verifies that caching precedes the DELETE and
+that subsequent reads and the feed remain local. Guest-library/reprocessing
+suites were rerun successfully, including preservation of edits and previous
+briefs on failure. No storage behavior was changed. Actual notification delivery
+and live sign-in continuation remain separate device checks.
 
 Additional emulator checks passed: guest export opens Android's share sheet,
 produces valid version-1 JSON with six saves, and includes no access-token,
@@ -184,3 +190,15 @@ The first offline-label CI run also identified two existing tests still expectin
 the misleading label. Both now assert the correct local boundary. The full local
 Flutter suite passed 470 tests; the corrected follow-up passed the production CI gate linked above.
 The rebuilt APK displayed “Saved on this phone” during the strict network block.
+
+## Physical sign-in configuration correction
+
+The physical phone reported “Account sign-in is not configured.” The APK used
+the default production API but omitted both Supabase build defines. Normal
+builds now default to the production Supabase URL and its public publishable
+key, with existing define overrides preserved. The publishable key validated
+against Supabase's public settings endpoint (HTTP 200). No service-role or
+provider key is embedded. A default-constructor sign-in regression reproduced
+the failure, then passed after the correction; the auth suite passed 14 tests.
+Flutter analyze passed; the full suite passed 471 tests with one existing skip,
+and a normal debug APK build passed without Supabase define overrides.

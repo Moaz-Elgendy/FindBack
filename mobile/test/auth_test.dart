@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -33,6 +34,22 @@ void main() {
         dio: dio,
         supabaseUrl: 'https://project.supabase.co',
         publicKey: 'public');
+  });
+  test('default production build can sign in using a public key', () async {
+    final defaultAuth = AuthService(dio: dio);
+    await defaultAuth.signIn('test@example.com', 'password');
+    expect(requests.single.uri.scheme, 'https');
+    expect(requests.single.uri.host, 'otcrcugnuvfdewdsneco.supabase.co');
+    final key = requests.single.headers['apikey'] as String;
+    expect(key, isNotEmpty);
+    expect(key.startsWith('sb_secret_'), isFalse);
+    if (!key.startsWith('sb_publishable_')) {
+      final claims = jsonDecode(utf8.decode(
+          base64Url.decode(base64Url.normalize(key.split('.')[1])))) as Map;
+      expect(claims['role'], 'anon');
+    }
+    expect(defaultAuth.currentSession!.id, 'user-a');
+    await defaultAuth.dispose();
   });
   test(
       'normalize email, preserve password, securely restore, bound subject, logout',
