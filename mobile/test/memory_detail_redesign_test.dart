@@ -66,7 +66,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme:FindBackTheme.build(Brightness.light),home:DetailPage(itemId:item.id,items:services.items,services:services)));
     await settle(tester);
     expect(find.text('Jump to 0:42'),findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Remind me'), 200, scrollable: find.byType(Scrollable).first); await settle(tester); await tester.tap(find.text('Remind me')); await settle(tester); expect(find.text('Pick date and time'), findsOneWidget); await tester.tap(find.textContaining('Tomorrow,').first); await settle(tester);
+    await tester.scrollUntilVisible(find.text('Remind me'), 200, scrollable: find.byType(Scrollable).first); await settle(tester); await tester.tap(find.text('Remind me')); await settle(tester);
+    await tester.tap(find.text('Cancel')); await settle(tester);
+    expect(await tester.runAsync(() => services.reminders!.current(item.id)), isNull);
+    await tester.tap(find.text('Remind me')); await settle(tester); expect(find.text('Pick date and time'), findsOneWidget); await tester.tap(find.textContaining('Tomorrow,').first); await settle(tester);
     expect(find.text("We'll send one notification at the time you choose."),findsOneWidget);
     await tester.tap(find.text('Continue')); await settle(tester);
     expect(find.text('Notifications are off. Turn them on in Settings to get this reminder'),findsOneWidget); expect(await tester.runAsync(()=>services.reminders!.current(item.id)),isNotNull);
@@ -100,7 +103,32 @@ void main() {
     expect(find.text('Jump to 0:42'), findsOneWidget);
     await close(tester, services);
   });
-  testWidgets('detail Delete is immediate and Undo restores memory and alarm', (tester) async {
+  testWidgets('detail copy lives in menu and copies title points and source', (tester) async {
+    final services = await setup(tester);
+    String? copied;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String;
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await tester.pumpWidget(MaterialApp(theme: FindBackTheme.build(Brightness.light),
+      home: DetailPage(itemId: item.id, items: services.items, services: services)));
+    await settle(tester);
+    expect(find.text('Copy summary'), findsNothing);
+    await tester.tap(find.byTooltip('Memory actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Copy summary'), findsOneWidget);
+    await tester.tap(find.text('Copy summary'));
+    await tester.pumpAndSettle();
+    expect(copied, startsWith(item.bestTitle));
+    expect(copied, contains('1. '));
+    expect(copied, contains('(0:42)'));
+    expect(copied, endsWith(item.url));
+    expect(find.text('Summary copied'), findsOneWidget);
+    await close(tester, services);
+  });
+
+  testWidgets('detail confirms deletion then Undo restores memory and alarm', (tester) async {
     final services = await setup(tester);
     await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Scaffold(
       body: TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>

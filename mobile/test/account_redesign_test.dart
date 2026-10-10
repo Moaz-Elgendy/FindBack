@@ -214,6 +214,20 @@ void main() {
     next.close();
   });
 
+  testWidgets('successful account deletion resets the device theme preference', (tester) async {
+    await tester.runAsync(() => appearance.select(ThemeMode.dark));
+    await tester.pumpWidget(app(onDelete: () async {}));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Delete account'));
+    await tester.tap(find.text('Delete account'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'DELETE');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete account'));
+    await tester.pumpAndSettle();
+    expect(appearance.mode, ThemeMode.system);
+  });
+
   testWidgets('export shares actual account payload; deletion needs confirmation and failures remain visible', (tester) async {
     Map<String, dynamic>? exported;
     var deletes = 0;
@@ -229,11 +243,15 @@ void main() {
     await tester.tap(find.text('Delete account'));
     await tester.pumpAndSettle();
     expect(deletes, 0);
+    expect(find.text('You are going to delete your account and remove all of your saved memories/cards.'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Delete account')).onPressed, isNull);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(deletes, 0);
     await tester.tap(find.text('Delete account'));
     await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'DELETE');
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Delete account'));
     await tester.pumpAndSettle();
     expect(deletes, 1);

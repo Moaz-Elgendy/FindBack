@@ -38,6 +38,10 @@ Future<bool> confirmMemoryDeletion(BuildContext context, LocalDb db) async {
                         onPressed: () => Navigator.pop(dialog, false),
                         child: const Text('Cancel')),
                     FilledButton(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: Theme.of(dialog).colorScheme.error,
+                            foregroundColor:
+                                Theme.of(dialog).colorScheme.onError),
                         onPressed: () => Navigator.pop(dialog, true),
                         child: const Text('Delete')),
                   ],

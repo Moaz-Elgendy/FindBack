@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../widgets/feedback.dart';
 import 'package:timezone/timezone.dart' as tz;
 import '../../models/item.dart';
 import '../../models/reminder.dart';
@@ -62,6 +63,8 @@ class _ReminderButtonState extends State<ReminderButton> {
             if (_reminder != null) ListTile(contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.notifications_off_outlined), title: const Text('Remove reminder'),
               onTap: () => Navigator.pop(sheet, -2)),
+            Align(alignment: AlignmentDirectional.centerEnd, child: TextButton(
+              onPressed: () => Navigator.pop(sheet), child: const Text('Cancel'))),
           ]))));
       if (!mounted || choice == null) return;
       if (choice == -2) {
@@ -91,17 +94,17 @@ class _ReminderButtonState extends State<ReminderButton> {
       final allowed = await widget.service.set(widget.item, at, zone.name, explainPermission: _explain);
       if (!mounted) return;
       if (allowed) { _toast('Reminder set'); }
-      else { ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('Notifications are off. Turn them on in Settings to get this reminder'),
+      else { showFindBackToast(context,
+        'Notifications are off. Turn them on in Settings to get this reminder',
         action: SnackBarAction(label: 'Open settings', onPressed: () async {
           try { await widget.service.notifications.openSettings(); }
           catch (_) { if (mounted) _toast('Could not open Settings. Open your phone settings to allow notifications.'); }
-        }))); }
+        })); }
     } catch (_) {
       if (mounted) _toast('Could not schedule this reminder. Your saved choice is kept; try again.');
     } finally { if (mounted) setState(() => _busy = false); }
   }
-  void _toast(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  void _toast(String text) => showFindBackToast(context, text);
   @override Widget build(BuildContext context) {
     final colors = Theme.of(context).brightness == Brightness.dark ? FindBackTheme.dark : FindBackTheme.light;
     return OutlinedButton.icon(onPressed: _busy ? null : _open,

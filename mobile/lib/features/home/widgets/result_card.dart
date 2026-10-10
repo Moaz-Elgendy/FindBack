@@ -18,13 +18,12 @@ class ResultCard extends StatefulWidget {
   const ResultCard({super.key, required this.result, required this.onTap,
       this.onEdit,
       this.onDelete,
-      this.onSummarize,
       this.onRetry,
       this.onKeepLink});
 
   final SearchResult result;
   final VoidCallback onTap;
-  final VoidCallback? onEdit, onDelete, onSummarize, onRetry, onKeepLink;
+  final VoidCallback? onEdit, onDelete, onRetry, onKeepLink;
 
   @override
   State<ResultCard> createState() => _ResultCardState();
@@ -36,7 +35,6 @@ class _ResultCardState extends State<ResultCard> {
   bool _focused = false;
   bool get _hasMenu =>
       widget.onEdit != null ||
-      widget.onSummarize != null ||
       widget.onDelete != null;
 
   @override
@@ -112,9 +110,6 @@ class _ResultCardState extends State<ResultCard> {
                           if (widget.onEdit != null)
                             CustomSemanticsAction(label: 'Edit'):
                                 widget.onEdit!,
-                          if (widget.onSummarize != null)
-                            CustomSemanticsAction(label: 'Summarize again'):
-                                widget.onSummarize!,
                           if (widget.onDelete != null)
                             CustomSemanticsAction(label: 'Delete'):
                                 widget.onDelete!,
@@ -137,15 +132,13 @@ class _ResultCardState extends State<ResultCard> {
                                     children: [
                                       if (result.isGeneratingBrief) ...[
                                         Text(
-                                            result.isLocalOnly
-                                                ? 'Saved on this phone · waiting to upload'
-                                                : 'Just saved · reading it now',
+                                            'Just saved · reading it now',
                                             style: theme.textTheme.bodySmall
                                                 ?.copyWith(
                                                     color: colors[FindBackColor
                                                         .accentInk])),
                                         const SizedBox(height: 14),
-                                        for (final fraction in [.65, .9, .5])
+                                        for (final fraction in [.7, .9, .55])
                                           Padding(
                                               padding: const EdgeInsets.only(
                                                   bottom: 8),
@@ -164,7 +157,7 @@ class _ResultCardState extends State<ResultCard> {
                                       ] else ...[
                                         Row(
                                             crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                                CrossAxisAlignment.center,
                                             children: [
                                               Expanded(
                                                   child: result.isFailed
@@ -186,8 +179,7 @@ class _ResultCardState extends State<ResultCard> {
                                                         padding:
                                                             const EdgeInsetsDirectional
                                                                 .only(
-                                                                start: 8,
-                                                                top: 5),
+                                                                start: 8),
                                                         child: SavedDate(
                                                             date: result
                                                                 .createdAt!,
@@ -197,7 +189,6 @@ class _ResultCardState extends State<ResultCard> {
     controller: _menu,
     actions: [
       if (widget.onEdit != null) FindBackAction(label: 'Edit', icon: Icons.edit_outlined, onPressed: widget.onEdit!),
-      if (widget.onSummarize != null) FindBackAction(label: 'Summarize again', icon: Icons.refresh, onPressed: widget.onSummarize!),
       if (widget.onDelete != null) FindBackAction(label: 'Delete', icon: Icons.delete_outline, destructive: true, onPressed: widget.onDelete!),
     ]),
                                             ]),
@@ -207,7 +198,7 @@ class _ResultCardState extends State<ResultCard> {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.titleMedium
-              ?.copyWith(fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface)),
+              ?.copyWith(fontWeight: FontWeight.w600, fontSize: 18, height: 1.25, color: theme.colorScheme.onSurface)),
                                         if (result.matchedTerms.isNotEmpty)
                                           Padding(
                                               padding:
@@ -228,6 +219,10 @@ class _ResultCardState extends State<ResultCard> {
                                                       .textTheme.bodySmall)),
                                         const SizedBox(height: 10),
                                         if (result.isFailed) ...[
+                                          if (result.url.isNotEmpty && result.url != result.title) Padding(
+                                            padding: const EdgeInsets.only(top: 4, bottom: 8), child: Text(result.url,
+                                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
                                           Text(
                                               result.failureReason ??
                                                   'This page could not be read. Try again or keep the link.',
@@ -262,8 +257,14 @@ class _ResultCardState extends State<ResultCard> {
                                                     .toList()),
                                             const SizedBox(height: 10),
                                           ],
-                                          if (result.summary.isNotEmpty)
-                                            _summary(theme),
+                                          if (result.keyPoints.isNotEmpty && !result.edited) ...[
+                                            for (final point in result.keyPoints.take(_expanded ? result.keyPoints.length : 3))
+                                              Container(padding: const EdgeInsets.symmetric(vertical: 5),
+                                                decoration: BoxDecoration(border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant))),
+                                                child: Text(point, style: FindBackTheme.summaryStyle.copyWith(fontSize: 15.5, height: 1.48))),
+                                            if (result.keyPoints.length > 3) TextButton(onPressed: () => setState(() => _expanded = !_expanded),
+                                              child: Text(_expanded ? 'Show less' : '+${result.keyPoints.length - 3} more')),
+                                          ] else if (result.summary.isNotEmpty) _summary(theme),
                                           if ((type == 'recipe' ||
                                                   type == 'product') &&
                                               result.bestTakeaway?.isNotEmpty ==

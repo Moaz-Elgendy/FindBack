@@ -26,7 +26,8 @@ class MemoryChip extends StatelessWidget {
             color: colors[background], borderRadius: BorderRadius.circular(99)),
         child: Text(
             '${label(type)}${category != type && category != 'other' ? ' · ${label(category)}' : ''}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            maxLines: 1, overflow: TextOverflow.ellipsis, softWrap: false,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: colors[foreground], fontWeight: FontWeight.w600)));
   }
 }

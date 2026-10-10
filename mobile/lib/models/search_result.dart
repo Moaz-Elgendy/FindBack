@@ -11,6 +11,7 @@ class SearchResult {
     required this.id,
     required this.title,
     required this.summary,
+    this.url = '',
     required this.tags,
     required this.category,
     required this.score,
@@ -27,6 +28,7 @@ class SearchResult {
     this.isFailed = false,
     this.failureReason,
     this.bestTakeaway,
+    this.keyPoints = const [],
     this.topics = const [], this.contentType, this.entities = const {}, this.likelyIntent, this.suggestedAction, this.intent,
   });
 
@@ -34,6 +36,7 @@ class SearchResult {
         id: asId(json['id']),
         title: json['title'] as String? ?? '',
         summary: json['summary'] as String? ?? '',
+        url: json['url'] as String? ?? '',
         tags: stringList(json['tags']),
         category: json['category'] as String? ?? 'other',
         score: (json['score'] as num?)?.toDouble() ?? 0,
@@ -51,6 +54,7 @@ class SearchResult {
         isFailed: json['status'] == 'failed',
         failureReason: json['failure_reason'] as String?,
         bestTakeaway: json['best_takeaway'] as String?,
+        keyPoints: stringList(json['key_points']),
         topics: stringList(json['topics']), contentType: json['content_type'] as String?, entities: objectMap(json['entities']),
         likelyIntent: json['likely_intent'] as String?, suggestedAction: json['suggested_action'] as String?, intent: json['intent'] as String?,
       );
@@ -61,6 +65,7 @@ class SearchResult {
           .copyWith(matchReason: 'Offline — matched title/summary', score: 0.5);
 
   final String id;
+  final String url;
   final String title;
   final String summary;
   final List<String> tags;
@@ -78,6 +83,7 @@ class SearchResult {
   final String? failureReason, bestTakeaway;
   final List<String> topics;
   final Map<String, Object?> entities;
+  final List<String> keyPoints;
   final String? contentType, likelyIntent, suggestedAction, intent;
 
   Map<String, List<String>> get intelligence => {
@@ -95,6 +101,7 @@ class SearchResult {
   /// The library list ("Recent") shows cached items the same way.
   factory SearchResult.fromItem(ItemDetail item) => SearchResult(
         id: item.id,
+        url: item.url,
         title: item.bestTitle,
         summary: item.briefText,
         tags: item.tags,
@@ -112,6 +119,7 @@ class SearchResult {
         isFailed: item.isFailed,
         failureReason: item.failureReason,
         bestTakeaway: item.bestTakeaway,
+        keyPoints: item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs.map((p) => p.point).toList() : item.keyPoints,
         topics: item.topics, contentType: item.contentType, entities: item.entities,
         likelyIntent: item.likelyIntent, suggestedAction: item.suggestedAction, intent: item.intent,
       );
@@ -122,6 +130,7 @@ class SearchResult {
   /// differently from a plain offline search).
   SearchResult copyWith({String? matchReason, double? score}) => SearchResult(
         id: id,
+        url: url,
         title: title,
         summary: summary,
         tags: tags,
@@ -140,6 +149,7 @@ class SearchResult {
         isFailed: isFailed,
         failureReason: failureReason,
         bestTakeaway: bestTakeaway,
+        keyPoints: keyPoints,
         topics: topics, contentType: contentType, entities: entities,
         likelyIntent: likelyIntent, suggestedAction: suggestedAction, intent: intent,
       );

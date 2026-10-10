@@ -231,17 +231,37 @@ class _AccountPageState extends State<AccountPage> {
     final action = widget.onDelete ?? AccountCoordinatorScope.maybeOf(context)?.deleteAccount;
     if (action == null) return;
     final generation = _loadGeneration, id = widget.auth.currentSession?.id;
-    final confirmed = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-      scrollable: true,
-      title: const Text('Delete your account?'),
-      content: const Text('Your account, saves and summaries will be permanently removed. This cannot be undone.'),
-      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-        FilledButton(style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
-          onPressed: () => Navigator.pop(context, true), child: const Text('Delete account'))]));
+    var confirmation = '';
+    final confirmed = await showDialog<bool>(context: context, builder: (dialog) => StatefulBuilder(
+        builder: (dialog, update) => AlertDialog(
+          scrollable: true,
+          title: const Text('Delete your account?'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('You are going to delete your account and remove all of your saved memories/cards.'),
+            const SizedBox(height: 16),
+            TextField(autocorrect: false,
+              decoration: const InputDecoration(labelText: 'Type DELETE to confirm'),
+              onChanged: (value) => update(() => confirmation = value)),
+          ]),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Cancel')),
+            FilledButton(style: FilledButton.styleFrom(backgroundColor: Theme.of(dialog).colorScheme.error),
+              onPressed: confirmation == 'DELETE' ? () => Navigator.pop(dialog, true) : null,
+              child: const Text('Delete account'))],
+        )));
     if (confirmed == true && mounted) {
       await _run(() async {
+        final appearance = AppearanceScope.maybeOf(context);
         _checkAccount(generation, id);
         await action();
+        if (mounted) {
+          _email.clear();
+          _password.clear();
+        }
+        try {
+          await appearance?.select(ThemeMode.system);
+        } catch (_) {
+          if (mounted) _toast('Your account was deleted. The theme preference could not be reset.');
+        }
       }, failureMessage: 'Could not delete your account. Please try again.');
     }
   }
@@ -381,7 +401,7 @@ class _AccountPageState extends State<AccountPage> {
                   _group([
                     SwitchListTile(contentPadding: EdgeInsets.zero,
                       title: const Text('Remind me of forgotten saves'),
-                      subtitle: Text(session == null ? 'Sign in to receive a weekly note.' : 'One notification a week. Never daily.'),
+                      subtitle: Text(session == null ? 'Sign in to receive a weekly note' : 'One notification a week. Never daily.'),
                       value: _weekly?.enabled ?? false,
                       onChanged: _busy || _loading || _weekly == null || _notifications == null ? null : _setWeekly),
                     if (_loading) const LinearProgressIndicator(),
@@ -427,19 +447,24 @@ class _AccountPageState extends State<AccountPage> {
             _heading('Your data'),
                   _group([
                     ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.download_outlined),
-                      title: const Text('Export my saves'), trailing: const Icon(Icons.chevron_right),
+                      title: const Text('Export my saves'), trailing: TextButton(
+                        onPressed: _busy || (session == null ? _services == null : _api == null) ? null : _export,
+                        child: const Text('Export')),
                       onTap: _busy || (session == null ? _services == null : _api == null) ? null : _export),
                     if (session != null) ...[
                       const Divider(),
                       ListTile(contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
                         title: Text('Delete account', style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                        subtitle: const Text('Removes your saves and summaries.'),
+                        subtitle: const Text('Removes saves and summaries.'),
+                        trailing: TextButton(style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+                          onPressed: _busy || (widget.onDelete == null && AccountCoordinatorScope.maybeOf(context) == null) ? null : _deleteAccount,
+                          child: const Text('Delete')),
                         onTap: _busy || (widget.onDelete == null && AccountCoordinatorScope.maybeOf(context) == null) ? null : _deleteAccount),
                     ],
                   ]),
                   Padding(padding: const EdgeInsetsDirectional.only(top: 20), child: Text(
-                    'Links you save are read and summarized by an AI service. Nothing is shared with other people.',
+                    'Your links are read and summarized by AI. Memories are shared only when you choose to share them.',
                     style: Theme.of(context).textTheme.bodySmall)),
                 ],
                 if (_busy) Padding(padding: const EdgeInsets.only(top: 16),

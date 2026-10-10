@@ -100,6 +100,50 @@ void main() {
     await drive(tester, services.dispose());
   });
 
+  testWidgets('processing polls back off while its status is unchanged', (tester) async {
+    var requests = 0;
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async {
+      requests++;
+      return ItemPage(items: [ItemDetail.fromJson({'id': 'server-reading', 'url': 'https://example.com/reading', 'status': 'pending'})]);
+    });
+    Future<void> drain() async {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    await drain();
+    final initial = requests;
+    await tester.pump(const Duration(seconds: 5)); await drain();
+    final first = requests;
+    expect(first, greaterThan(initial));
+    await tester.pump(const Duration(seconds: 5)); await drain();
+    expect(requests, first);
+    await tester.pump(const Duration(seconds: 5)); await drain();
+    expect(requests, greaterThan(first));
+    await tester.pumpWidget(const SizedBox());
+    await drive(tester, services.dispose());
+  });
+
+  testWidgets('local queued cards do not poll the server feed', (tester) async {
+    var requests = 0;
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async {
+      requests++;
+      return ItemPage(items: [ItemDetail.fromJson({'id': 'local-queued', 'url': 'https://example.com/queued', 'title': 'Queued', 'status': 'pending'})]);
+    });
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    for (var i = 0; i < 10; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    final before = requests;
+    await tester.pump(const Duration(seconds: 20));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pump();
+    expect(requests, before);
+    await tester.pumpWidget(const SizedBox());
+    await drive(tester, services.dispose());
+  });
+
   testWidgets('offline queue and local memory are counted once', (tester) async {
     final services = await setup(tester, recent: (limit, {category, cursor, filters}) async =>
         ItemPage(items: [
@@ -129,7 +173,7 @@ void main() {
     }
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Reading 1'), findsOneWidget);
-    expect(find.text('Saved on this phone · waiting to upload'), findsOneWidget);
+    expect(find.text('Just saved · reading it now'), findsOneWidget);
     expect(find.text('Save your first link'), findsNothing);
     expect(find.text('Nothing matches yet'), findsNothing);
     await tester.pumpWidget(const SizedBox());
@@ -333,7 +377,7 @@ void main() {
     await drive(tester, services.dispose());
   });
 
-  testWidgets('failed uploads explain the connection and allow an immediate retry', (tester) async {
+  testWidgets('failed uploads explain the connection and retry on resume', (tester) async {
     var reachable = false;
     final queue = [const SyncItem(clientId: 'q', url: 'https://example.test/q', capturedAt: 'now')];
     final sync = SyncService(pending: () async => queue, send: (_) async {
@@ -349,7 +393,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Cannot reach the processing service. Your links are safe and will retry.'), findsOneWidget);
     reachable = true;
-    await tester.tap(find.text('Retry upload'));
+    expect(find.text('Retry upload'), findsNothing);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
     expect(queue, isEmpty);

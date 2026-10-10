@@ -20,6 +20,9 @@ import '../../services/items_service.dart';
 
 /// Port of the RN `DetailScreen`: summary, key points, ingredients, open the
 /// original, copy the summary, Cook Mode, and delete.
+// TODO: Remove temporary search debugging tags before public launch.
+const showSearchDebugTags = true;
+
 class DetailPage extends StatefulWidget {
   const DetailPage({super.key, required this.itemId, required this.items, this.onChanged, this.services});
 
@@ -118,9 +121,15 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _copySummary(ItemDetail item) async {
-    await Clipboard.setData(ClipboardData(text: item.briefText));
+    final points = item.pointsWithRefs.isNotEmpty ? item.pointsWithRefs :
+      [for (final point in item.keyPoints) BriefKeyPoint(point: point)];
+    final text = [item.bestTitle.trim(), if (item.briefText.trim().isNotEmpty) item.briefText.trim(),
+      if (points.isNotEmpty) [for (final (index, point) in points.indexed)
+        '${index + 1}. ${point.point.trim()}${point.sourceRef?.trim().isNotEmpty == true ? ' (${point.sourceRef!.trim()})' : ''}'].join('\n'),
+      item.url].join('\n\n');
+    await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    _showSnack('Summary copied.');
+    _showSnack('Summary copied');
   }
 
   void _showSnack(String message) =>
@@ -133,7 +142,9 @@ class _DetailPageState extends State<DetailPage> {
     if (services == null) return;
     setState(() => _actionBusy = true);
     try {
-      if (action == 'Edit') {
+      if (action == 'Copy summary') {
+        await _copySummary(item);
+      } else if (action == 'Edit') {
         await EditSheet.show(context, title: item.bestTitle, brief: item.briefText,
           onSave: (title, brief) async {
             await services.actions.edit(item.id, title: title, summary: brief);
@@ -184,14 +195,23 @@ class _DetailPageState extends State<DetailPage> {
     return Scaffold(
       appBar: AppBar(leading: BackButton(onPressed: () => Navigator.maybePop(context)),
         actions: [if (item != null && _services != null) FindBackActionMenu(actions: [
-    for (final action in ['Edit', 'Summarize again', 'Delete'])
-      FindBackAction(label: action, destructive: action == 'Delete', onPressed: () => _action(action)),
+    for (final action in ['Edit', 'Copy summary', 'Summarize again', 'Delete'])
+      FindBackAction(label: action, icon: switch (action) { 'Edit' => Icons.edit_outlined, 'Copy summary' => Icons.copy_outlined, 'Summarize again' => Icons.refresh, _ => Icons.delete_outline }, destructive: action == 'Delete', onPressed: () => _action(action)),
   ])]),
       bottomNavigationBar: item == null || _error != null ? null : SafeArea(top: false,
-        child: Padding(padding: const EdgeInsetsDirectional.fromSTEB(20, 10, 20, 12),
-          child: Wrap(spacing: 12, runSpacing: 8, alignment: WrapAlignment.center, children: [
-            FilledButton.icon(onPressed: () => _openOriginal(item.url), icon: const Icon(Icons.open_in_new), label: const Text('Open original')),
-            OutlinedButton.icon(onPressed: () => _share(item), icon: const Icon(Icons.ios_share), label: const Text('Share'))]))),
+        child: Padding(padding: const EdgeInsetsDirectional.fromSTEB(16, 14, 16, 24),
+          child: Row(children: [
+            Expanded(child: FilledButton(onPressed: () => _openOriginal(item.url),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16),
+                textStyle: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+              child: const Text('Open original'))),
+            const SizedBox(width: 10),
+            OutlinedButton(onPressed: () => _share(item),
+              style: OutlinedButton.styleFrom(backgroundColor: theme.colorScheme.surface,
+                side: BorderSide(color: theme.colorScheme.outlineVariant),
+                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16)),
+              child: const Text('Share')),
+          ]))),
       body: _loading ? const Center(child: CircularProgressIndicator()) : _error != null
         ? _ErrorBody(message: _error!, onRetry: _load) : item == null
         ? const _ErrorBody(message: 'That memory is not on this device yet.') : _buildDetail(theme, item),
@@ -218,21 +238,22 @@ class _DetailPageState extends State<DetailPage> {
       if (item.isGeneratingBrief) const Padding(padding: EdgeInsetsDirectional.only(top: 12),
         child: _Banner(text: 'Just saved · reading it now')),
       const SizedBox(height: 20),
-      Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(
+      Container(padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6), decoration: BoxDecoration(
         color: colors[FindBackColor.card], borderRadius: BorderRadius.circular(22),
         border: Border.all(color: colors[FindBackColor.line]!)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(item.briefText.isEmpty ? 'No summary yet.' : item.briefText, style: FindBackTheme.summaryStyle),
           if (item.bestTakeaway?.isNotEmpty == true) Padding(padding: const EdgeInsetsDirectional.only(top: 12),
             child: Text(item.bestTakeaway!, style: FindBackTheme.summaryStyle)),
-          for (final (index, point) in points.indexed) Padding(padding: const EdgeInsetsDirectional.only(top: 20),
+          for (final (index, point) in points.indexed) Container(padding: const EdgeInsets.symmetric(vertical: 15),
+            decoration: BoxDecoration(border: Border(top: BorderSide(color: colors[FindBackColor.line]!))),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Semantics(label: 'Point ${index + 1}', child: Container(width: MediaQuery.textScalerOf(context).scale(28), height: MediaQuery.textScalerOf(context).scale(28),
+              Semantics(label: 'Point ${index + 1}', child: Container(width: MediaQuery.textScalerOf(context).scale(30), height: MediaQuery.textScalerOf(context).scale(30),
                 alignment: Alignment.center, decoration: BoxDecoration(color: colors[FindBackColor.soft],
-                  shape: BoxShape.circle), child: Text('${index + 1}', style: TextStyle(color: colors[FindBackColor.brand])))),
+                  shape: BoxShape.circle), child: Text('${index + 1}', style: TextStyle(color: colors[FindBackColor.brand], fontSize: 14, fontWeight: FontWeight.w700)))),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(point.point, style: FindBackTheme.summaryStyle),
+                Text(point.point, style: FindBackTheme.summaryStyle.copyWith(fontSize: 15.5, height: 1.48)),
                 if (point.sourceRef != null) point.timestampUrl(item.url) == null
                   ? Text(point.sourceRef!, style: theme.textTheme.bodySmall)
                   : TextButton(onPressed: () => _openOriginal(point.timestampUrl(item.url)!), child: Text('Jump to ${point.sourceRef}')),
@@ -247,14 +268,13 @@ class _DetailPageState extends State<DetailPage> {
         const SizedBox(height: 20), Text('Ingredients', style: theme.textTheme.titleMedium),
         for (final ingredient in item.ingredients) _Bullet(text: ingredient),
       ],
-      if (item.tags.isNotEmpty) ExpansionTile(title: const Text('Tags'), subtitle: Text('${item.tags.length} search tags'),
-        children: [Wrap(spacing: 6, runSpacing: 6, children: [for (final tag in item.tags) Chip(label: Text(tag))])]),
       const SizedBox(height: 20),
       Wrap(spacing: 12, runSpacing: 8, children: [
-        OutlinedButton.icon(onPressed: () => _copySummary(item), icon: const Icon(Icons.copy_all), label: const Text('Copy summary')),
         if (item.category == 'recipe') FilledButton.tonalIcon(onPressed: _toggleCookMode,
           icon: Icon(_cookMode ? Icons.dark_mode : Icons.restaurant), label: Text(_cookMode ? 'Exit Cook Mode' : 'Cook Mode')),
       ]),
+      if (showSearchDebugTags && item.tags.isNotEmpty) ExpansionTile(title: Text('Tags', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)), subtitle: Text('${item.tags.length} search tags'),
+        children: [Wrap(spacing: 6, runSpacing: 6, children: [for (final tag in item.tags) Chip(label: Text(tag))])]),
     ]);
   }
 }

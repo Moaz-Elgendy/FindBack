@@ -126,7 +126,7 @@ void main() {
     expect(find.text('Try one thing you remember: a topic, a place, a name.'), findsOneWidget);
     await close(tester, services);
   });
-  testWidgets('card Edit saves locally; Delete is immediate and Undo restores', (tester) async {
+  testWidgets('card Edit saves locally; Delete confirms and Undo restores', (tester) async {
     final services = await setup(tester, records: [memory('original', 'video', ['AI'])]);
     await tester.pumpWidget(MaterialApp(theme: FindBackTheme.build(Brightness.light), home: HomeScreen(services: services)));
     await settle(tester);
@@ -154,6 +154,7 @@ void main() {
     final services = await setup(tester, records: [item]);
     await tester.pumpWidget(MaterialApp(theme: FindBackTheme.build(Brightness.dark), home: HomeScreen(services: services)));
     await settle(tester);
+    await tester.tap(find.text('edited memory')); await settle(tester);
     await tester.tap(find.byTooltip('Memory actions')); await settle(tester);
     await tester.tap(find.text('Summarize again')); await settle(tester);
     expect(find.text('Replace your edits with a new summary?'), findsOneWidget);

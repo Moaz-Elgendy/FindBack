@@ -100,9 +100,9 @@ class CollectionsService {
   }
 }
 
-List<MemoryCollection> collectionSuggestions(List<ItemDetail> items) {
+List<MemoryCollection> automaticCollections(List<ItemDetail> items) {
   final groups = <String, Set<String>>{};
-  for (final item in items.where((i) => i.hasFinalBrief)) {
+  for (final item in items.where((i) => i.hasFinalBrief && !i.isFailed && !i.linkOnly)) {
     final tools = (item.entities['tools_products'] as List? ?? []).whereType<String>();
     for (final raw in {...item.topics, ...tools}) {
       final label = RegExp(r'^claude(?:\s|$)', caseSensitive: false).hasMatch(raw) ? 'Claude' : raw.trim();
@@ -111,6 +111,6 @@ List<MemoryCollection> collectionSuggestions(List<ItemDetail> items) {
     }
   }
   return [for (final entry in groups.entries) if (entry.value.length >= 2)
-    MemoryCollection(id: 'suggestion-${entry.key}', name: entry.key, urls: entry.value.toList())]
+    MemoryCollection(id: 'automatic-${entry.key}', name: entry.key, urls: entry.value.toList())]
     ..sort((a, b) => b.urls.length.compareTo(a.urls.length));
 }

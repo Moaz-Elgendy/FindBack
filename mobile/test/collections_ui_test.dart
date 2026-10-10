@@ -33,12 +33,12 @@ void main() {
       await tester.pumpWidget(MaterialApp(theme: ThemeData(brightness: brightness, colorSchemeSeed: const Color(0xFF1769AA)),
         builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
         home: Scaffold(body: SizedBox(height: 350, child: CollectionCover(collection: c, memories: [item], onTap: () => tapped = true)))));
-      expect(find.text('1 memory'), findsOneWidget);
+      expect(find.text('1 save'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text(c.name)); expect(tapped, isTrue);
     });
   }
-  testWidgets('Collections refreshes on resume, creates locally, and Account resets confirmations', (tester) async {
+  testWidgets('Collections groups saved metadata on resume and Account resets confirmations', (tester) async {
     final db = (await tester.runAsync(() => LocalDb.openAt(inMemoryDatabasePath)))!;
     final api = ApiClient();
     final services = AppServices(db: db, api: api, guest: true, items: GuestLibrary(db, api).items,
@@ -60,17 +60,31 @@ void main() {
     expect(find.text('Your collections start here'), findsOneWidget);
     expect(find.textContaining('Kept on this device'), findsOneWidget);
     expect(find.byType(RefreshIndicator), findsNothing);
-    await tester.runAsync(() => services.collections.save(name: 'Resume collection', urls: []));
+    await tester.runAsync(() => db.upsertRemoteItems([
+      for (final id in ['one', 'two']) ItemDetail.fromJson({'id': id, 'url': 'https://example.com/$id',
+        'title': '$id memory', 'status': 'ready', 'instant_brief': 'A useful saved summary.',
+        'brief_source': 'llm', 'topics': ['AI tools']}),
+    ]));
+    await tester.runAsync(() => services.collections.save(name: 'My project',
+      urls: ['https://example.com/one', 'https://example.com/two']));
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await drain();
-    expect(find.text('Resume collection'), findsNWidgets(2));
-    await tester.tap(find.text('New collection')); await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'My tools');
-    await tester.tap(find.text('Continue')); await tester.pumpAndSettle();
-    expect(find.text('Choose memories'), findsOneWidget);
-    await tester.tap(find.text('Save')); await drain();
-    expect(find.text('My tools'), findsWidgets);
+    expect(find.text('My project'), findsOneWidget);
+    expect(find.text('AI tools'), findsOneWidget);
+    expect(find.text('2 saves'), findsNWidgets(2));
+    expect(find.text('New collection'), findsNothing);
+    await tester.tap(find.text('AI tools'));
+    await drain();
+    expect(find.text('one memory'), findsOneWidget);
+    expect(find.text('two memory'), findsOneWidget);
+    Navigator.of(tester.element(find.text('AI tools'))).pop();
+    await drain();
+    await tester.tap(find.text('My project'));
+    await drain();
+    expect(find.byTooltip('Collection options'), findsOneWidget);
+    Navigator.of(tester.element(find.text('My project'))).pop();
+    await drain();
     await tester.tap(find.byIcon(Icons.bookmarks_outlined)); await tester.pumpAndSettle();
     expect(find.text('FindBack'), findsOneWidget);
     await tester.runAsync(() => services.db.setDeleteConfirmationSuppressed(true));

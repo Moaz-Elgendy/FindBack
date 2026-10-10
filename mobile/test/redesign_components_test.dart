@@ -86,9 +86,9 @@ void main() {
             isGeneratingBrief: true),
         onTap: () {})));
     expect(
-        find.text('Saved on this phone · waiting to upload'),
+        find.text('Just saved · reading it now'),
         findsOneWidget);
-    var summarized = false;
+    var deleted = false;
     await tester.pumpWidget(app(ResultCard(
         result: const SearchResult(
             id: 'ready',
@@ -100,8 +100,7 @@ void main() {
             descriptionOnly: true, matchedTerms: ['recipe']),
         onTap: () {},
         onEdit: () {},
-        onSummarize: () => summarized = true,
-        onDelete: () {})));
+        onDelete: () => deleted = true)));
     expect(find.text('Based on the page description only'), findsOneWidget);
     expect(find.text('Matched: recipe'), findsOneWidget);
     final actions = tester
@@ -110,17 +109,17 @@ void main() {
         .where((actions) => actions != null && actions.isNotEmpty)
         .first!;
     expect(actions.keys.map((action) => action.label).toList(),
-        ['Edit', 'Summarize again', 'Delete']);
+        ['Edit', 'Delete']);
     await tester.longPress(find.text('Ready'));
     await tester.pumpAndSettle();
     final labels = tester
         .widgetList<MenuItemButton>(find.byType(MenuItemButton))
         .map((button) => (button.child as Text).data)
         .toList();
-    expect(labels, ['Edit', 'Summarize again', 'Delete']);
-    await tester.tap(find.text('Summarize again'));
+    expect(labels, ['Edit', 'Delete']);
+    await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
-    expect(summarized, isTrue);
+    expect(deleted, isTrue);
   });
 
   testWidgets('Arabic card follows RTL at320dp and200percent', (tester) async {
@@ -148,7 +147,7 @@ void main() {
                               descriptionOnly: true),
                           onTap: () {},
                           onEdit: () {},
-                          onSummarize: () {},
+
                           onDelete: () {})
                     ]))))));
     expect(tester.takeException(), isNull);

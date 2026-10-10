@@ -52,13 +52,32 @@ void main() {
     expect(api.remote, isEmpty);
     api.close(); await db.close();
   });
+  test('automatic groups use persisted processing metadata and ignore removed saves', () async {
+    final db = await LocalDb.openAt(inMemoryDatabasePath);
+    final api = CollectionApi();
+    try {
+      await db.upsertRemoteItems([memory('a', 'https://example.com/a'), memory('b', 'https://example.com/b')]);
+      final service = CollectionsService(db, api, guest: true);
+      expect(automaticCollections(await service.memories()).any((group) => group.name == 'Claude' && group.urls.length == 2), isTrue);
+      await db.deleteItem('b');
+      expect(automaticCollections(await service.memories()), isEmpty);
+    } finally {
+      api.close();
+      await db.close();
+    }
+  });
+
   test('suggestions require two distinct memories and never use people names', () {
     final list = [memory('a', 'https://example.com/a'), memory('b', 'https://example.com/b'), memory('dup', 'https://example.com/a')];
-    final suggestions = collectionSuggestions(list);
+    final suggestions = automaticCollections(list);
     expect(suggestions.any((c) => c.name == 'Claude'), isTrue);
     expect(suggestions.any((c) => c.name == 'Moaz'), isFalse);
     expect(suggestions.first.urls.toSet().length, 2);
-    expect(collectionSuggestions([list.first]), isEmpty);
+    expect(automaticCollections([list.first]), isEmpty);
+    for (final state in [{'status': 'failed'}, {'link_only': true}]) {
+      final unavailable = ItemDetail.fromJson({'id': 'unavailable', 'url': 'https://example.com/unavailable', 'status': 'ready', 'instant_brief': 'Useful brief.', 'brief_source': 'llm', 'topics': ['Claude'], ...state});
+      expect(automaticCollections([list.first, unavailable]), isEmpty);
+    }
   });
   test('account edits survive offline and concurrent acknowledgement', () async {
     final db = await LocalDb.openAt(inMemoryDatabasePath);

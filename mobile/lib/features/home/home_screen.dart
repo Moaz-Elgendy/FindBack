@@ -57,6 +57,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loadingMore = false;
   bool _wasSearching = false;
   Timer? _processingRefresh;
+  int _processingPollRound = 0, _lastProcessingCount = 0;
+  Future<void>? _refreshing;
   String? _moreError;
 
   @override
@@ -274,15 +276,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _scheduleProcessingRefresh() {
     _processingRefresh?.cancel();
-    if (mounted && (_processingCount + _queuedCount) > 0 &&
-        (WidgetsBinding.instance.lifecycleState == null ||
-         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed)) {
-      _processingRefresh = Timer(const Duration(seconds: 5),
-          () => _refreshAll(background: true));
+    final count = _processingCount;
+    if (count != _lastProcessingCount) _processingPollRound = 0;
+    _lastProcessingCount = count;
+    if (mounted && count > 0 &&
+        (WidgetsBinding.instance.lifecycleState == null || WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed)) {
+      _processingRefresh = Timer(Duration(seconds: const [5, 10, 20, 40, 60][_processingPollRound]), () {
+        if (_processingPollRound < 4) _processingPollRound++;
+        unawaited(_refreshAll(background: true));
+      });
     }
   }
 
-  Future<void> _refreshAll({bool background = false}) async {
+  Future<void> _refreshAll({bool background = false}) => _refreshing ??=
+    _performRefresh(background: background).whenComplete(() => _refreshing = null);
+
+  Future<void> _performRefresh({required bool background}) async {
     await widget.services.refreshPending();
     await widget.services.refreshGuest();
     await _loadIntelligence();
@@ -396,28 +405,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } finally { _busyActions.remove(result.id); }
   }
 
-  Future<void> _summarize(SearchResult result) async {
-    if (_busyActions.contains(result.id)) return;
-    try {
-      final item = await widget.services.items.getItem(result.id);
-      if (!mounted || item == null) return;
-      var replace = false;
-      if (item.edited) {
-        replace = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Replace your edits with a new summary?'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Replace')),
-          ],
-        )) ?? false;
-        if (!replace) return;
-      }
-      await _runAction(result, () => widget.services.actions.summarizeAgain(item.id, replaceEdits: replace));
-    } catch (error) { _actionError(error); }
-  }
-
   Future<void> _runAction(SearchResult result, Future<Object?> Function() action) async {
     if (!_busyActions.add(result.id)) return;
     try { await action();
@@ -438,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       ResultCard(key: ValueKey(item.id), result: item, onTap: () => _openDetail(item.id),
-        onEdit: () => _edit(item), onSummarize: () => _summarize(item), onDelete: () => _delete(item),
+        onEdit: () => _edit(item), onDelete: () => _delete(item),
         onRetry: () => _runAction(item, () => widget.services.actions.retry(item.id)),
         onKeepLink: () => _runAction(item, () => widget.services.actions.keepLink(item.id))),
       if (matched && item.matchedTerms.isEmpty && item.matchReason == 'similar meaning')
@@ -536,7 +523,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, children: [
                   Text(error.queuedMessage,
                                     style: theme.textTheme.bodySmall),
-                                TextButton(onPressed: _retryQueued, child: const Text('Retry upload')),
                               ])))),
             if (_search.offline)
         Padding(

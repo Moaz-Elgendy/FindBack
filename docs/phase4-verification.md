@@ -1,0 +1,15 @@
+# Phase 4: screens
+
+Library cards use a single-line type/category chip and date, an anchored Edit/Delete menu, reference title typography, and up to three machine brief points with an expandable remainder. Failed cards retain the original URL and reason, with Retry and Keep link only through the existing actions service. Reading placeholders retain dashed animated borders and reference skeleton proportions. The upload error remains visible, while the old Retry upload control is removed.
+
+Polling runs only for server processing, never for local queued captures. Unchanged processing backs off through 5/10/20/40/60 seconds; a changed processing count resets the interval. Overlapping full refreshes coalesce. Conditional requests continue to use Phase 3 validators. The Library/+ /Collections navigation has the raised circular save action, reference active colors, and adapts to large text.
+
+Detail has an expanded Open original/Share dock, four anchored actions with icons, and Copy summary only in the menu. Clipboard output contains title, brief, numbered points, source timestamps, and original URL. Numbered points use the reference circles/dividers. Reminder sheets include Cancel and keep existing permission, timezone and alarm behavior. Search debugging tags sit last, collapsed and muted, behind the single `showSearchDebugTags` flag with a public-launch TODO.
+
+Collections are computed automatically from persisted machine topics and tool metadata. Two distinct usable memories are required; failed/link-only/deleted saves do not form groups. SQLite roundtrip/deletion regression proves the grouping uses saved data. The screen uses reference stacked tiles and opens the grouped feed without requiring creation/organization. Existing named collections remain visible and editable: a review regression verifies their names and options survive identical automatic membership.
+
+Account has Export and destructive Delete controls, the exact warning “You are going to delete your account and remove all of your saved memories/cards.” and a disabled confirm until DELETE is typed. Existing provider-first backend deletion preserves public assets and removes personal data. Local account removal now clears confirmation preferences as well as saves/queues/reminders; successful UI deletion resets appearance to Auto and clears input fields. A theme-storage failure is reported as a preference-reset failure after account deletion. The privacy text states that sharing happens only by explicit choice. Existing weekly conditional row, theme selection, export and signed-out form remain covered.
+
+Snapshot sharing is Phase 5; Share still uses the existing source sharing action until that phase. Visual comparison of all prototype sections, device behavior and native links remain for Phase 6. Production deployment is unchanged.
+
+Verification: local `flutter analyze` clean; full Flutter suite 455 passed, one existing skip. The final metadata alignment regression also passed after centering the chip/date/menu row. Fresh review's legacy collection finding was reproduced and fixed with a data-preservation regression. CI gate pending.

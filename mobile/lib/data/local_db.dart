@@ -224,7 +224,7 @@ class LocalDb {
 
   Future<void> clearAccountData() async {
     await db.transaction((txn) async {
-      for (final table in ['collections', 'reminders', 'sync_queue', 'items']) {
+      for (final table in ['preferences', 'collections', 'reminders', 'sync_queue', 'items']) {
         await txn.delete(table);
       }
     });

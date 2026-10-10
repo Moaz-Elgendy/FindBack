@@ -9,6 +9,17 @@ void main() {
     databaseFactory = databaseFactoryFfi;
   });
 
+  test('account data removal clears confirmation preferences', () async {
+    final db = await LocalDb.openAt(inMemoryDatabasePath);
+    try {
+      await db.setDeleteConfirmationSuppressed(true);
+      await db.clearAccountData();
+      expect(await db.deleteConfirmationSuppressed, isFalse);
+    } finally {
+      await db.close();
+    }
+  });
+
   test('v7 upgrade preserves queued saves and persists confirmation reset',
       () async {
     final directory =

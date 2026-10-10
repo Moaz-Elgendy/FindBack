@@ -49,7 +49,7 @@ backend health/ingest/outbox/tasks, Compose/deployment startup, and covering tes
 - [x] Phase 2: URL normalization, anonymous-public classification, global sliding
   TTL/cache cleanup, concurrent processing, manual-regeneration isolation/limits,
   conditional feed requests, migrations and backend regression tests.
-- [ ] Phase 3: exact palette tokens, shared anchored actions/dialogs/toasts,
+- [x] Phase 3: exact palette tokens, shared anchored actions/dialogs/toasts,
   confirmation opt-out/reset, silent refresh, status mapping, SQLite migrations.
 - [ ] Phase 4: all requested Library/Memory/Collections/Account screen changes.
 - [ ] Phase 5: immutable share snapshots, native links/fallback/verification,
@@ -109,4 +109,12 @@ Ruling: classify in the worker, not by blocking ingestion on an anonymous networ
 - Exact v6 light/dark tokens, shared anchored menu/dialog/toast, persisted deletion opt-out and Account reset, silent Library/Collections refresh, account/query-scoped conditional feed, SQLite 8 migration, and queued upload status copy implemented.
 - Palette, preferences, validators and confirmation integration covered with regressions. Existing upgrade fixtures now expect the current schema; existing copy/theme assertions reflect the approved reference.
 - Local full Flutter suite: 447 passed, one existing skip. Fresh reviewer found no important regressions. Device checks remain for Phase 6.
-- CI gate pending; do not start Phase 4 until green.
+- Commit `0d6f85e`; CI https://github.com/Moaz-Elgendy/FindBack/actions/runs/38029823781 green (1117 backend, 447 Flutter, one existing skip each). Phase 4 started after this gate.
+
+### Phase 4 implementation
+
+- Reference feed previews/statuses/metadata and raised navigation, expanded detail dock and four-action menu, structured clipboard copy, final debugging tags, reminder cancellation, automatic collection tiles and Account data controls implemented.
+- Polling excludes local queued rows, backs off through 60 seconds, and coalesces refreshes. Account removal clears confirmation preferences and resets theme to Auto.
+- Fresh review found hidden legacy collections with identical automatic membership; regression red→green now preserves their names and options. Navbar large-text and date-alignment regressions fixed.
+- Local analyze clean; full Flutter suite 455 passed/one existing skip, plus final feed alignment checks. Evidence: `docs/phase4-verification.md`.
+- CI gate pending; do not start Phase 5 until green.

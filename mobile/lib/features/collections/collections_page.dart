@@ -7,6 +7,7 @@ import '../../models/search_result.dart';
 import '../../services/auth_service.dart';
 import '../../services/collections_service.dart';
 import '../../widgets/feedback.dart';
+import '../../theme.dart';
 import '../account/account_page.dart';
 import '../home/detail_page.dart';
 import '../home/widgets/result_card.dart';
@@ -23,7 +24,6 @@ class _CollectionsPageState extends State<CollectionsPage> with WidgetsBindingOb
   List<MemoryCollection> _collections = [];
   List<ItemDetail> _memories = [];
   String? _error;
-  bool _loading = true;
   bool _syncing = false;
   CollectionsService get service => widget.services.collections;
 
@@ -51,7 +51,7 @@ class _CollectionsPageState extends State<CollectionsPage> with WidgetsBindingOb
       await widget.services.refreshCollections();
       await _readLocal();
     } catch (_) {
-      if (mounted) setState(() { _loading = false; _error = 'Could not sync collections. Your saved collections are still here.'; });
+      if (mounted) setState(() { _error = 'Could not sync collections. Your saved collections are still here.'; });
     } finally {
       _syncing = false;
     }
@@ -60,17 +60,7 @@ class _CollectionsPageState extends State<CollectionsPage> with WidgetsBindingOb
   Future<void> _readLocal() async {
     final collections = await service.list();
     final memories = await service.memories();
-    if (mounted) setState(() { _collections = collections; _memories = memories; _loading = false; _error = null; });
-  }
-
-  Future<void> _edit({MemoryCollection? collection, bool suggestion = false}) async {
-    final name = await collectionName(context, collection?.name ?? '');
-    if (name == null || !mounted) return;
-    final urls = await chooseMemories(context, _memories, collection?.urls ?? []);
-    if (urls == null || !mounted) return;
-    await service.save(id: suggestion ? null : collection?.id, name: name, urls: urls);
-    await _readLocal();
-    unawaited(widget.services.refreshCollections());
+    if (mounted) setState(() { _collections = collections; _memories = memories; _error = null; });
   }
 
   Future<void> _account() async {
@@ -82,68 +72,44 @@ class _CollectionsPageState extends State<CollectionsPage> with WidgetsBindingOb
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final savedGroups = _collections.map((c) => c.urls.toSet()).toList();
-    final suggestions = collectionSuggestions(_memories).where((s) =>
-      !savedGroups.any((g) => g.length == s.urls.length && g.containsAll(s.urls))).take(8).toList();
+    final automatic = automaticCollections(_memories);
+    final groups = [...automatic, ..._collections];
     return Scaffold(
       appBar: AppBar(title: const Text('Collections'), actions: [
         IconButton(tooltip: 'Account', icon: const Icon(Icons.person_outline), onPressed: _account),
       ]),
-      floatingActionButton: FloatingActionButton.extended(onPressed: () => _edit(),
-        icon: const Icon(Icons.add), label: const Text('New collection')),
       body: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(), slivers: [
           SliverPadding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 20), sliver: SliverToBoxAdapter(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('A place for things that belong together.', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              Text('Grouped for you automatically. Nothing to organize.', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
               if (widget.services.guest) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Kept on this device. Sign in to keep them across devices.', style: theme.textTheme.bodySmall)),
-              if (!widget.services.guest) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Edits save here and sync when online.', style: theme.textTheme.bodySmall)),
               if (_error != null) TextButton(onPressed: _load, child: Text('$_error Tap to retry.')),
-              if (_loading) const LinearProgressIndicator(),
             ],
           ))),
-          if (_collections.isEmpty) SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 28), child: Column(
+          if (groups.isEmpty) const SliverToBoxAdapter(child: Padding(padding: EdgeInsets.fromLTRB(20, 8, 20, 28), child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Your collections start here', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 8), const Text('Gather related memories without moving them out of your library.'),
+              Text('Your collections start here'), SizedBox(height: 8),
+              Text('As you save related memories, they appear together here.'),
             ],
           ))),
-          _grid(_collections, suggested: false),
-          if (suggestions.isNotEmpty) ...[
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.fromLTRB(20, 28, 20, 16), child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Suggested for you', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 6), const Text('Related memories. Nothing is grouped until you choose.'),
-              ],
-            ))),
-            _grid(suggestions, suggested: true),
-          ],
+          SliverPadding(padding: const EdgeInsets.symmetric(horizontal: 20), sliver: SliverList.builder(
+            itemCount: groups.length, itemBuilder: (context, index) {
+              final collection = groups[index];
+              return Padding(padding: const EdgeInsets.only(bottom: 10), child: CollectionCover(
+                collection: collection, memories: _memories.where((m) => collection.urls.contains(m.canonicalUrl)).toList(),
+                onTap: () async {
+                  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CollectionDetailPage(
+                    collection: collection, services: widget.services)));
+                  await _readLocal();
+                }));
+            })),
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
     );
   }
 
-  Widget _grid(List<MemoryCollection> groups, {required bool suggested}) => SliverPadding(
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    sliver: SliverLayoutBuilder(builder: (context, constraints) {
-      final largeText = MediaQuery.textScalerOf(context).scale(14) > 21;
-      return SliverGrid.builder(
-        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: largeText ? constraints.crossAxisExtent : 320,
-          mainAxisExtent: largeText ? 310 : 250, crossAxisSpacing: 12, mainAxisSpacing: 16),
-        itemCount: groups.length, itemBuilder: (context, index) {
-          final c = groups[index];
-          final members = _memories.where((m) => c.urls.contains(m.canonicalUrl)).toList();
-          return CollectionCover(collection: c, memories: members, suggested: suggested,
-            onTap: () async {
-              if (suggested) { await _edit(collection: c, suggestion: true); return; }
-              await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CollectionDetailPage(
-                collection: c, services: widget.services)));
-              await _readLocal();
-            });
-        });
-    }),
-  );
 }
 
 class CollectionCover extends StatelessWidget {
@@ -155,31 +121,27 @@ class CollectionCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final covers = memories.take(4).toList();
-    Widget cover(ItemDetail? item) => ColoredBox(color: theme.colorScheme.surfaceContainerHighest,
-      child: item?.thumbnailUrl?.isNotEmpty == true ? Image.network(item!.thumbnailUrl!, fit: BoxFit.cover,
-        cacheWidth: 400, errorBuilder: (context, error, stackTrace) => _fallback(context, item)) : _fallback(context, item));
-    return Card.outlined(margin: EdgeInsets.zero, clipBehavior: Clip.antiAlias, child: InkWell(onTap: onTap,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(child: Row(children: [
-          Expanded(child: covers.length < 2 ? cover(covers.firstOrNull) : Column(children: [
-            Expanded(child: cover(covers[0])), const SizedBox(height: 2), Expanded(child: cover(covers[1])),
+    final colors = theme.brightness == Brightness.dark ? FindBackTheme.dark : FindBackTheme.light;
+    final layers = memories.length.clamp(1, 3);
+    return Material(color: colors[FindBackColor.card],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: colors[FindBackColor.line]!)),
+      child: InkWell(borderRadius: BorderRadius.circular(20), onTap: onTap,
+        child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [
+          SizedBox(width: 30 + (layers - 1) * 20.0, height: 40, child: Stack(children: [
+            for (var i = 0; i < layers; i++) PositionedDirectional(start: i * 20.0, child: Container(
+              width: 30, height: 40, decoration: BoxDecoration(
+                color: colors[[FindBackColor.soft, FindBackColor.stack2, FindBackColor.stack3][i]],
+                borderRadius: BorderRadius.circular(8), border: Border.all(color: colors[FindBackColor.card]!, width: 2)))),
           ])),
-          if (covers.length > 2) ...[const SizedBox(width: 2), Expanded(child: Column(children: [
-            Expanded(child: cover(covers[2])), if (covers.length > 3) ...[const SizedBox(height: 2), Expanded(child: cover(covers[3]))],
-          ]))],
-        ])),
-        Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(collection.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
-          const SizedBox(height: 4), Text('${memories.length} ${memories.length == 1 ? 'memory' : 'memories'}${suggested ? ' · Create collection' : ''}',
-            maxLines: 2, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-        ])),
-      ])));
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(collection.name, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium?.copyWith(fontSize: 16.5, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4), Text('${memories.length} ${memories.length == 1 ? 'save' : 'saves'}',
+              style: theme.textTheme.bodySmall?.copyWith(fontSize: 13.5, color: theme.colorScheme.onSurfaceVariant)),
+          ])),
+          const SizedBox(width: 8), Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant),
+        ]))));
   }
-  Widget _fallback(BuildContext context, ItemDetail? item) => Center(child: Padding(padding: const EdgeInsets.all(12),
-    child: Text(item?.bestTitle ?? collection.name, maxLines: 3, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.primary))));
 }
 
 Future<String?> collectionName(BuildContext context, String initial) async {
@@ -268,7 +230,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
   Widget build(BuildContext context) {
     final members = _memories.where((m) => _collection.urls.contains(m.canonicalUrl)).toList();
     return Scaffold(appBar: AppBar(title: Text(_collection.name), actions: [
-      FindBackActionMenu(tooltip: 'Collection options', actions: [
+      if (!_collection.id.startsWith('automatic-')) FindBackActionMenu(tooltip: 'Collection options', actions: [
         FindBackAction(label: 'Edit memories', onPressed: () => _edit('edit')),
         FindBackAction(label: 'Rename', onPressed: () => _edit('rename')),
         FindBackAction(label: 'Delete collection', destructive: true, onPressed: () => _edit('delete')),

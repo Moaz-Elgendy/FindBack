@@ -46,7 +46,8 @@ void main() {
       result: SearchResult.fromItem(item),
       onTap: () {},
     ))));
-    expect(find.text('Short useful Brief.'), findsOneWidget);
+    expect(find.text('Use the testing skill.'), findsOneWidget);
+    expect(find.text('Review the result.'), findsOneWidget);
     expect(find.textContaining('claude skills'), findsNothing);
     expect(find.byIcon(Icons.article_outlined), findsNothing);
   });
@@ -55,6 +56,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DetailPage(itemId: '1', items: service())));
     await tester.pumpAndSettle();
     expect(find.text('Short useful Brief.'), findsOneWidget);
+    expect(find.text('Use the testing skill.'), findsOneWidget);
+    expect(find.text('Review the result.'), findsOneWidget);
     expect(find.text('Use the testing skill.'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
