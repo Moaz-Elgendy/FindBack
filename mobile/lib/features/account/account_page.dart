@@ -273,8 +273,16 @@ class _AccountPageState extends State<AccountPage> {
   Widget _group(List<Widget> children) => Card(margin: EdgeInsets.zero, elevation: 0, child: Padding(
     padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)));
 
+  List<Widget> _feedback() => [
+    if (_busy) Padding(padding: const EdgeInsets.only(top: 16),
+      child: Semantics(liveRegion: true, child: const Text('Updating your account…'))),
+    if (_message != null) Padding(padding: const EdgeInsets.only(top: 16),
+      child: Semantics(liveRegion: true, child: Text(_message!))),
+  ];
+
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
     await _run(() async {
       if (_recovering) {
         await widget.auth.updatePassword(_password.text);
@@ -376,6 +384,7 @@ class _AccountPageState extends State<AccountPage> {
                               }
                             }),
                       ])),
+                  ..._feedback(),
                   const SizedBox(height: 24),
                   FilledButton(
                       onPressed: _busy ? null : _submit,
@@ -501,13 +510,7 @@ class _AccountPageState extends State<AccountPage> {
                     'Your links are read and summarized by AI. Memories are shared only when you choose to share them.',
                     style: Theme.of(context).textTheme.bodySmall)),
                 ],
-                if (_busy) Padding(padding: const EdgeInsets.only(top: 16),
-                  child: Semantics(liveRegion: true, child: const Text('Updating your account…'))),
-                if (_message != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 16),
-                      child:
-                          Semantics(liveRegion: true, child: Text(_message!))),
+                if (session != null && !_recovering) ..._feedback(),
               ],
             ),
           ),

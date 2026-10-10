@@ -202,3 +202,15 @@ provider key is embedded. A default-constructor sign-in regression reproduced
 the failure, then passed after the correction; the auth suite passed 14 tests.
 Flutter analyze passed; the full suite passed 471 tests with one existing skip,
 and a normal debug APK build passed without Supabase define overrides.
+
+## Physical sign-in feedback follow-up
+
+The user successfully signed in with the corrected build, then reported silent
+rejected sign-in and signup confirmation. Both messages existed but were rendered
+below the Account settings, outside the phone viewport. Two widget regressions
+reproduced that placement at 360 by 800 pixels. Feedback now appears beside the
+authentication form, and submission dismisses the keyboard. Auth and Account
+suites passed 53 tests. Flutter analyze and the debug APK build passed; the full
+suite passed 473 tests with one existing skip. The email verification link
+report (a “null” result) remains under investigation; successful account creation
+is not evidence that its redirect or feedback works.

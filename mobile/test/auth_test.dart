@@ -225,6 +225,36 @@ void main() {
     await closed;
     messenger.setMockMethodCallHandler(channel, null);
   });
+  for (final signup in [false, true]) {
+    testWidgets('${signup ? 'signup confirmation' : 'rejected sign in'} feedback is visible beside the form', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(360, 800);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      if (signup) {
+        response = {'user': {'id': 'new', 'identities': [{'id': 'new'}]}};
+      } else {
+        dio.interceptors.clear();
+        dio.interceptors.add(InterceptorsWrapper(onRequest: (request, handler) {
+          handler.reject(DioException(requestOptions: request,
+            response: Response(requestOptions: request, statusCode: 400),
+            type: DioExceptionType.badResponse));
+        }));
+      }
+      await tester.pumpWidget(MaterialApp(home: AccountPage(auth: auth)));
+      if (signup) await tester.tap(find.text('Create an account'));
+      await tester.enterText(find.byType(TextFormField).first, 'new@example.test');
+      await tester.enterText(find.byType(TextFormField).last, 'password');
+      await tester.tap(find.widgetWithText(FilledButton, signup ? 'Create account' : 'Sign in'));
+      await tester.pumpAndSettle();
+      final feedback = signup
+        ? find.text('Check your email to confirm your account, then sign in.')
+        : find.textContaining('password reset');
+      expect(feedback, findsOneWidget);
+      expect(tester.getRect(feedback).bottom, lessThanOrEqualTo(800));
+      expect(auth.currentSession, isNull);
+    });
+  }
   testWidgets('guest account form validates fields', (tester) async {
     await tester.pumpWidget(MaterialApp(home: AccountPage(auth: auth)));
     expect(find.textContaining('guest'), findsOneWidget);
