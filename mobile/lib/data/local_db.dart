@@ -130,7 +130,8 @@ class LocalDb {
       final client = existing?.id.substring('local-'.length) ?? await queueSave(
           url: item.url, preview: item.briefText, titleHint: item.bestTitle, capturedAt: item.createdAt);
       final cached = Map<String, Object?>.from(row)
-        ..['id'] = 'local-$client'..['status'] = 'pending';
+        ..['id'] = 'local-$client'
+        ..['status'] = item.hasFinalBrief ? 'ready' : item.status;
       await db.insert('items', cached, conflictAlgorithm: ConflictAlgorithm.replace);
       await _importGuestReminder(guest, item.id, 'local-$client');
     }
@@ -250,8 +251,9 @@ class LocalDb {
     final existing = await _pendingForUrl(url);
     if (existing != null) return existing;
 
-    final clientId = '${now.millisecondsSinceEpoch}'
-        '-${now.microsecondsSinceEpoch.remainder(1000000).toRadixString(36)}';
+    final clientClock = DateTime.now();
+    final clientId = '${clientClock.millisecondsSinceEpoch}'
+        '-${clientClock.microsecondsSinceEpoch.remainder(1000000).toRadixString(36)}';
     await db.transaction((txn) async {
       await txn.insert('sync_queue', <String, Object?>{
         'client_id': clientId,
@@ -319,7 +321,18 @@ class LocalDb {
       orderBy: 'captured_at ASC',
       limit: limit,
     );
-    return rows.map(SyncItem.fromRow).toList(growable: false);
+    final pending = <SyncItem>[];
+    for (final row in rows) {
+      final cached = await localItem('local-${row['client_id']}');
+      final completed = cached != null && (cached.isReady || cached.isFailed || cached.hasFinalBrief || cached.edited || cached.linkOnly);
+      if (completed && !cached.isFailed && !cached.isReady) {
+        await db.update('items', {'status': 'ready'}, where: 'id = ?', whereArgs: [cached.id]);
+      }
+      pending.add(SyncItem.fromRow({...row,
+        if (completed) 'saved_memory': cached.toSavedMemory(),
+      }));
+    }
+    return pending;
   }
 
   /// Prefix of a `sync_queue` row that is a pending "memory opened" call

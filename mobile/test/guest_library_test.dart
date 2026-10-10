@@ -85,12 +85,33 @@ void main() {
     await a.importGuest(guest); await a.importGuest(guest);
     expect(await a.pendingCount(), 1);
     final copy = (await a.localItem((await a.recentLocalItems()).single.id))!;
+    expect(copy.status, 'ready');
+    expect((await a.pendingQueue()).single.toJson()['saved_memory'], isNotNull);
     expect(copy.instantBrief, original.instantBrief); expect(copy.keyPoints, original.keyPoints);
     expect(copy.tags, original.tags); expect(copy.createdAt, original.createdAt);
     expect((await guest.localItem('guest'))!.status, 'ready');
     expect(await b.recentLocalItems(), isEmpty);
     await guest.close(); await a.close(); await b.close();
     await directory.delete(recursive: true);
+  });
+  test('100 completed guest memories remain ready and upload their snapshots in batches', () async {
+    final guest = await LocalDb.openAt(inMemoryDatabasePath);
+    final directory = await Directory.systemTemp.createTemp('findback-large-import');
+    final account = await LocalDb.openAt('${directory.path}/account.db');
+    await guest.upsertRemoteItems(List.generate(100, (i) => memory('guest-$i')));
+    await account.importGuest(guest);
+    expect(await account.pendingCount(), 100);
+    final copies = (await account.db.query('items')).map(ItemDetail.fromLocalRow).toList();
+    expect(copies, hasLength(100));
+    expect(copies.every((item) => item.status == 'ready'), isTrue);
+    final batch = await account.pendingQueue();
+    expect(batch, hasLength(20));
+    expect(batch.every((item) => item.toJson()['saved_memory'] != null), isTrue);
+    await account.applyMapped(List.generate(batch.length, (i) =>
+      MappedSave(clientId: batch[i].clientId, serverId: 'server-$i')));
+    expect((await account.db.query('items')).every((row) => row['status'] == 'ready'), isTrue);
+    expect(await guest.recentLocalItems(limit: 150), hasLength(100));
+    await guest.close(); await account.close(); await directory.delete(recursive: true);
   });
   test('sync stop awaits in-flight mapping', () async {
     final response = Completer<SyncBatchResult>(), entered = Completer<void>();

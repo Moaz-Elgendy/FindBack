@@ -86,6 +86,8 @@ void main() {
     };
     expect(
         await auth.signUp('test@example.com', '123456'), contains('confirm'));
+    expect(requests.single.queryParameters['redirect_to'],
+        'https://findback.duckdns.org/auth/confirmed');
     expect(auth.currentSession, isNull);
     response = {
       'user': {'identities': []}

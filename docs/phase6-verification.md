@@ -212,5 +212,54 @@ reproduced that placement at 360 by 800 pixels. Feedback now appears beside the
 authentication form, and submission dismisses the keyboard. Auth and Account
 suites passed 53 tests. Flutter analyze and the debug APK build passed; the full
 suite passed 473 tests with one existing skip. The email verification link
-report (a “null” result) remains under investigation; successful account creation
-is not evidence that its redirect or feedback works.
+report (a “null” result) was traced to the Supabase verification URL's
+`redirect_to=http://localhost:3000`. Signup did not specify a redirect, so it used
+the project default. Signup now requests the backend `/auth/confirmed` page,
+which provides success/error guidance, strips token fragments from the address
+bar, disables caching and sends no tokens to the backend or third parties.
+The missing-route and missing-redirect regressions were observed failing, then
+passed. Four JavaScript checks exercised successful, failed, query-error and
+no-token browser states. Supabase URL Configuration must allow the production
+page and replace the localhost Site URL; an end-to-end fresh confirmation email
+remains unverified until that external setting is corrected.
+
+## Completed guest-library import correction
+
+The physical user reported that signing in turned saved cards into loading
+cards. `LocalDb.importGuest` forced every copied row to `pending` and uploaded
+its URL as an ordinary capture. The feed also omitted completed local cards
+while uploads were pending, and the account's initial feed was read before
+import. Completed/failed cards now keep their status, upload validated private
+snapshots through the existing batch endpoint, and bypass processing jobs and
+AI intake quotas. Unfinished captures retain their existing processing path.
+The account's initial feed is primed after import, completed local cards stay
+visible during upload, and batch completion refreshes without clearing cards.
+
+A 100-card regression also reproduced a sync-ID collision when several original
+saves had identical timestamps. Upload IDs now use the current enqueue time;
+original saved timestamps are retained. The SQLite, account-switch and feed
+regressions passed (23 focused tests), including 100 completed cards, batches
+of 20, repeated imports, original guest retention and isolated account caches.
+Backend tests cover 100 ready imports with no enqueue/quota calls, idempotent
+replays, account isolation, preservation of dates/edits, repair of old pending
+copies, and queued workers seeing an imported snapshot. Import repair shares
+the worker URL lock; a worker rechecks the item's content association after
+claiming its job. Completed private snapshots never seed the global cache.
+
+A read-only, private backup of the physical phone showed 22 completed guest
+briefs and 21 pending account cards. Thirteen unfinished account cards have
+matching completed guest originals and existing sync mappings. Restoration is
+pending deployment of the corrected server and APK. Ready account cards and
+unmatched unfinished captures must remain untouched. No account, real card or
+provider counter was deleted/reset. Imported snapshots use lexical search;
+AI embeddings are not generated during account migration.
+
+Latest local checkpoint: Flutter analyze passed, the full Flutter suite passed
+475 tests with one existing skip, and the import/confirmation backend suite
+passed seven tests. The earlier full backend run passed 1138 tests with one
+existing skip before the import changes; the complete updated backend suite
+must pass CI before deployment. A harmless existing Starlette/httpx test-client
+deprecation warning remains. Supabase's URL configuration was corrected by the
+user; a deliberately invalid diagnostic verification token returned a 303 to
+the production `/auth/confirmed` path, confirming localhost is no longer used.
+No real confirmation token was replayed.

@@ -103,7 +103,7 @@ class AppServices {
   /// the way out.
   final PushRegistration? push;
   final bool guest;
-  final List<SearchResult> initialLibrary;
+  List<SearchResult> initialLibrary;
   final GuestLibrary? guestLibrary;
   bool _accountWorkStopped = false;
   final LocalDb db;

@@ -195,6 +195,7 @@ class AuthService {
     final generation = ++_generation;
     _refreshing = null;
     final data = await _request('POST', 'signup',
+        query: {'redirect_to': AppConfig.apiUri('/auth/confirmed').toString()},
         data: {'email': normalized, 'password': password});
     final user = data['user'] ?? data;
     if (user is Map &&

@@ -100,10 +100,23 @@ flutter run --dart-define=API_BASE_URL=https://findback.duckdns.org \
   --dart-define=SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_KEY
 ```
 
-Configure Supabase email verification and recovery redirect
-`findback://auth/recovery`. Never put a service-role key, private key or provider
-credential into a mobile build. Account export requires an online server read;
+In Supabase Authentication → URL Configuration, set Site URL to
+`https://findback.duckdns.org/auth/confirmed` and add that exact URL plus
+`findback://auth/recovery` to Redirect URLs. For another backend, use its
+`/auth/confirmed` URL. Do not leave the production Site URL at localhost:
+Supabase falls back to it when a requested redirect is not allowed. The
+confirmation page gives success/error feedback; recipients return to the app
+and sign in after confirming their email. Never put a service-role key, private
+key or provider credential into a mobile build. Account export requires an online server read;
 provider deletion failure preserves the application account and its saves.
+
+Signing in copies completed guest memories into the account cache immediately
+and uploads their saved contents in batches of 20. These uploads do not fetch,
+summarize or embed the links again, and do not consume the AI capture quota.
+Titles, briefs, tags, references and saved dates stay intact. Only unfinished
+captures enter normal processing. Imports are private account snapshots and
+never populate the global public cache. Imported snapshots use text search;
+Summarize again is an explicit, separate request that can rebuild AI indexing.
 
 For weekly push, provide ignored `mobile/android/app/google-services.json`; its
 Gradle plugin is applied only when that file exists. On iOS, add the ignored

@@ -164,7 +164,10 @@ class AccountCoordinator extends ChangeNotifier {
       }
       final next = await _open(account);
       candidate = next;
-      if (wasGuest && account != null) await next.db.importGuest(previous.db);
+      if (wasGuest && account != null) {
+        await next.db.importGuest(previous.db);
+        next.initialLibrary = await next.db.recentLocalItems(limit: 20);
+      }
       _accountId = account;
       services = next;
       candidate = null;

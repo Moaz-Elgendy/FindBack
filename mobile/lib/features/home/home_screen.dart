@@ -96,9 +96,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _onQueueChanged() {
     final count = widget.services.pending.value;
-    if (count < _pendingCount && mounted) {
+    if (count != _pendingCount && mounted) {
       _loadIntelligence();
-      _loadRecent();
+      _loadRecent(background: true);
     }
     _pendingCount = count;
     _scheduleProcessingRefresh();
@@ -270,7 +270,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   int get _queuedCount {
     final local = (_intelligenceItems.isEmpty ? _recent : _intelligenceItems).where((item) => item.isLocalOnly && item.isGeneratingBrief).length;
-    final count = widget.services.pending.value;
+    final completed = (_intelligenceItems.isEmpty ? _recent : _intelligenceItems)
+        .where((item) => item.isLocalOnly && !item.isGeneratingBrief).length;
+    final count = widget.services.pending.value - completed;
     return local > count ? local : count;
   }
 
@@ -559,7 +561,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
   Widget _buildRecent(ThemeData theme) {
-    if (_loadingRecent && _recent.isEmpty) {
+    if (_loadingRecent && _recent.isEmpty && _intelligenceItems.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
     if (_recentError != null) {
@@ -572,7 +574,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final feed = <SearchResult>[];
     final ids = <String>{};
-    for (final item in [..._recent, if (!widget.findMode) ..._intelligenceItems.where((item) => item.isGeneratingBrief || item.isFailed)]) {
+    for (final item in [..._recent, if (!widget.findMode) ..._intelligenceItems.where((item) => item.isGeneratingBrief || item.isFailed ||
+        item.isLocalOnly && (_recentCategory == 'All' || item.category == _recentCategory) && matchesIntelligence(item, _filters))]) {
       if (!_deletedIds.contains(item.id) && ids.add(item.id)) {
         feed.add(item);
       }

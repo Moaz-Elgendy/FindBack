@@ -27,7 +27,43 @@ class IngestResponse(BaseModel):
     canonical_url: str
     already_exists: bool = False
 
+class SavedMemorySnapshot(BaseModel):
+    title: str = Field(max_length=2000)
+    summary: str = Field(default='', max_length=32000)
+    status: Literal['ready', 'failed'] = 'ready'
+    category: Optional[str] = Field(default=None, max_length=32)
+    tags: List[str] = Field(default_factory=list, max_length=100)
+    key_points: List[str] = Field(default_factory=list, max_length=100)
+    key_points_with_refs: List[Dict[str, Any]] = Field(default_factory=list, max_length=100)
+    entities: Dict[str, Any] = Field(default_factory=dict)
+    thumbnail_url: Optional[str] = Field(default=None, max_length=MAX_URL_CHARS)
+    created_at: Optional[datetime] = None
+    instant_brief: Optional[str] = None
+    best_takeaway: Optional[str] = None
+    missing_info: Optional[str] = None
+    content_type: Optional[str] = None
+    topics: List[str] = Field(default_factory=list, max_length=100)
+    likely_intent: Optional[str] = None
+    suggested_action: Optional[str] = None
+    intent: Optional[str] = Field(default=None, max_length=32)
+    brief_source: Optional[str] = Field(default=None, max_length=32)
+    edited: bool = False
+    link_only: bool = False
+    needs_retry: bool = False
+    description_only: bool = False
+    failure_reason: Optional[str] = None
+    model_config = ConfigDict(extra='forbid')
+
+    @model_validator(mode='after')
+    def bounded_snapshot(self):
+        if len(self.model_dump_json().encode()) > 65536:
+            raise ValueError('Saved memory is too large')
+        self.key_points_with_refs = [BriefPoint.model_validate(p).model_dump() for p in self.key_points_with_refs]
+        return self
+
+
 class SyncItem(BaseModel):
+    saved_memory: Optional[SavedMemorySnapshot] = None
     client_id: str
     url: str = Field(min_length=1, max_length=MAX_URL_CHARS)
     captured_at: Optional[str] = None

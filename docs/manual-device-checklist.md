@@ -53,3 +53,10 @@ Use disposable registered accounts for destructive checks; preserve real saves.
   other accounts, recipients' saved copies and sanitized global cache survive.
 - [ ] Simulate provider deletion failure on a test deployment. Verify the account,
   saved cards and raw snapshots remain intact and deletion can be retried.
+
+- [ ] With a guest library of 100 completed cards, sign in: completed cards
+  remain visible and ready while background uploads finish. Titles, edits,
+  tags, references, original saved dates and reminders remain intact; no
+  fetch/summarize/embed jobs are created for those completed cards.
+- [ ] A fresh confirmation email opens the production confirmation page,
+  gives clear success/error guidance and removes tokens from its address bar.

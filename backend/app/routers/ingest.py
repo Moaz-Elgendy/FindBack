@@ -1,6 +1,7 @@
 import logging
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -425,15 +426,64 @@ def _touch(db: Session, item: Item, canon: str) -> IngestResponse:
     return IngestResponse(id=item.id, status=item.status, canonical_url=canon, already_exists=True)
 
 
+def _import_saved_memory(db, user, capture, canon):
+    saved = capture.saved_memory
+    # Share the worker's URL lock so an in-flight job cannot overwrite an import.
+    with public_cache.serialized(db, capture.url):
+        item = _existing_item(db, user.id, canon, capture.url)
+        if item is not None and (item.status == 'ready' or item.edited_title is not None
+                                 or item.edited_summary is not None or item.reprocess_snapshot):
+            db.commit()
+            return str(item.id), item.status
+        if item is None:
+            item = Item(user_id=user.id, url=capture.url, canonical_url=canon)
+            db.add(item)
+        # Client snapshots belong only to this account; never publish them to the content cache.
+        item.content_id = None
+        item.title = item.title_clean = saved.title
+        item.summary, item.status = saved.summary, saved.status
+        item.category, item.tags, item.key_points = saved.category, saved.tags, saved.key_points
+        item.entities, item.thumbnail_url = saved.entities, saved.thumbnail_url
+        item.source_domain, item.source_type = source_domain(capture.url), source_type(capture.url)
+        item.intent, item.link_only = saved.intent, saved.link_only
+        item.needs_retry, item.failure_reason = saved.needs_retry, saved.failure_reason
+        captured = saved.created_at or (datetime.fromisoformat(capture.captured_at.replace('Z', '+00:00')) if capture.captured_at else None)
+        if captured is not None:
+            item.created_at = captured if captured.tzinfo else captured.replace(tzinfo=timezone.utc)
+        if saved.edited:
+            item.edited_title, item.edited_summary = saved.title, saved.summary
+        item.brief_v2 = {name: getattr(saved, name) for name in (
+            'instant_brief', 'best_takeaway', 'missing_info', 'content_type',
+            'topics', 'likely_intent', 'suggested_action', 'brief_source')}
+        item.brief_v2['key_points'] = saved.key_points_with_refs
+        item.evidence_bundle = {'evidence_level': 'metadata_only'} if saved.description_only else {}
+        item.fetch_metadata = item.processing_metadata = {}
+        item.raw_text = item.normalized_text = item.raw_preview = item.raw_s3_key = None
+        item.embedding = item.embedding_model = item.chunk_texts = item.chunk_timestamps = None
+        # shortcut: imported snapshots use lexical search; semantic indexing needs a separate explicit action.
+        item.search_text = '\n'.join(filter(None, [saved.title, saved.summary, *saved.key_points, *saved.tags, *saved.topics]))
+        db.commit()
+        return str(item.id), item.status
+
+
 @router.post("/sync/batch", response_model=SyncBatchResponse)
 def sync_batch(req: SyncBatchRequest, db: Session = Depends(get_db), user = Depends(get_current_user)):
     from app.services.capacity import intake_limit
-    if req.items:
-        intake_limit(str(user.id), guest=bool((getattr(user, "auth_subject", None) or "guest:").startswith("guest:")), amount=len(req.items))
+    guest = bool((getattr(user, 'auth_subject', None) or 'guest:').startswith('guest:'))
+    if guest and any(it.saved_memory is not None for it in req.items):
+        raise HTTPException(403, 'Sign in to import saved memories')
+    captures = sum(it.saved_memory is None for it in req.items)
+    if captures:
+        intake_limit(str(user.id), guest=guest, amount=captures)
     mapped, errors = [], []
     for it in req.items:
         try:
             canon = canonical_url(it.url)
+            if it.saved_memory is not None:
+                item_id, status = _import_saved_memory(db, user, it, canon)
+                mapped.append({'client_id': it.client_id, 'id': item_id,
+                               'status': status, 'canonical_url': canon})
+                continue
             # Same identity rule as /ingest: look the item up through the asset.
             existing = _existing_item(db, user.id, canon, it.url)
             if existing:

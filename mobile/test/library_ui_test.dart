@@ -67,6 +67,27 @@ void main() {
   }
 
 
+  testWidgets('completed local imports remain visible while the account feed is empty', (tester) async {
+    final services = await setup(tester, recent: (limit, {category, cursor, filters}) async => const ItemPage(items: []));
+    await tester.runAsync(() async {
+      final client = await services.db.queueSave(url: 'https://example.test/imported');
+      await services.db.upsertRemoteItems([ItemDetail.fromJson({
+        ..._item('local-$client', 'tutorial'), 'title_clean': 'Completed imported memory',
+        'instant_brief': 'Original completed brief', 'brief_source': 'llm',
+      })]);
+    });
+    services.pending.value = 1;
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump();
+    }
+    expect(find.text('Completed imported memory'), findsOneWidget);
+    expect(find.text('Reading 1'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await drive(tester, services.dispose());
+  });
+
   testWidgets('processing status replaces refresh and clears automatically', (tester) async {
     var finalized = false;
     var requests = 0;

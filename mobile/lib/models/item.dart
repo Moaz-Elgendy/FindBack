@@ -134,6 +134,19 @@ class ItemDetail {
 
   List<String> get ingredients => stringList(entities['ingredients']);
 
+  Map<String, Object?> toSavedMemory() => {
+    'title': bestTitle, 'summary': summary ?? briefText,
+    'status': isFailed ? 'failed' : 'ready', 'category': category,
+    'tags': tags, 'key_points': keyPoints, 'entities': entities,
+    'key_points_with_refs': pointsWithRefs.map((point) => point.toJson()).toList(),
+    'thumbnail_url': thumbnailUrl, 'created_at': createdAt?.toUtc().toIso8601String(),
+    'instant_brief': instantBrief, 'best_takeaway': bestTakeaway,
+    'missing_info': missingInfo, 'content_type': contentType, 'topics': topics,
+    'likely_intent': likelyIntent, 'suggested_action': suggestedAction, 'intent': intent,
+    'brief_source': briefSource, 'edited': edited, 'link_only': linkOnly,
+    'needs_retry': needsRetry, 'description_only': descriptionOnly, 'failure_reason': failureReason,
+  };
+
   /// Shape used by the local cache mirror (`items` table in SQLite).
   Map<String, Object?> toLocalRow() => <String, Object?>{
         'id': id,
@@ -292,6 +305,7 @@ class SyncItem {
     required this.capturedAt,
     this.preview,
     this.titleHint,
+    this.savedMemory,
   });
 
   factory SyncItem.fromRow(Map<String, Object?> row) => SyncItem(
@@ -300,6 +314,7 @@ class SyncItem {
         capturedAt: row['captured_at'] as String? ?? '',
         preview: row['preview'] as String?,
         titleHint: row['title_hint'] as String?,
+        savedMemory: row['saved_memory'] as Map<String, Object?>?,
       );
 
   final String clientId;
@@ -307,6 +322,7 @@ class SyncItem {
   final String capturedAt;
   final String? preview;
   final String? titleHint;
+  final Map<String, Object?>? savedMemory;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'client_id': clientId,
@@ -314,6 +330,7 @@ class SyncItem {
         'captured_at': capturedAt,
         'preview': preview,
         'title_hint': titleHint,
+        if (savedMemory != null) 'saved_memory': savedMemory,
       };
 }
 

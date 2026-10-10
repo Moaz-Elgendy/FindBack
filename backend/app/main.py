@@ -4,7 +4,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, HTMLResponse
 from sqlalchemy import text
 from app.database import SessionLocal, init_db
 from app.celery_app import celery
@@ -197,6 +197,31 @@ def health():
 @app.get("/")
 def root():
     return {"service": "FindBack", "docs": "/docs", "health": "/health"}
+
+
+@app.get('/auth/confirmed', response_class=HTMLResponse)
+def auth_confirmed():
+    return HTMLResponse("""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FindBack · Email confirmation</title>
+<style>:root{color-scheme:light dark}body{font:18px/1.6 system-ui;margin:64px auto;padding:24px;max-width:480px}</style>
+</head><body><h1>Return to FindBack</h1>
+<p id="feedback" role="status">If you confirmed your email, open FindBack and sign in to finish.</p>
+<script>
+const fragment = new URLSearchParams(location.hash.slice(1));
+const query = new URLSearchParams(location.search);
+// Confirmation tokens stay in the browser and are removed from its address bar.
+history.replaceState(null, '', location.pathname);
+if (fragment.has('error') || query.has('error')) {
+  document.getElementById('feedback').textContent = 'This verification link expired or could not be verified. Request a new confirmation email.';
+} else if (fragment.has('access_token') && fragment.get('type') === 'signup') {
+  document.getElementById('feedback').textContent = 'Your email is confirmed. Open FindBack and sign in to finish.';
+}
+</script></body></html>""", headers={
+        'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    })
 
 
 @app.get('/ready')

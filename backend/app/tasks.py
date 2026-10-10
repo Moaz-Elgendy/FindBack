@@ -287,6 +287,8 @@ def process_item(self, item_id: str):
         if not item: return {"error": "not found"}
         if item.deleted_at is not None:
             return {"id": str(item.id), "status": item.status, "skipped": "deleted"}
+        if item.content_id is None and item.status in ('ready', 'failed') and not item.reprocess_snapshot:
+            return {'id': str(item.id), 'status': item.status, 'skipped': 'saved snapshot'}
         if reprocessing.edited(item) and not item.reprocess_snapshot:
             return {"id": str(item.id), "status": item.status, "skipped": "edited"}
         if item.link_only:
@@ -334,7 +336,7 @@ def process_item(self, item_id: str):
 
         # A queued message may have loaded the item before Keep link only won.
         db.refresh(item)
-        if item.link_only or item.deleted_at is not None or (reprocessing.edited(item) and not item.reprocess_snapshot):
+        if item.content_id != job.content_id or item.link_only or item.deleted_at is not None or (reprocessing.edited(item) and not item.reprocess_snapshot):
             db.query(ProcessingJob).filter(ProcessingJob.id == job.id,
                                             ProcessingJob.attempt_token == job.attempt_token).update({
                 ProcessingJob.status: JOB_STATUS_PENDING,

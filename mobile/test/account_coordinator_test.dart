@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:findback/app_services.dart';
 import 'package:findback/data/api_client.dart';
 import 'package:findback/data/local_db.dart';
+import 'package:findback/models/item.dart';
 import 'package:findback/data/token_store.dart';
 import 'package:findback/services/account_coordinator.dart';
 import 'package:findback/services/auth_service.dart';
@@ -68,7 +69,12 @@ void main() {
     }
     expect(created, isNotNull);
     final coordinator = created!;
-    await drive(coordinator.services.db.queueSave(url: 'https://example.test/guest'));
+    final guestClient = await drive(coordinator.services.db.queueSave(url: 'https://example.test/guest'));
+    await drive(coordinator.services.db.upsertRemoteItems([ItemDetail.fromJson({
+      'id': 'local-$guestClient', 'url': 'https://example.test/guest',
+      'title': 'Completed guest memory', 'instant_brief': 'Original brief',
+      'brief_source': 'llm', 'status': 'ready',
+    })]));
     Future<void> change(String? id) async {
       auth.session.value = id == null ? null : AuthSession(id: id, email: '$id@example.test',
         accessToken: 'token-$id', refreshToken: 'refresh-$id', expiresAt: DateTime.now().add(const Duration(hours: 1)));
@@ -81,6 +87,8 @@ void main() {
       expect(done, isTrue); expect(coordinator.error, isNull);
     }
     await change('a');
+    expect(coordinator.services.initialLibrary, hasLength(1));
+    expect(coordinator.services.initialLibrary.single.isGeneratingBrief, isFalse);
     expect(await drive(coordinator.services.db.pendingCount()), 1);
     expect(await stores['account-a']!.read(), 'token-a');
     await change('b');
