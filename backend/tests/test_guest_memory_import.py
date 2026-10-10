@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from sqlalchemy import text
 from test_phase16_multitenant import admin_engine, db, sessions, client, two_users
 
@@ -31,7 +32,7 @@ def test_completed_library_import_is_ready_private_idempotent_and_never_processe
     assert card['instant_brief'] == 'Original brief'
     assert card['tags'] == ['original tag']
     assert card['edited'] is True
-    assert card['created_at'].startswith('2026-09-29T10:00:00')
+    assert datetime.fromisoformat(card['created_at']) == datetime(2026, 9, 29, 10, tzinfo=timezone.utc)
     with sessions() as session:
         assert session.execute(text("SELECT count(*) FROM items WHERE user_id=:uid AND canonical_url LIKE '%/import-%' AND content_id IS NOT NULL"), {'uid': two_users['a']}).scalar() == 0
     client.as_user(two_users['b'])

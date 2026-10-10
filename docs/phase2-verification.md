@@ -6,7 +6,7 @@ Work is on the feature branch; these changes have not been deployed.
 
 New saves begin owner-scoped. A worker acquires a PostgreSQL advisory lock for the normalized URL, then tries anonymous extraction without cookies, account credentials, clipboard previews, or account evidence. Only meaningful anonymous content with a successful AI brief is published. Cached machine fields, vectors and chunks are copied into each personal save; notes and edited fields never enter the cache.
 
-The default sliding lifetime is 30 days (`PUBLIC_CACHE_TTL_DAYS`). Each usable hit extends it. Hourly cleanup clears expired global payloads in bounded batches; saved Items, chunks, notes and reminders remain. Prompt, pipeline and embedding versions invalidate a hit.
+Updated retention policy: successful anonymous public results persist without time-based expiry. Old expiry timestamps are ignored; hourly expiry cleanup is removed and already-queued cleanup tasks are harmless. Personal copies remain independent. Required prompt, pipeline and embedding compatibility changes still invalidate a hit.
 
 Summarize again creates an owner-scoped processing asset, bypasses shared output and retains the prior brief until success. The UTC per-memory quota defaults to three (`SUMMARIZE_AGAIN_DAILY_LIMIT`); the locked memory row makes concurrent requests idempotent. Failure preserves the prior brief and edits.
 
@@ -30,7 +30,7 @@ Mocked Facebook/YouTube regressions prove two accounts process a positively clas
 
 ## Settings
 
-See `.env.example`: `PUBLIC_CACHE_TTL_DAYS=30`, `PUBLIC_CACHE_CLEANUP_SECONDS=3600`, `PUBLIC_CACHE_CLEANUP_BATCH=200`, `SUMMARIZE_AGAIN_DAILY_LIMIT=3`.
+See `.env.example`: `SUMMARIZE_AGAIN_DAILY_LIMIT=3`. Former `PUBLIC_CACHE_TTL_DAYS` and `PUBLIC_CACHE_CLEANUP_*` settings are ignored. Share-link expiry remains separately configurable at 30 days.
 
 ## Verification
 

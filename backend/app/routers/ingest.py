@@ -78,8 +78,7 @@ def _find_reusable_asset(db: Session, user_id, key: str | None, canon: str):
                            or_(
                                and_(ContentAsset.visibility == VISIBILITY_PUBLIC,
                                     or_(ContentAsset.cache_url.is_(None),
-                                        and_(ContentAsset.cache_expires_at > func.now(),
-                                             ContentAsset.cache_payload.isnot(None)))),
+                                        ContentAsset.cache_payload.isnot(None))),
                                and_(ContentAsset.visibility.in_(NON_SHARED_VISIBILITIES),
                                     ContentAsset.owner_user_id == user_id),
                            ))
@@ -95,8 +94,7 @@ def _find_reusable_asset(db: Session, user_id, key: str | None, canon: str):
                       or_(
                           and_(ContentAsset.visibility == VISIBILITY_PUBLIC,
                                     or_(ContentAsset.cache_url.is_(None),
-                                        and_(ContentAsset.cache_expires_at > func.now(),
-                                             ContentAsset.cache_payload.isnot(None)))),
+                                        ContentAsset.cache_payload.isnot(None))),
                           and_(ContentAsset.visibility.in_(NON_SHARED_VISIBILITIES),
                                ContentAsset.owner_user_id == user_id),
                       ))

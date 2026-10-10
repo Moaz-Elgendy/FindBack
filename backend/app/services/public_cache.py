@@ -1,11 +1,10 @@
-"""Anonymous machine results; personal copies never depend on this TTL."""
+"""Persistent anonymous machine results; personal copies remain independent."""
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import re
 from urllib.parse import parse_qsl, urlparse
 
 from sqlalchemy import text
-from app import env
 from app.models import Chunk, ContentAsset, VISIBILITY_PUBLIC, JOB_STATUS_READY, JOB_TYPE_PROCESS
 from app.services import brief_v2, embedder
 from app.utils.canonical import canonical_url
@@ -36,10 +35,6 @@ def anonymous_usable(url, fetched):
             and not WALL.search(title) and not WALL.search(body[:2000]))
 
 
-def ttl():
-    return timedelta(days=max(1, env.get_int('PUBLIC_CACHE_TTL_DAYS', 30)))
-
-
 @contextmanager
 def serialized(db, url):
     # Bind processing to the lock connection so commits keep the lock without a second pool slot.
@@ -64,8 +59,7 @@ def lookup(db, url, *, now=None):
         return None
     now = now or datetime.now(timezone.utc)
     asset = (db.query(ContentAsset).filter(ContentAsset.cache_url == canonical_url(url),
-             ContentAsset.visibility == VISIBILITY_PUBLIC, ContentAsset.cache_payload.isnot(None),
-             ContentAsset.cache_expires_at > now).with_for_update().first())
+             ContentAsset.visibility == VISIBILITY_PUBLIC, ContentAsset.cache_payload.isnot(None)).with_for_update().first())
     if asset is None:
         return None
     payload = asset.cache_payload
@@ -74,7 +68,7 @@ def lookup(db, url, *, now=None):
             payload.get('embedding_model') != embedder.embedding_model_name()):
         return None
     asset.cache_last_hit_at = now
-    asset.cache_expires_at = now + ttl()
+    asset.cache_expires_at = None
     return asset
 
 
@@ -110,7 +104,7 @@ def publish(db, item):
     asset.cache_payload = payload
     now = datetime.now(timezone.utc)
     asset.cache_last_hit_at = now
-    asset.cache_expires_at = now + ttl()
+    asset.cache_expires_at = None
     asset.pipeline_version = JOB_TYPE_PROCESS
     asset.processing_status = JOB_STATUS_READY
     asset.processing_error = None
@@ -184,14 +178,5 @@ def apply(db, item, asset):
 
 
 def cleanup(db, *, now=None, limit=200):
-    now = now or datetime.now(timezone.utc)
-    assets = (db.query(ContentAsset).filter(ContentAsset.cache_payload.isnot(None),
-                  ContentAsset.visibility == VISIBILITY_PUBLIC,
-              ContentAsset.cache_expires_at <= now).order_by(ContentAsset.cache_expires_at)
-              .limit(limit).with_for_update(skip_locked=True).all())
-    for asset in assets:
-        asset.cache_payload = None
-        asset.title = asset.brief = asset.raw_content = asset.intent = None
-        asset.structured_data, asset.entities, asset.topics = {}, {}, []
-    db.commit()
-    return len(assets)
+    # Old beat messages may still arrive after deployment; never erase persistent results.
+    return 0

@@ -118,21 +118,29 @@ def test_batch_save_uses_complete_cache_without_enqueuing(client, sessions, two_
         assert s.query(Chunk).filter(Chunk.item_id == item.id).count() > 0
 
 
-def test_expired_result_is_processed_fresh_for_new_account(client, sessions, two_users, processing):
+@pytest.mark.parametrize('guest_source,guest_recipient', [(False, False), (True, False), (False, True), (True, True)])
+def test_old_public_result_is_reused_for_new_account(client, sessions, two_users, processing, guest_source, guest_recipient):
     from datetime import timedelta
     tasks, counts, _ = processing
+    from sqlalchemy import text
+    with sessions() as s:
+        for key, guest in [('a', guest_source), ('b', guest_recipient)]:
+            if guest:
+                s.execute(text('UPDATE users SET auth_subject=:subject WHERE id=:id'),
+                          {'subject': 'guest:' + str(uuid.uuid4()), 'id': two_users[key]})
+        s.commit()
     url = 'https://facebook.com/posts/expired1'
     first = save(client, two_users['a'], url)
     tasks.process_item.run(first)
     with sessions() as s:
         asset = public_cache.lookup(s, url)
-        asset.cache_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        asset.cache_expires_at = datetime.now(timezone.utc) - timedelta(days=365)
         s.commit()
     second = save(client, two_users['b'], url)
     tasks.process_item.run(second)
-    assert counts['model'] == 2
-    assert counts['anonymous'] == 2
-    assert counts['enqueues'] == 2
+    assert counts['model'] == 1
+    assert counts['anonymous'] == 1
+    assert counts['enqueues'] == 1
     with sessions() as s:
         assert s.get(Item, uuid.UUID(first)).status == 'ready'
         assert s.get(Item, uuid.UUID(second)).status == 'ready'

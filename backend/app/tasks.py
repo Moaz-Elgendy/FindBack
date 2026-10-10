@@ -499,4 +499,4 @@ def process_item(self, item_id: str):
 @celery.task(name='cleanup_public_cache')
 def cleanup_public_cache():
     with SessionLocal() as db:
-        return {'cleared': public_cache.cleanup(db, limit=max(1, env.get_int('PUBLIC_CACHE_CLEANUP_BATCH', 200)))}
+        return {'cleared': public_cache.cleanup(db)}

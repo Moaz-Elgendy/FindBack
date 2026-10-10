@@ -42,35 +42,28 @@ def test_cache_survives_first_personal_copy_deletion(sessions, two_users):
         assert other.user_id == two_users['b']
 
 
-def test_ttl_is_sliding_and_expiry_is_authoritative(sessions, two_users):
+def test_public_cache_survives_old_expiry_and_cleanup(sessions, two_users):
     with sessions() as s:
         item = ready_public(s, two_users['a_item'])
         asset = public_cache.publish(s, item)
-        url = item.url
         now = datetime.now(timezone.utc)
-        asset.cache_expires_at = now + timedelta(seconds=2)
+        asset.cache_expires_at = now - timedelta(days=365)
         s.commit()
-        assert public_cache.lookup(s, url, now=now).id == asset.id
-        assert asset.cache_expires_at == now + timedelta(days=30)
-        assert asset.cache_last_hit_at == now
-        s.commit()
-        assert public_cache.lookup(s, url, now=now + timedelta(days=31)) is None
+        assert public_cache.cleanup(s, now=now + timedelta(days=365)) == 0
+        hit = public_cache.lookup(s, item.url, now=now + timedelta(days=365))
+        assert hit is not None
+        assert hit.id == asset.id
+        assert hit.cache_last_hit_at == now + timedelta(days=365)
+        assert hit.cache_expires_at is None
+        assert public_cache.apply(s, item, hit)
+        assert item.summary == 'Anonymous public summary'
 
 
-def test_cleanup_removes_only_global_payload(sessions, two_users):
+def test_new_public_results_have_no_expiry(sessions, two_users):
     with sessions() as s:
         item = ready_public(s, two_users['a_item'])
         asset = public_cache.publish(s, item)
-        asset.cache_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-        s.commit()
-        assert public_cache.cleanup(s) == 1
-        s.refresh(item)
-        s.refresh(asset)
-        assert item.summary == 'Anonymous public summary'
-        assert item.brief_v2['brief_source'] == 'llm'
-        assert asset.cache_payload is None
-        assert asset.brief is None
-        assert public_cache.lookup(s, item.url) is None
+        assert asset.cache_expires_at is None
 
 
 @pytest.mark.parametrize('changes', [
