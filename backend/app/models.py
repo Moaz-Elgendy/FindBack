@@ -2,7 +2,7 @@ import uuid
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, CheckConstraint, Column, Computed, DateTime, ForeignKey, ForeignKeyConstraint, Index,
+    Boolean, CheckConstraint, Column, Computed, DateTime, Date, ForeignKey, ForeignKeyConstraint, Index,
     Integer, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
@@ -126,6 +126,8 @@ class Item(Base):
     failure_reason = Column(Text)
     reprocess_snapshot = Column(JSONB)
     reprocess_failure = Column(Text)
+    regeneration_day = Column(Date)
+    regeneration_count = Column(Integer, default=0, server_default='0', nullable=False)
     edited_title = Column(Text)
     edited_summary = Column(Text)
     link_only = Column(Boolean, default=False, server_default=text("false"), nullable=False)
@@ -259,6 +261,10 @@ class ContentAsset(Base):
     entities = Column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
     topics = Column(ARRAY(String), default=list, server_default=text("'{}'::text[]"), nullable=False)
     intent = Column(String(32))
+    cache_url = Column(Text)
+    cache_payload = Column(JSONB)
+    cache_last_hit_at = Column(DateTime(timezone=True))
+    cache_expires_at = Column(DateTime(timezone=True))
     pipeline_version = Column(String(32))
     processed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -273,6 +279,8 @@ class ContentAsset(Base):
         # PostgreSQL partial unique indexes cannot be expressed as a
         # table-level UniqueConstraint, so they are declared here as Index objects
         # with postgresql_where and mirrored in migration 0004.
+        Index("content_assets_cache_url_uq", "cache_url", unique=True),
+        Index("content_assets_cache_expiry_idx", "cache_expires_at"),
         Index("content_assets_public_dedupe_uq", "dedupe_key", unique=True,
               postgresql_where=text("visibility = 'PUBLIC'")),
         Index("content_assets_owner_dedupe_uq", "owner_user_id", "dedupe_key",

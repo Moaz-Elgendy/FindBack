@@ -14,7 +14,7 @@ from app.models import (
     ContentAsset, Item, PROCESSING_PENDING, ProcessingJob, UserMemory,
 )
 from app.schemas import IngestRequest, IngestResponse, SyncBatchRequest, SyncBatchResponse
-from app.services import metrics, observability
+from app.services import metrics, observability, public_cache
 from app.services.outbox import record_job
 from app.services.deletion import restore_save
 from app.services.retention import delete_save
@@ -75,7 +75,10 @@ def _find_reusable_asset(db: Session, user_id, key: str | None, canon: str):
         asset = (db.query(ContentAsset)
                    .filter(ContentAsset.dedupe_key == key,
                            or_(
-                               ContentAsset.visibility == VISIBILITY_PUBLIC,
+                               and_(ContentAsset.visibility == VISIBILITY_PUBLIC,
+                                    or_(ContentAsset.cache_url.is_(None),
+                                        and_(ContentAsset.cache_expires_at > func.now(),
+                                             ContentAsset.cache_payload.isnot(None)))),
                                and_(ContentAsset.visibility.in_(NON_SHARED_VISIBILITIES),
                                     ContentAsset.owner_user_id == user_id),
                            ))
@@ -89,7 +92,10 @@ def _find_reusable_asset(db: Session, user_id, key: str | None, canon: str):
     asset = (db.query(ContentAsset)
               .filter(ContentAsset.canonical_url == canon,
                       or_(
-                          ContentAsset.visibility == VISIBILITY_PUBLIC,
+                          and_(ContentAsset.visibility == VISIBILITY_PUBLIC,
+                                    or_(ContentAsset.cache_url.is_(None),
+                                        and_(ContentAsset.cache_expires_at > func.now(),
+                                             ContentAsset.cache_payload.isnot(None)))),
                           and_(ContentAsset.visibility.in_(NON_SHARED_VISIBILITIES),
                                ContentAsset.owner_user_id == user_id),
                       ))
@@ -111,8 +117,11 @@ def _existing_item(db: Session, user_id, canon: str, url: str):
     """
     key = dedupe_key(url=url)
     asset = _find_reusable_asset(db, user_id, key, canon)
-    item = None
-    if asset is not None:
+    item = (db.query(Item).join(ContentAsset, Item.content_id == ContentAsset.id)
+            .filter(Item.user_id == user_id,
+                    or_(ContentAsset.dedupe_key == key, ContentAsset.canonical_url == canon))
+            .order_by(Item.created_at).first()) if key else None
+    if item is None and asset is not None:
         item = (db.query(Item)
                   .filter(Item.user_id == user_id,
                           Item.content_id == asset.id)
@@ -348,7 +357,9 @@ def ingest(req: IngestRequest, db: Session = Depends(get_db), user = Depends(get
         # Phase 5: the processing intent is committed in the SAME transaction
         # as the save. If the publish below fails, this row is what the
         # dispatcher will find later.
-        job = _record_processing_job(db, asset.id)
+        cached = public_cache.lookup(db, req.url)
+        hit = cached is not None and public_cache.apply(db, item, cached)
+        job = None if hit else _record_processing_job(db, asset.id)
         db.commit()
     except IntegrityError:
         # Lost a race with a concurrent save of the same canonical URL.
@@ -367,7 +378,7 @@ def ingest(req: IngestRequest, db: Session = Depends(get_db), user = Depends(get
     metrics.captures_total.inc()
     if not memory_existed:
         metrics.dedupe_misses.inc(labels={"outcome": "asset"})
-    status = _status_for(_enqueue(db, str(item.id), item.content_id))
+    status = item.status if hit else _status_for(_enqueue(db, str(item.id), item.content_id))
     observability.log_event("ingest.completed", user_id=user.id,
                             content_id=asset.id, job_id=job.id if job else None,
                             pipeline_version=JOB_TYPE_PROCESS, status=status)
@@ -397,6 +408,7 @@ def _touch(db: Session, item: Item, canon: str) -> IngestResponse:
     Phase 3: the repeat save is recorded on the user's memory row via one atomic
     statement, so save_count cannot lose an increment under concurrency.
     """
+    public_cache.lookup(db, canon)
     item.last_seen_at = func.now()
     _record_save(db, item.user_id, item.content_id)
     retry = item.status == "failed"
@@ -427,6 +439,7 @@ def sync_batch(req: SyncBatchRequest, db: Session = Depends(get_db), user = Depe
             if existing:
                 # A replayed offline save is still a save: count it the same
                 # way /ingest does, atomically.
+                public_cache.lookup(db, it.url)
                 existing.last_seen_at = func.now()
                 _record_save(db, user.id, existing.content_id)
                 db.commit()
@@ -442,14 +455,16 @@ def sync_batch(req: SyncBatchRequest, db: Session = Depends(get_db), user = Depe
                              asset_id=asset.id)
             db.add(item)
             db.flush()
-            # Same transaction as the save, for the same reason as /ingest.
-            _record_processing_job(db, asset.id)
+            cached = public_cache.lookup(db, it.url)
+            hit = cached is not None and public_cache.apply(db, item, cached)
+            if not hit:
+                _record_processing_job(db, asset.id)
             db.commit()
             metrics.captures_total.inc()
             if not memory_existed:
                 metrics.dedupe_misses.inc(labels={"outcome": "asset"})
             mapped.append({"client_id": it.client_id, "id": str(item.id),
-                           "status": _status_for(_enqueue(db, str(item.id), item.content_id)),
+                           "status": item.status if hit else _status_for(_enqueue(db, str(item.id), item.content_id)),
                            "canonical_url": canon})
         except IntegrityError:
             db.rollback()

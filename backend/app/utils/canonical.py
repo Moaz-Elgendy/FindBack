@@ -10,6 +10,11 @@ def canonical_url(url: str) -> str:
     # without a scheme, which urlparse then reads as a path with no host.
     if not re.match(r"https?://", url, re.IGNORECASE):
         url = "https://" + url
+    # Import here: dedupe imports this module for non-platform URL identity.
+    from app.utils.dedupe import platform_id
+    identity = platform_id(url)
+    if identity and identity.startswith('youtube:'):
+        return 'https://youtube.com/watch?v=' + identity.split(':', 1)[1]
     p = urlparse(url)
     host = p.hostname.lower() if p.hostname else ""
     # remove www.

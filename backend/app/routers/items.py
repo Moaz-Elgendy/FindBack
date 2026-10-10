@@ -1,7 +1,10 @@
-from datetime import datetime, timezone
+import hashlib
+import json
+from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, or_, func
 from pydantic import AwareDatetime
 from sqlalchemy.orm import Session, defer
@@ -63,7 +66,7 @@ def _decode_cursor(db: Session, user, cursor: str) -> tuple[datetime, UUID]:
 
 
 @router.get("", response_model=dict)
-def list_items(limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = None,
+def list_items(request: Request = None, response: Response = None, limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = None,
                category: Category = None, saved_after: AwareDatetime | None = None, intelligence: dict = Depends(read_filters),
                db: Session = Depends(get_db), user = Depends(get_current_user)):
     q = query_for(db, user.id, intelligence if isinstance(intelligence, dict) else {}).options(*_NOT_NEEDED)
@@ -78,9 +81,18 @@ def list_items(limit: int = Query(20, ge=1, le=MAX_PAGE), cursor: str | None = N
     rows = q.order_by(Item.created_at.desc(), Item.id.desc()).limit(limit + 1).all()
     has_more = len(rows) > limit
     items = rows[:limit]
-    return {"items": [ItemDetail.model_validate(i).model_dump(exclude=_LIST_EXCLUDE)
-                      for i in items],
-            "next_cursor": _encode_cursor(items[-1]) if has_more else None}
+    payload = {"items": [ItemDetail.model_validate(i).model_dump(exclude=_LIST_EXCLUDE) for i in items],
+               "next_cursor": _encode_cursor(items[-1]) if has_more else None}
+    encoded = json.dumps(jsonable_encoder(payload), sort_keys=True, separators=(',', ':'))
+    etag = '"' + hashlib.sha256((str(user.id) + encoded).encode()).hexdigest() + '"'
+    headers = {'ETag': etag, 'Cache-Control': 'private, no-cache', 'Vary': 'Authorization'}
+    if request is not None:
+        tags = [tag.strip().removeprefix('W/') for tag in request.headers.get('if-none-match', '').split(',')]
+        if etag in tags or '*' in tags:
+            return Response(status_code=304, headers=headers)
+    if response is not None:
+        response.headers.update(headers)
+    return payload
 
 @router.get("/{item_id}", response_model=ItemDetail)
 def get_item(item_id: UUID, db: Session = Depends(get_db), user = Depends(get_current_user)):
@@ -128,9 +140,17 @@ def summarize_again(item_id: UUID, request: SummarizeAgainRequest = SummarizeAga
         return item
     if item.status in ('pending', 'processing') or (job and job.attempt_token is not None):
         raise HTTPException(409, "This memory is being read. Try again when it finishes")
-    if item.content_id is None:
-        asset, _, _ = _create_asset_and_memory(db, user.id, item.url, item.canonical_url, item.title, item.raw_preview)
-        item.content_id = asset.id
+    from app import env
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    count = item.regeneration_count if item.regeneration_day == today else 0
+    limit = max(1, env.get_int('SUMMARIZE_AGAIN_DAILY_LIMIT', 3))
+    if count >= limit:
+        midnight = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        raise HTTPException(429, 'Daily summary limit reached. Try again tomorrow.',
+                            headers={'Retry-After': str(max(1, int((midnight - now).total_seconds()) + 1))})
+    item.regeneration_day, item.regeneration_count = today, count + 1
+    reprocessing.detach(db, item)
     item.reprocess_snapshot = reprocessing.snapshot(item, request.replace_edits)
     item.reprocess_failure = None
     item.link_only = False

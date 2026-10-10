@@ -4,6 +4,8 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+from http.cookiejar import CookieJar
+from app.utils.no_cookies import NoCookies
 from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
 
 
@@ -91,7 +93,7 @@ def usable_text(text: str, video: bool = False) -> str:
     return text
 
 
-async def fetch_content(url: str, preview: str = '') -> dict:
+async def fetch_content(url: str, preview: str = '', *, anonymous=False) -> dict:
     from app.utils.url_safety import validate_url
     url = validate_url(url)
     source = video_source(url)
@@ -99,7 +101,7 @@ async def fetch_content(url: str, preview: str = '') -> dict:
     if env.get_bool('MEDIA_ENABLED', True):
         from app.utils.url_safety import public_get
         try:
-            url, page = await public_get(url)
+            url, page = await public_get(url, **({'anonymous': True} if anonymous else {}))
             source = video_source(url) or source
             if (page.headers.get('content-type', '').startswith('video/')
                     or re.search(r'<video\b|(?:property|name)=[\"\']og:(?:video|type)[\"\'][^>]*(?:video|player)', page.text, re.I)):
@@ -117,17 +119,18 @@ async def fetch_content(url: str, preview: str = '') -> dict:
     limited = None
     if source == 'youtube':
         try:
-            limited = await _try_youtube(url)
+            limited = await _try_youtube(url, **({'anonymous': True} if anonymous else {}))
         except TransientFetchError:
             transient = True
         if limited and limited['input_provenance'] == 'transcript':
             return limited
-    key = os.getenv('FIRECRAWL_API_KEY')
+    key = None if anonymous else os.getenv('FIRECRAWL_API_KEY')
     providers = [('firecrawl', key)] if key else []
     providers.append(('reader', None))
     for provider, key in providers:
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                               cookies=CookieJar(policy=NoCookies()) if anonymous else None, trust_env=not anonymous) as client:
                 if provider == 'firecrawl':
                     response = await client.post('https://api.firecrawl.dev/v1/scrape', headers={'Authorization': f'Bearer {key}'}, json={'url': url, 'formats': ['markdown']})
                 else:
@@ -160,7 +163,7 @@ async def fetch_content(url: str, preview: str = '') -> dict:
     return {'text': text[:12000], 'title': '', 'thumbnail': '', 'resolved_url': url, 'source_type': source or 'article', 'input_provenance': ('caption' if source else 'page') if text else 'none'}
 
 
-async def _try_youtube(url: str) -> dict | None:
+async def _try_youtube(url: str, *, anonymous=False) -> dict | None:
     from youtube_transcript_api import YouTubeTranscriptApi
     parsed = urlparse(url)
     vid = parsed.path.strip('/') if parsed.hostname == 'youtu.be' else parse_qs(parsed.query).get('v', [''])[0]
@@ -170,14 +173,14 @@ async def _try_youtube(url: str) -> dict | None:
         return None
     transient = False
     try:
-        transcript = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, vid, languages=['ar', 'en'])
+        transcript = None if anonymous else await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, vid, languages=['ar', 'en'])
     except Exception as exc:
         transcript = None
         transient = (isinstance(exc, (httpx.TimeoutException, TimeoutError, RequestsTimeout, RequestsConnectionError))
                      or (getattr(getattr(exc, "response", None), "status_code", 0) or 0) >= 500)
     title = author = ''
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(timeout=8, cookies=CookieJar(policy=NoCookies()) if anonymous else None, trust_env=not anonymous) as client:
             response = await client.get('https://www.youtube.com/oembed', params={'url': f'https://www.youtube.com/watch?v={vid}', 'format': 'json'})
             if response.status_code >= 500:
                 transient = True

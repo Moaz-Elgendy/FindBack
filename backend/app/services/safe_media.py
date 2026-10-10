@@ -21,6 +21,7 @@ class PublicHTTPAdapter(RequestsHTTPAdapter):
 class PublicRequestsRH(RequestsRH):
     def _create_instance(self, cookiejar, legacy_ssl_support=None):
         session = super()._create_instance(cookiejar, legacy_ssl_support)
+        session.trust_env = False
         adapter = PublicHTTPAdapter(ssl_context=self._make_sslcontext(legacy_ssl_support=legacy_ssl_support))
         session.adapters.clear()
         session.mount('https://', adapter)
@@ -29,6 +30,12 @@ class PublicRequestsRH(RequestsRH):
 
 
 class PublicYoutubeDL(YoutubeDL):
+    def __init__(self, params=None, *args, **kwargs):
+        super().__init__(params, *args, **kwargs)
+        if (params or {}).get('_findback_anonymous'):
+            from app.utils.no_cookies import NoCookies
+            self.cookiejar.set_policy(NoCookies())
+
     def build_request_director(self, handlers, preferences=None):
         # Keep a single guarded transport; curl/browser handlers cannot bypass it.
         return super().build_request_director([PublicRequestsRH], preferences)

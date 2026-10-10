@@ -6,6 +6,8 @@ import socket
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from http.cookiejar import CookieJar
+from app.utils.no_cookies import NoCookies
 
 
 def validate_url(value: str) -> str:
@@ -41,10 +43,11 @@ def public_addresses(url: str) -> list[str]:
     return sorted(addresses, key=lambda address: ':' in address)
 
 
-async def public_get(url: str, *, redirects: int = 5, max_bytes: int = 65536) -> tuple[str, httpx.Response]:
+async def public_get(url: str, *, redirects: int = 5, max_bytes: int = 65536, anonymous: bool = False) -> tuple[str, httpx.Response]:
     """Pin each connection to validated DNS, preserving Host and TLS SNI."""
     url = validate_url(url)
-    async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False,
+                           cookies=CookieJar(policy=NoCookies()) if anonymous else None) as client:
         for _ in range(redirects + 1):
             addresses = await asyncio.to_thread(public_addresses, url)
             target = httpx.URL(url)

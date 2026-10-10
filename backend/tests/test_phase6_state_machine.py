@@ -165,8 +165,10 @@ def test_ten_concurrent_saves_of_the_same_content(db, sessions, live_queue):
     with sessions() as s:
         jobs = s.execute(text(
             "SELECT status, attempt_count FROM processing_jobs")).mappings().all()
-    assert [j["status"] for j in jobs] == ["READY"]
-    assert jobs[0]["attempt_count"] == 1
+    assert len(jobs) == SAVES
+    assert all(j["status"] == "READY" and j["attempt_count"] == 1 for j in jobs)
+    with sessions() as s:
+        assert s.execute(text("SELECT count(*) FROM items WHERE status = 'ready'")).scalar() == SAVES
 
 
 def _process_all(db, sessions):
@@ -176,14 +178,23 @@ def _process_all(db, sessions):
     from app.schemas import Brief
     from app.services import embedder, extractor, fetcher, storage
 
+    from app.services import brief_v2
+    from app.schemas import BriefV2
+    from test_brief_v2 import payload
+    from unittest.mock import patch
+
+    async def _extract_v2(evidence):
+        return BriefV2(**payload())
+
     calls = []
     lock = threading.Lock()
 
-    async def _fetch(url, preview=""):
+    async def _fetch(url, preview="", **kwargs):
         with lock:
             calls.append(url)
-        return {"text": "chicken cream mushroom risotto", "title": "Risotto",
-                "source_type": "article"}
+        return {"text": "chicken cream mushroom risotto " * 3, "title": "Risotto",
+                "source_type": "article", "input_provenance": "transcript",
+                "transcript": [{"start": 0, "end": 60, "text": "chicken cream mushroom risotto " * 20}]}
 
     async def _extract(raw_text, url_title="", url=""):
         return Brief(title="Risotto", overview="A risotto", highlights=["one"],
@@ -214,8 +225,9 @@ def _process_all(db, sessions):
     # later test keeps using a session bound to a dropped database.
     db_module._sessionmaker = None
     try:
-        for item_id in item_ids:
-            app_tasks.process_item.apply(args=(str(item_id),), throw=True)
+        with patch.object(brief_v2, 'extract', _extract_v2):
+            for item_id in item_ids:
+                app_tasks.process_item.apply(args=(str(item_id),), throw=True)
     finally:
         db_module._engine = previous_engine
         db_module._sessionmaker = previous_factory

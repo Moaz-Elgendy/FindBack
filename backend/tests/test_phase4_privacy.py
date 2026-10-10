@@ -240,11 +240,11 @@ def test_global_dedupe_happens_only_for_public_content(db, sessions, alice_bob):
         _save(s, b, url=other_video)
         public_assets = s.execute(text(
             "SELECT count(*) FROM content_assets WHERE canonical_url = :c"),
-            {"c": "https://youtu.be/aaaaaaaaaaa"}).scalar()
+            {"c": "https://youtube.com/watch?v=aaaaaaaaaaa"}).scalar()
         memories = s.execute(text(
             "SELECT count(*) FROM user_memories m JOIN content_assets c "
             "ON c.id = m.content_id WHERE c.canonical_url = :c"),
-            {"c": "https://youtu.be/aaaaaaaaaaa"}).scalar()
+            {"c": "https://youtube.com/watch?v=aaaaaaaaaaa"}).scalar()
     assert public_assets == 1, "PUBLIC content must dedupe globally"
     assert memories == 2, "each user keeps a private memory of it"
 

@@ -96,7 +96,7 @@ def spies(monkeypatch):
     calls = {"fetch": 0, "understand": 0, "embed": 0}
     vector = [0.001] * 1536
 
-    async def fetch(url, preview=""):
+    async def fetch(url, preview="", **kwargs):
         calls["fetch"] += 1
         return {"text": "a shared body about kubernetes rollbacks and deploys. "
                         "Long enough to survive the length checks.",
@@ -155,9 +155,12 @@ def _save(session, user_id, url=SHARED_URL):
     from app.routers.ingest import ingest
     from app.schemas import IngestRequest
 
-    result = ingest(IngestRequest(url=url, title_hint="Shared thing",
-                                  preview="a preview"),
-                    session, _UserRow(user_id))
+    from unittest.mock import patch
+    # Keep these worker-boundary tests queued; route cache hits have separate tests.
+    with patch('app.routers.ingest.public_cache.lookup', return_value=None):
+        result = ingest(IngestRequest(url=url, title_hint="Shared thing",
+                                      preview="a preview"),
+                        session, _UserRow(user_id))
     session.commit()
     return result.id
 

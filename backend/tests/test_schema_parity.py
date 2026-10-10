@@ -177,6 +177,7 @@ def test_privacy_indexes_match_migration():
     assert {ix.name for ix in ContentAsset.__table__.indexes} == {
         "content_assets_public_dedupe_uq", "content_assets_owner_dedupe_uq",
         "content_assets_canonical_url_idx", "content_assets_processing_status_idx",
+        "content_assets_cache_url_uq", "content_assets_cache_expiry_idx",
     }
     public = index_ddl(ContentAsset)["content_assets_public_dedupe_uq"]
     owner = index_ddl(ContentAsset)["content_assets_owner_dedupe_uq"]

@@ -31,3 +31,30 @@ def succeed(item):
         item.edited_summary = None
     item.reprocess_snapshot = None
     item.reprocess_failure = None
+
+
+def detach(db, item):
+    import uuid
+    from app.models import ContentAsset, UserMemory, Item, VISIBILITY_UNKNOWN
+    from app.utils.canonical import canonical_url
+    previous = item.content_id
+    asset = ContentAsset(canonical_url=canonical_url(item.url),
+                         dedupe_key='regeneration:' + str(uuid.uuid4()),
+                         owner_user_id=item.user_id, visibility=VISIBILITY_UNKNOWN,
+                         title=item.title_clean or item.title, brief=item.summary)
+    db.add(asset)
+    db.flush()
+    memory = (db.query(UserMemory).filter(UserMemory.content_id == previous,
+              UserMemory.user_id == item.user_id).with_for_update().first()) if previous else None
+    others = db.query(Item).filter(Item.content_id == previous, Item.user_id == item.user_id,
+                                    Item.id != item.id).first() if previous else None
+    values = {field: getattr(memory, field) for field in
+              ('user_note', 'user_intent', 'first_saved_at', 'last_saved_at', 'save_count', 'created_at', 'updated_at')} if memory else {}
+    db.add(UserMemory(user_id=item.user_id, content_id=asset.id, **values))
+    db.flush()
+    item.content_id = asset.id
+    item.processing_metadata = dict(item.processing_metadata or {}, anonymous_source=False)
+    db.flush([item])
+    if memory is not None and others is None:
+        db.delete(memory)
+    return asset

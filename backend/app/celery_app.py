@@ -39,7 +39,9 @@ celery.conf.update(task_serializer="json", accept_content=["json"],
                    # Requires a `celery beat` process alongside the worker --
                    # the worker alone never runs a beat_schedule entry.
                    beat_schedule={
-                       'weekly-note': {
+                       'public-cache-cleanup': {'task': 'cleanup_public_cache',
+                                 'schedule': max(60, int(os.getenv('PUBLIC_CACHE_CLEANUP_SECONDS', '3600')))},
+        'weekly-note': {
                            'task': 'run_weekly_note',
                            'schedule': crontab(minute='*/15'),
                        },

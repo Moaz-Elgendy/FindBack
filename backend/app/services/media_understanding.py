@@ -103,7 +103,7 @@ def transcription_prompt(bundle: EvidenceBundle) -> str | None:
     return text.strip()[:800] or None
 
 
-def download_options(directory: Path | None = None, *, audio_only=False) -> dict:
+def download_options(directory: Path | None = None, *, audio_only=False, anonymous=False) -> dict:
     cap = max(1, env.get_int('MEDIA_MAX_FILESIZE_MB', 150)) * 1024 * 1024
     options = dict(noplaylist=True, quiet=True, noprogress=True, no_warnings=True, socket_timeout=20,
                    retries=1, fragment_retries=1, max_filesize=cap,
@@ -119,13 +119,14 @@ def download_options(directory: Path | None = None, *, audio_only=False) -> dict
                 raise ValueError('Media total filesize cap exceeded')
         options['progress_hooks'] = [limit]
     cookies = env.get('MEDIA_COOKIES_PATH')
-    if cookies: options['cookiefile'] = cookies
+    if cookies and not anonymous: options['cookiefile'] = cookies
+    if anonymous: options['_findback_anonymous'] = True
     return options
 
 
-def probe(url: str) -> dict:
+def probe(url: str, *, anonymous=False) -> dict:
     from app.services.safe_media import PublicYoutubeDL as YoutubeDL
-    options = download_options()
+    options = download_options(anonymous=anonymous)
     options.pop('format', None)
     with YoutubeDL(options) as downloader:
         result = downloader.extract_info(url, download=False)
@@ -134,13 +135,13 @@ def probe(url: str) -> dict:
     return result
 
 
-def download(url: str, info: dict, directory: Path) -> Path:
+def download(url: str, info: dict, directory: Path, *, anonymous=False) -> Path:
     from app.services.safe_media import PublicYoutubeDL as YoutubeDL
     duration = info.get('duration')
     if duration and duration > max(1, env.get_int('MEDIA_LONG_MAX_SECONDS', 7200)):
         raise ValueError('Long-video cap exceeded')
     audio_only = bool(duration and duration > max(1, env.get_int('MEDIA_MAX_DURATION_SECONDS', 1200)))
-    with YoutubeDL(download_options(directory, audio_only=audio_only)) as downloader:
+    with YoutubeDL(download_options(directory, audio_only=audio_only, anonymous=anonymous)) as downloader:
         downloader.process_ie_result(info, download=True)
     files = [p for p in directory.iterdir() if p.is_file() and p.suffix not in ('.part', '.ytdl', '.json')]
     if not files: raise ValueError('No media downloaded')
@@ -174,7 +175,7 @@ def failure(bundle: EvidenceBundle, stage: str, exc: Exception) -> None:
                 bundle.source_platform, bundle.source_id, stage, observability.describe_exc(exc))
 
 
-async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -> tuple[EvidenceBundle, dict]:
+async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None, anonymous=False) -> tuple[EvidenceBundle, dict]:
     began = time.monotonic()
     bundle = initial_bundle(url, fetched)
     metadata = {'stt_provider': 'captions' if bundle.transcript else None, 'stt_model': None,
@@ -195,7 +196,7 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
     with tempfile.TemporaryDirectory(prefix='findback-media-') as temp:
         directory = Path(temp)
         try:
-            info = await asyncio.to_thread(probe, url)
+            info = await asyncio.to_thread(probe, url, **({'anonymous': True} if anonymous else {}))
             bundle.source_id = str(info.get('id') or bundle.source_id)
             bundle.title = clean_source_text(info.get('title') or bundle.title, title=True)
             bundle.author = info.get('uploader') or info.get('creator') or bundle.author
@@ -214,7 +215,7 @@ async def acquire(url: str, fetched: dict, user_id=None, *, cache_lookup=None) -
             metadata.update(duration=bundle.duration, seconds_taken=time.monotonic() - began)
             return bundle, metadata
         try:
-            path = await asyncio.to_thread(download, url, info, directory)
+            path = await asyncio.to_thread(download, url, info, directory, **({'anonymous': True} if anonymous else {}))
             bundle.duration = info.get('duration') or bundle.duration
         except Exception as exc:
             failure(bundle, 'download', exc)

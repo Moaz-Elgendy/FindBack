@@ -62,12 +62,14 @@ def resume_index(last_stage: str | None) -> int:
     return 0
 
 
-async def stage_fetch(item, raw_preview: str = "") -> None:
+async def stage_fetch(item, raw_preview: str = "", *, anonymous=False) -> None:
     """Get the page text. Phase 7: bounded by the fetch concurrency budget."""
     with FETCH_LIMIT:
         try:
-            fetched = await fetcher.fetch_content(item.url, raw_preview or "")
+            fetched = await fetcher.fetch_content(item.url, raw_preview or "", **({'anonymous': True} if anonymous else {}))
         except Exception:
+            if anonymous:
+                raise
             if not fetcher.video_source(item.url or ""): raise
             fetched = {"text": raw_preview or getattr(item, "raw_preview", None) or "", "title": item.title or "",
                        "input_provenance": "caption" if raw_preview else "none",
@@ -75,8 +77,9 @@ async def stage_fetch(item, raw_preview: str = "") -> None:
     if "input_provenance" in fetched:
         if fetcher.video_source(fetched.get("resolved_url") or item.url or "") or fetched.get("source_type") == "video":
             bundle, media_meta = await media_understanding.acquire(
-                fetched.get("resolved_url") or item.url, fetched, getattr(item, "user_id", None),
-                cache_lookup=lambda platform, source_id, owner: media_understanding.cached_evidence(platform, source_id, owner, url=item.url))
+                fetched.get("resolved_url") or item.url, fetched, None if anonymous else getattr(item, "user_id", None),
+                anonymous=anonymous,
+                cache_lookup=None if anonymous else lambda platform, source_id, owner: media_understanding.cached_evidence(platform, source_id, owner, url=item.url))
         else:
             bundle = media_understanding.initial_bundle(item.url, fetched)
             media_meta = {}

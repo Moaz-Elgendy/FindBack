@@ -78,6 +78,9 @@ honors guest-session and upload `Retry-After` delays.
 | `SUPABASE_SERVICE_ROLE_KEY` | Backend-only authentication identity deletion |
 | `CAPACITY_LIMITS_ENABLED`, provider budgets | Shared Redis quotas; unavailable enforcement pauses work |
 | `MEDIA_*`, `STT_*`, `VISION_AI_*` | Video download, speech, OCR and optional frame understanding |
+| `PUBLIC_CACHE_TTL_DAYS` | Sliding lifetime of verified anonymous results (30 days); personal copies are retained |
+| `PUBLIC_CACHE_CLEANUP_SECONDS`, `PUBLIC_CACHE_CLEANUP_BATCH` | Hourly bounded cleanup of expired global payloads |
+| `SUMMARIZE_AGAIN_DAILY_LIMIT` | Per-memory UTC daily regeneration quota (3); previous brief survives failure |
 | `FCM_SERVICE_ACCOUNT_FILE`, `FCM_PROJECT_ID` | Optional server-side weekly push credentials/project |
 | `TARGET_DATABASE_URL`, `API_DOMAIN`, `BACKEND_IMAGE` | Production database, HTTPS domain and immutable image |
 

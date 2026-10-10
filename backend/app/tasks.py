@@ -3,11 +3,12 @@ from sqlalchemy import text
 from app.celery_app import celery
 from app.services.capacity import CapacityPause
 from app.database import SessionLocal
+from app import env
 from app.models import (
     JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_READY, JOB_TYPE_PROCESS, VISIBILITY_PUBLIC,
     Chunk, ContentAsset, Item, ProcessingJob,
 )
-from app.services import embedder, observability, retention, reprocessing
+from app.services import embedder, observability, retention, reprocessing, public_cache
 from app.services.outbox import (AttemptLost, JobHeartbeat, claim_job, complete_job,
                                  fence_attempt, record_failure)
 import datetime
@@ -94,6 +95,8 @@ def _copy_to_asset(db, item, mem, fetched, pipeline_version=None):
     asset = db.query(ContentAsset).filter(ContentAsset.id == item.content_id).first()
     if asset is None:
         return
+    if asset.visibility == VISIBILITY_PUBLIC and not (item.processing_metadata or {}).get('anonymous_source'):
+        return
     asset.processing_status = JOB_STATUS_READY
     asset.processing_error = None
     # H3: record which pipeline produced this asset, so a later save of the same
@@ -152,8 +155,7 @@ def _reuse_source(db, item, job):
                .filter(ContentAsset.id == item.content_id).first())
     if asset is None or asset.processing_status != JOB_STATUS_READY:
         return None
-    if not (asset.visibility == VISIBILITY_PUBLIC
-            or asset.owner_user_id == item.user_id):
+    if asset.owner_user_id != item.user_id:
         return None
     if asset.pipeline_version != job.job_type:
         return None
@@ -273,6 +275,7 @@ def process_item(self, item_id: str):
     db = SessionLocal()
     job = None
     heartbeat = None
+    cache_lock = None
     # Phase 18. `started` is taken before anything can fail, so the duration is
     # reported for failures too -- a pipeline that always dies at minute four is
     # the case worth seeing. The counters are NOT incremented here: success and
@@ -289,6 +292,11 @@ def process_item(self, item_id: str):
         if item.link_only:
             return {"id": str(item.id), "status": item.status, "skipped": "link only"}
 
+        was_reprocess = bool(item.reprocess_snapshot)
+        if not was_reprocess:
+            cache_lock = public_cache.serialized(db, item.url)
+            cache_lock.__enter__()
+
         # Phase 6 idempotency. Two guards, in this order:
         #   1. Already finished -> do nothing at all. Re-running a completed job
         #      must not re-fetch, re-extract, or re-embed anything.
@@ -301,12 +309,14 @@ def process_item(self, item_id: str):
                  .order_by(ProcessingJob.created_at.desc())
                  .first())
         if job is not None and job.status in (JOB_STATUS_READY, JOB_STATUS_FAILED):
-            # Terminal: re-running must be a no-op, not a second processing.
-            observability.log_event(
-                "job.skipped", content_id=item.content_id, job_id=job.id,
-                pipeline_version=job.job_type, status="already_finished")
-            return {"id": str(item.id), "status": item.status,
-                    "skipped": "job already finished"}
+            if item.status in ('pending', 'processing') and not item.link_only:
+                from app.services.outbox import record_job
+                job = record_job(db, item.content_id, JOB_TYPE_PROCESS)
+                db.commit()
+            else:
+                observability.log_event("job.skipped", content_id=item.content_id, job_id=job.id,
+                                        pipeline_version=job.job_type, status="already_finished")
+                return {"id": str(item.id), "status": item.status, "skipped": "job already finished"}
         if job is not None:
             if (item.needs_retry or job.last_error == "Provider capacity pause; retry scheduled") and job.available_at > datetime.datetime.now(datetime.timezone.utc):
                 return {"id": str(item.id), "status": item.status, "skipped": "improvement not due"}
@@ -343,6 +353,12 @@ def process_item(self, item_id: str):
         if not item.reprocess_snapshot and not (item.summary and item.needs_retry):
             item.status = "processing"
         db.commit()
+
+        if public_cache.prepare(db, item, job):
+            _copy_to_asset(db, item, None, None, pipeline_version=job.job_type)
+            db.commit()
+            complete_job(db, job.id, success=True, reused=True)
+            return {"id": str(item.id), "status": "ready", "cache_hit": True, "reused": True}
 
         # H3 step 1: content already processed at this pipeline version is
         # handed to the new save instead of being fetched, understood and
@@ -385,6 +401,9 @@ def process_item(self, item_id: str):
             if not brief_retry.schedule(db, item, job):
                 complete_job(db, job.id, success=True)
         else:
+            db.commit()
+        if not was_reprocess:
+            public_cache.publish(db, item)
             db.commit()
         # Phase 14: the raw fetched text has done its job once the stages are
         # done. The brief, chunks and vectors stay -- they are what makes the
@@ -470,4 +489,12 @@ def process_item(self, item_id: str):
     finally:
         if heartbeat is not None:
             heartbeat.stop()
+        if cache_lock is not None:
+            cache_lock.__exit__(None, None, None)
         db.close()
+
+
+@celery.task(name='cleanup_public_cache')
+def cleanup_public_cache():
+    with SessionLocal() as db:
+        return {'cleared': public_cache.cleanup(db, limit=max(1, env.get_int('PUBLIC_CACHE_CLEANUP_BATCH', 200)))}
