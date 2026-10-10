@@ -1,11 +1,9 @@
 # Phase 6 verification
 
-Automated verification for `285d023` passed [CI38042960896](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38042960896).
-The user subsequently approved merging and deploying that tested branch. `master`
-now contains it; deployment run [38048448001](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38048448001) passed after the OIDC trust repair below.
-Phase 5 commit `8c9930d` passed CI38039569558 (1131 backend / 463 Flutter tests,
-one existing skip each). Phase 6 CI passed with 1137 backend / 468 Flutter tests,
-one existing skip each. The device-label follow-up below requires a new CI gate.
+Release `4b80e3f` passed [production CI/deployment](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38049775779):
+1137 backend and 470 Flutter tests passed, with one existing skip each.
+The user approved merge and deployment; production schema is `0027_memory_sharing`.
+The follow-up below records live checks without changing application behavior.
 
 ## Visual comparison
 
@@ -93,8 +91,9 @@ certificate digest is `f45e5d563ce68d79157f035b8834e8aae18a59230c975966ccad97981
 Use colon-separated bytes for `ANDROID_APP_LINK_FINGERPRINTS`; replace this with
 actual release fingerprints before shipping. No Play Store listing or release
 signing identity was fabricated. Optional iOS association remains dependent on
-an Apple signing team. Live email/auth, notification delivery and verified
-production App Links are untested in this phase.
+an Apple signing team. Production App Links are verified for the installed debug certificate. Real
+password sign-in with preconfirmed disposable accounts passed; email delivery,
+notification delivery and release-signing association remain unverified.
 
 ## Rulings retained from the plan
 
@@ -125,11 +124,33 @@ preserving existing fingerprints and a protected copy of the previous environmen
 Before deployment, `/health` returned 200 and `/ready` returned 404.
 The old backend also summarized a missing Wikipedia page; do not treat that probe
 as a successful public-article extraction. Release `/ready` now reports API, DB/schema, Redis, worker, dispatcher and beat
-healthy; `assetlinks.json` serves the installed certificate. Registered sharing
-and deletion smoke checks are blocked by missing server-only
-`SUPABASE_SERVICE_ROLE_KEY`; secure configuration was requested. No disposable
-accounts were created. Device domain verification was requested, but the
-emulator disconnected before its verification status could be read.
+healthy; `assetlinks.json` serves the installed certificate. Registered sharing and deletion checks now pass with the validated server-only
+service-role key. The user accidentally created `/root/.env`; it was deleted at
+their request. `/opt/findback/.env` remained complete. Its new key validated with
+Supabase HTTP 200 before API/worker/dispatcher/beat were reloaded. Public `/ready`
+reports every component healthy.
+
+Live disposable-account checks passed: password sign-in, 30-day TTL, private
+fallback, neutral/named attribution without sender email, idempotent redemption,
+active-link listing, revocation, independent recipient copies, real provider
+account deletion and recipient survival. They used a clearly marked ready fixture;
+this does not establish successful AI ingestion. All disposable identities were
+cleaned up, and the separate disposable guest probe was removed.
+
+Live AI ingestion timed out: Gemini's configured daily request limit is 20 and
+all 20 requests were used. The user chose to keep this limit. Rechecking found
+about 8 hours 24 minutes remaining; do not increase limits or clear counters to
+complete verification. Fresh device/backend AI processing remains pending.
+
+Additional emulator checks passed: guest export opens Android's share sheet,
+produces valid version-1 JSON with six saves, and includes no access-token,
+refresh-token or service-role-key fields. No export was sent to anyone. Denying
+notification permission displays an explicit warning and opens Android Settings.
+Enabling notifications there, scheduling a reminder and removing it worked;
+the pending alarm cleared and the UI returned to “Remind me”. Actual notification
+delivery and lock-screen presentation remain unverified. Android reports
+`findback.duckdns.org: verified`; cold/warm redemption across live sign-in still
+needs an isolated device account that cannot migrate or delete real guest saves.
 
 ## Deployment OIDC repair
 
@@ -143,5 +164,5 @@ of CI. The retry deployed `285d023` successfully.
 
 The first offline-label CI run also identified two existing tests still expecting
 the misleading label. Both now assert the correct local boundary. The full local
-Flutter suite passed 470 tests; the corrected follow-up needs its fresh CI gate.
+Flutter suite passed 470 tests; the corrected follow-up passed the production CI gate linked above.
 The rebuilt APK displayed “Saved on this phone” during the strict network block.
