@@ -67,6 +67,7 @@ class ApiClient {
 
   final Dio _dio;
   late final TokenStore _tokens;
+  final _feedCache = <(String, String?), ({String etag, Map<String, dynamic> body})>{};
 
   void close() => _dio.close(force: true);
 
@@ -111,7 +112,29 @@ class ApiClient {
     final savedAfter = intelligence.remove('saved_after');
     if (savedAfter != null) params['saved_after'] = savedAfter;
     if (intelligence.isNotEmpty) params['intelligence'] = jsonEncode(intelligence);
-    final data = await _get('/api/v1/items', params);
+    final data = await _send(() async {
+      final uri = AppConfig.apiUri('/api/v1/items', params);
+      final headers = await _headers(false);
+      final key = (uri.toString(), headers['Authorization']);
+      final cached = _feedCache[key];
+      if (cached != null) headers['If-None-Match'] = cached.etag;
+      final response = await _dio.getUri<dynamic>(uri, options: Options(headers: headers));
+      if (response.statusCode == 304) {
+        if (cached == null) {
+          throw ApiException('The library refresh could not be read. Try again.',
+              kind: ApiFailureKind.malformed);
+        }
+        response.data = cached.body;
+      } else if (response.statusCode == 200 && response.data is Map) {
+        final etag = response.headers.value('etag');
+        if (etag == null) {
+          _feedCache.remove(key);
+        } else {
+          _feedCache[key] = (etag: etag, body: Map<String, dynamic>.from(response.data as Map));
+        }
+      }
+      return response;
+    });
     return ItemPage.fromJson(data);
   }
 

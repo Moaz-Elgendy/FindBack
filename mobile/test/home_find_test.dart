@@ -138,6 +138,9 @@ void main() {
     expect(find.text('My edited title'), findsOneWidget);
     await tester.tap(find.byTooltip('Memory actions')); await settle(tester);
     await tester.tap(find.text('Delete')); await settle(tester);
+    expect(find.text('Delete memory?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await settle(tester);
     expect(find.text('My edited title'), findsNothing);
     expect(find.text('Memory deleted'), findsOneWidget);
     await tester.tap(find.text('Undo')); await settle(tester);

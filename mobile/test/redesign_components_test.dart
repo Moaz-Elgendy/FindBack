@@ -86,7 +86,7 @@ void main() {
             isGeneratingBrief: true),
         onTap: () {})));
     expect(
-        find.text('Saved on this phone. Will be read when you’re back online.'),
+        find.text('Saved on this phone · waiting to upload'),
         findsOneWidget);
     var summarized = false;
     await tester.pumpWidget(app(ResultCard(

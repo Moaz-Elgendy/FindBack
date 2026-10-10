@@ -1,3 +1,4 @@
+import '../../widgets/feedback.dart';
 import 'dart:async';
 // Material 3 exports its own `SearchController` (for `SearchAnchor`), which
 // collides with this app's controller; hide the framework one.
@@ -16,7 +17,6 @@ import 'detail_page.dart';
 import 'search_controller.dart';
 import 'widgets/result_card.dart';
 import 'widgets/status_slots.dart';
-import 'widgets/refresh_hint.dart';
 import '../../services/auth_service.dart';
 import '../account/account_page.dart';
 
@@ -57,7 +57,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loadingMore = false;
   bool _wasSearching = false;
   Timer? _processingRefresh;
-  bool _atTop = true;
   String? _moreError;
 
   @override
@@ -379,9 +378,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _delete(SearchResult result) async {
     if (!_busyActions.add(result.id)) return;
-    setState(() => _deletedIds.add(result.id));
-    ++_recentRequestId;
     try {
+      if (!await confirmMemoryDeletion(context, widget.services.db) || !mounted) return;
+      setState(() => _deletedIds.add(result.id));
+      ++_recentRequestId;
       final deletion = await widget.services.actions.delete(result.id);
       if (!mounted) return;
       DeleteToast.show(context, localOnly: deletion.localOnly, undo: () async {
@@ -541,14 +541,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (_search.offline)
         Padding(
                   padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 16, 8), child: Text('Offline — searching this device only', style: theme.textTheme.bodySmall)),
-      _refreshCue(theme),
           ],
         );
 
-  Widget _buildResults(ThemeData theme) => NotificationListener<ScrollNotification>(
-      onNotification: _trackTop, child: RefreshIndicator(
-      onRefresh: _retryQueued,
-      child: ListView.builder(
+  Widget _buildResults(ThemeData theme) => ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 24, top: 4),
         itemCount: _search.results.isEmpty ? 2 : _search.results.length + 1,
@@ -566,9 +562,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
           return _memoryCard(_search.results[index - 1], matched: true);
         },
-      ),
-    ),
-  );
+    );
 
   Widget _buildRecent(ThemeData theme) {
     if (_loadingRecent && _recent.isEmpty) {
@@ -608,10 +602,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return saved != 0 ? saved : order[a.id]!.compareTo(order[b.id]!);
       });
     }
-    return NotificationListener<ScrollNotification>(
-      onNotification: _trackTop, child: RefreshIndicator(
-      onRefresh: _retryQueued,
-      child: ListView.builder(
+    return ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 24, top: 4),
         itemCount: feed.length + 1 + (_nextCursor == null ? 0 : 1),
@@ -633,19 +624,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           final SearchResult item = feed[index - 1];
           return _memoryCard(item);
         },
-      ),
-    ));
+    );
   }
 
   Widget _refreshableEmpty(Widget child) => LayoutBuilder(
-    builder: (context, bounds) => NotificationListener<ScrollNotification>(
-      onNotification: _trackTop, child: RefreshIndicator(
-      onRefresh: _retryQueued,
-      child: ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
+    builder: (context, bounds) => ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
         _feedHeader(Theme.of(context)),
         ConstrainedBox(constraints: BoxConstraints(minHeight: (bounds.maxHeight - (widget.findMode ? 350 : 100)).clamp(0, double.infinity)), child: child),
       ]),
-    )),
   );
 
   Future<void> _openAccount() async {
@@ -655,15 +641,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (widget.auth == null) await auth.dispose();
   }
 
-  bool _trackTop(ScrollNotification notification) {
-    if (notification.depth == 0 && notification.metrics.axis == Axis.vertical) {
-      final atTop = notification.metrics.pixels <= notification.metrics.minScrollExtent + .5;
-      if (mounted && atTop != _atTop) setState(() => _atTop = atTop);
-    }
-    return false;
-  }
-
-  Widget _refreshCue(ThemeData theme) => RefreshHint(atTop: _atTop, onRefresh: _retryQueued);
 
 }
 

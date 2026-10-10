@@ -16,7 +16,7 @@ class LocalDb {
   LocalDb(this.db);
 
   static const String fileName = 'findback.db';
-  static const int schemaVersion = 7;
+  static const int schemaVersion = 8;
   static const int queueBatchSize = 20;
 
   /// Bounces allowed before a queued capture is parked as `failed`.
@@ -85,6 +85,7 @@ class LocalDb {
               database.rawQuery('PRAGMA journal_mode = WAL'),
           onCreate: (Database database, int version) async => _onCreate(database),
           onUpgrade: (Database database, int oldVersion, int newVersion) async {
+            if (oldVersion < 8) await _createPreferences(database);
             if (oldVersion < 6) await _createReminders(database);
             if (oldVersion < 5) await _createCollections(database);
             if (oldVersion < 2) await database.execute("ALTER TABLE items ADD COLUMN brief_payload TEXT DEFAULT '{}'");
@@ -165,7 +166,23 @@ class LocalDb {
       suspended INTEGER NOT NULL DEFAULT 0, scheduled INTEGER NOT NULL DEFAULT 0)
   """);
 
+  static Future<void> _createPreferences(Database db) => db.execute(
+      'CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+
+  Future<bool> get deleteConfirmationSuppressed async {
+    final rows = await db.query('preferences',
+        where: 'key = ?', whereArgs: ['skip_delete_confirmation']);
+    return rows.isNotEmpty && rows.single['value'] == '1';
+  }
+
+  Future<void> setDeleteConfirmationSuppressed(bool suppressed) async {
+    await db.insert('preferences',
+        {'key': 'skip_delete_confirmation', 'value': suppressed ? '1' : '0'},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   static Future<void> _onCreate(Database db) async {
+    await _createPreferences(db);
     await _createReminders(db);
     await _createCollections(db);
     await db.execute('''

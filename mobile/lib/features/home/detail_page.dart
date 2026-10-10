@@ -1,3 +1,4 @@
+import '../../widgets/feedback.dart';
 import 'widgets/saved_date.dart';
 import 'widgets/memory_chip.dart';
 import 'widgets/delete_toast.dart';
@@ -123,7 +124,7 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   void _showSnack(String message) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      showFindBackToast(context, message);
 
   Future<void> _action(String action) async {
     final item = _item;
@@ -152,6 +153,7 @@ class _DetailPageState extends State<DetailPage> {
         widget.onChanged?.call();
         await _load(refresh: true);
       } else if (action == 'Delete') {
+        if (!await confirmMemoryDeletion(context, services.db) || !mounted) return;
         final deletion = await services.actions.delete(item.id);
         widget.onChanged?.call();
         if (!mounted) return;
@@ -181,10 +183,10 @@ class _DetailPageState extends State<DetailPage> {
     final item = _item;
     return Scaffold(
       appBar: AppBar(leading: BackButton(onPressed: () => Navigator.maybePop(context)),
-        actions: [if (item != null && _services != null) PopupMenuButton<String>(tooltip: 'Memory actions',
-          enabled: !_actionBusy, onSelected: _action,
-          itemBuilder: (_) => [for (final action in ['Edit', 'Summarize again', 'Delete'])
-            PopupMenuItem(value: action, child: Text(action))])]),
+        actions: [if (item != null && _services != null) FindBackActionMenu(actions: [
+    for (final action in ['Edit', 'Summarize again', 'Delete'])
+      FindBackAction(label: action, destructive: action == 'Delete', onPressed: () => _action(action)),
+  ])]),
       bottomNavigationBar: item == null || _error != null ? null : SafeArea(top: false,
         child: Padding(padding: const EdgeInsetsDirectional.fromSTEB(20, 10, 20, 12),
           child: Wrap(spacing: 12, runSpacing: 8, alignment: WrapAlignment.center, children: [

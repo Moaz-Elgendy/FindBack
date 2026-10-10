@@ -5,6 +5,7 @@ import 'package:flutter/semantics.dart';
 
 import '../../../models/search_result.dart';
 import '../../../theme.dart';
+import '../../../widgets/feedback.dart';
 import 'memory_chip.dart';
 import 'saved_date.dart';
 import 'processing_border.dart';
@@ -137,7 +138,7 @@ class _ResultCardState extends State<ResultCard> {
                                       if (result.isGeneratingBrief) ...[
                                         Text(
                                             result.isLocalOnly
-                                                ? 'Saved on this phone. Will be read when you’re back online.'
+                                                ? 'Saved on this phone · waiting to upload'
                                                 : 'Just saved · reading it now',
                                             style: theme.textTheme.bodySmall
                                                 ?.copyWith(
@@ -192,62 +193,13 @@ class _ResultCardState extends State<ResultCard> {
                                                                 .createdAt!,
                                                             relative: true))),
                                               if (_hasMenu)
-                                                MenuAnchor(
-                                                    controller: _menu,
-                                                    menuChildren: [
-                                                      if (widget.onEdit != null)
-                                                        MenuItemButton(
-                                                            onPressed:
-                                                                widget.onEdit,
-                                                            leadingIcon:
-                                                                const Icon(Icons
-                                                                    .edit_outlined),
-                                                            child: const Text(
-                                                                'Edit')),
-                                                      if (widget.onSummarize !=
-                                                          null)
-                                                        MenuItemButton(
-                                                            onPressed: widget
-                                                                .onSummarize,
-                                                            leadingIcon:
-                                                                const Icon(Icons
-                                                                    .refresh),
-                                                            child: const Text(
-                                                                'Summarize again')),
-                                                      if (widget.onDelete !=
-                                                          null)
-                                                        MenuItemButton(
-                                                            onPressed:
-                                                                widget.onDelete,
-                                                            leadingIcon: Icon(
-                                                                Icons
-                                                                    .delete_outline,
-                                                                color: theme
-                                                                    .colorScheme
-                                                                    .error),
-                                                            child: Text(
-                                                                'Delete',
-                                                                style: TextStyle(
-                                                                    color: theme
-                                                                        .colorScheme
-                                                                        .error))),
-                                                    ],
-                                                    builder: (context,
-                                                            controller,
-                                                            child) =>
-                                                        IconButton(
-                                                            tooltip:
-                                                                'Memory actions',
-                                                            icon: const Icon(
-                                                                Icons
-                                                                    .more_horiz),
-                                                            onPressed: () =>
-                                                                controller
-                                                                        .isOpen
-                                                                    ? controller
-                                                                        .close()
-                                                                    : controller
-                                                                        .open())),
+                                                FindBackActionMenu(
+    controller: _menu,
+    actions: [
+      if (widget.onEdit != null) FindBackAction(label: 'Edit', icon: Icons.edit_outlined, onPressed: widget.onEdit!),
+      if (widget.onSummarize != null) FindBackAction(label: 'Summarize again', icon: Icons.refresh, onPressed: widget.onSummarize!),
+      if (widget.onDelete != null) FindBackAction(label: 'Delete', icon: Icons.delete_outline, destructive: true, onPressed: widget.onDelete!),
+    ]),
                                             ]),
                                         const SizedBox(height: 8),
                                         Text(

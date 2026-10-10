@@ -1,3 +1,4 @@
+import '../../widgets/feedback.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -126,7 +127,7 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  void _toast(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  void _toast(String message) => showFindBackToast(context, message);
 
   void _checkAccount(int generation, String? id) {
     if (!mounted || generation != _loadGeneration || widget.auth.currentSession?.id != id) {
@@ -410,7 +411,20 @@ class _AccountPageState extends State<AccountPage> {
                       ]),
                     ]),
                   ],
-                  _heading('Your data'),
+                  if (_services != null) ...[
+              _heading('Confirmations'),
+              _group([
+                ListTile(contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.restart_alt),
+                  title: const Text('Show delete confirmations'),
+                  subtitle: const Text('Reset “Don’t show this again” for saved memories.'),
+                  onTap: _busy ? null : () => _run(() async {
+                    await _services!.db.setDeleteConfirmationSuppressed(false);
+                    if (mounted) _toast('Delete confirmations reset');
+                  }, failureMessage: 'Could not reset confirmations. Try again.')),
+              ]),
+            ],
+            _heading('Your data'),
                   _group([
                     ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.download_outlined),
                       title: const Text('Export my saves'), trailing: const Icon(Icons.chevron_right),

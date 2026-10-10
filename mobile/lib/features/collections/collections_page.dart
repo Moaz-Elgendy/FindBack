@@ -6,6 +6,7 @@ import '../../models/memory_collection.dart';
 import '../../models/search_result.dart';
 import '../../services/auth_service.dart';
 import '../../services/collections_service.dart';
+import '../../widgets/feedback.dart';
 import '../account/account_page.dart';
 import '../home/detail_page.dart';
 import '../home/widgets/result_card.dart';
@@ -18,17 +19,27 @@ class CollectionsPage extends StatefulWidget {
   State<CollectionsPage> createState() => _CollectionsPageState();
 }
 
-class _CollectionsPageState extends State<CollectionsPage> {
+class _CollectionsPageState extends State<CollectionsPage> with WidgetsBindingObserver {
   List<MemoryCollection> _collections = [];
   List<ItemDetail> _memories = [];
   String? _error;
   bool _loading = true;
+  bool _syncing = false;
   CollectionsService get service => widget.services.collections;
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); _load(); }
 
+  @override void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
   Future<void> _load() async {
+    if (_syncing) return;
+    _syncing = true;
     try {
       await _readLocal();
       String? cursor;
@@ -41,6 +52,8 @@ class _CollectionsPageState extends State<CollectionsPage> {
       await _readLocal();
     } catch (_) {
       if (mounted) setState(() { _loading = false; _error = 'Could not sync collections. Your saved collections are still here.'; });
+    } finally {
+      _syncing = false;
     }
   }
 
@@ -78,7 +91,7 @@ class _CollectionsPageState extends State<CollectionsPage> {
       ]),
       floatingActionButton: FloatingActionButton.extended(onPressed: () => _edit(),
         icon: const Icon(Icons.add), label: const Text('New collection')),
-      body: RefreshIndicator(onRefresh: _load, child: CustomScrollView(
+      body: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(), slivers: [
           SliverPadding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 20), sliver: SliverToBoxAdapter(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -107,7 +120,7 @@ class _CollectionsPageState extends State<CollectionsPage> {
           ],
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
-      )),
+      ),
     );
   }
 
@@ -255,10 +268,10 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
   Widget build(BuildContext context) {
     final members = _memories.where((m) => _collection.urls.contains(m.canonicalUrl)).toList();
     return Scaffold(appBar: AppBar(title: Text(_collection.name), actions: [
-      PopupMenuButton<String>(tooltip: 'Collection options', onSelected: _edit, itemBuilder: (_) => const [
-        PopupMenuItem(value: 'edit', child: Text('Edit memories')),
-        PopupMenuItem(value: 'rename', child: Text('Rename')),
-        PopupMenuItem(value: 'delete', child: Text('Delete collection')),
+      FindBackActionMenu(tooltip: 'Collection options', actions: [
+        FindBackAction(label: 'Edit memories', onPressed: () => _edit('edit')),
+        FindBackAction(label: 'Rename', onPressed: () => _edit('rename')),
+        FindBackAction(label: 'Delete collection', destructive: true, onPressed: () => _edit('delete')),
       ]),
     ]), body: members.isEmpty ? const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('Add memories using Collection options.')))
       : ListView.builder(itemCount: members.length, itemBuilder: (context, index) {

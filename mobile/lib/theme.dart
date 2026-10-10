@@ -39,8 +39,8 @@ class FindBackTheme {
     FindBackColor.muted: Color(0xFF4A6664),
     FindBackColor.line: Color(0xFFD3E6E3),
     FindBackColor.controlLine: Color(0xFF6F918C),
-    FindBackColor.recipeBackground: Color(0xFFFBE4EA),
-    FindBackColor.recipeInk: Color(0xFF8A1F3D),
+    FindBackColor.recipeBackground: Color(0xFFFFF0D2),
+    FindBackColor.recipeInk: Color(0xFF8A5200),
     FindBackColor.brand: Color(0xFF0F766E),
     FindBackColor.soft: Color(0xFFD5F0EC),
     FindBackColor.danger: Color(0xFFB42318),
@@ -58,29 +58,29 @@ class FindBackTheme {
     FindBackColor.stack3: Color(0xFF8FD0C7),
   };
   static const dark = <FindBackColor, Color>{
-    FindBackColor.background: Color(0xFF0A1715),
-    FindBackColor.card: Color(0xFF112220),
-    FindBackColor.ink: Color(0xFFE4F1EF),
-    FindBackColor.muted: Color(0xFF9CB8B4),
-    FindBackColor.line: Color(0xFF223C39),
+    FindBackColor.background: Color(0xFF0C1017),
+    FindBackColor.card: Color(0xFF141A23),
+    FindBackColor.ink: Color(0xFFE8EDF4),
+    FindBackColor.muted: Color(0xFF97A3B6),
+    FindBackColor.line: Color(0xFF232C3A),
     FindBackColor.controlLine: Color(0xFF4F7A74),
-    FindBackColor.recipeBackground: Color(0xFF3A1A24),
-    FindBackColor.recipeInk: Color(0xFFF5A3B8),
-    FindBackColor.brand: Color(0xFF35BFB1),
-    FindBackColor.soft: Color(0xFF14403B),
+    FindBackColor.recipeBackground: Color(0xFF3A2B0E),
+    FindBackColor.recipeInk: Color(0xFFF5C768),
+    FindBackColor.brand: Color(0xFF47C4B4),
+    FindBackColor.soft: Color(0xFF15313A),
     FindBackColor.danger: Color(0xFFFF8A7D),
     FindBackColor.accent: Color(0xFFE8A317),
     FindBackColor.accentSoft: Color(0xFF3A2B0E),
-    FindBackColor.accentInk: Color(0xFFF6C768),
+    FindBackColor.accentInk: Color(0xFFF5C768),
     FindBackColor.onBrand: Color(0xFF04201D),
-    FindBackColor.toast: Color(0xFF2A4744),
+    FindBackColor.toast: Color(0xFF263041),
     FindBackColor.readingBackground: Color(0xFF1A1710),
     FindBackColor.failedBackground: Color(0xFF1F1413),
     FindBackColor.failedBorder: Color(0xFF4A2622),
     FindBackColor.productBackground: Color(0xFF1E2D47),
     FindBackColor.productInk: Color(0xFFAFC7F2),
-    FindBackColor.stack2: Color(0xFF1F5F58),
-    FindBackColor.stack3: Color(0xFF2A8279),
+    FindBackColor.stack2: Color(0xFF1E5560),
+    FindBackColor.stack3: Color(0xFF2B7B80),
   };
 
   static ThemeData build(Brightness brightness) {
@@ -175,6 +175,12 @@ class FindBackTheme {
           side: BorderSide(color: color(FindBackColor.controlLine)),
           labelStyle: base.textTheme.labelLarge!
               .copyWith(color: color(FindBackColor.ink))),
+      dialogTheme: DialogThemeData(
+          backgroundColor: color(FindBackColor.card),
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+              side: BorderSide(color: color(FindBackColor.line)))),
       bottomSheetTheme: BottomSheetThemeData(
           backgroundColor: color(FindBackColor.card),
           surfaceTintColor: Colors.transparent,
@@ -183,8 +189,8 @@ class FindBackTheme {
       snackBarTheme: SnackBarThemeData(
           backgroundColor: color(FindBackColor.toast),
           contentTextStyle: base.textTheme.bodyMedium!
-              .copyWith(color: const Color(0xFFE4F1EF)),
-          actionTextColor: const Color(0xFFE4F1EF)),
+              .copyWith(color: const Color(0xFFE8EDF4)),
+          actionTextColor: const Color(0xFFE8EDF4)),
     );
   }
 }

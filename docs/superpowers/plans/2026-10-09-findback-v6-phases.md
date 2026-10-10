@@ -46,7 +46,7 @@ backend health/ingest/outbox/tasks, Compose/deployment startup, and covering tes
 
 ## Later phases (refine exact interfaces before starting each phase)
 
-- [ ] Phase 2: URL normalization, anonymous-public classification, global sliding
+- [x] Phase 2: URL normalization, anonymous-public classification, global sliding
   TTL/cache cleanup, concurrent processing, manual-regeneration isolation/limits,
   conditional feed requests, migrations and backend regression tests.
 - [ ] Phase 3: exact palette tokens, shared anchored actions/dialogs/toasts,
@@ -96,3 +96,17 @@ GitHub run https://github.com/Moaz-Elgendy/FindBack/actions/runs/37991664998 pas
 7. Prove privacy, concurrent processing once, TTL/cleanup, original-save deletion, failure retry, manual isolation/limits, conditional feeds and reversible migration. Run all suites, Compose/Docker checks and GitHub CI before Phase 3.
 
 Ruling: classify in the worker, not by blocking ingestion on an anonymous network probe — preserves the existing fast-save contract and durable queue while allowing common public links to deduplicate processing.
+
+### Phase 2 checkpoint
+
+- Commit `7f50866`; CI https://github.com/Moaz-Elgendy/FindBack/actions/runs/38020161640 passed: 1117 backend tests, 441 Flutter tests, one existing skip each; analyze clean.
+- Pool starvation reproduced with a one-slot engine and fixed by binding processing to the lock connection. Lock retention/release and the 100-job burst passed.
+- Domain observations and settings: `docs/phase2-verification.md`. Feature branch only; production deployment and live model output during probes untested.
+- Phase 3 started after the green gate: palette regressions observed red against supplied HTML.
+
+### Phase 3 implementation
+
+- Exact v6 light/dark tokens, shared anchored menu/dialog/toast, persisted deletion opt-out and Account reset, silent Library/Collections refresh, account/query-scoped conditional feed, SQLite 8 migration, and queued upload status copy implemented.
+- Palette, preferences, validators and confirmation integration covered with regressions. Existing upgrade fixtures now expect the current schema; existing copy/theme assertions reflect the approved reference.
+- Local full Flutter suite: 447 passed, one existing skip. Fresh reviewer found no important regressions. Device checks remain for Phase 6.
+- CI gate pending; do not start Phase 4 until green.

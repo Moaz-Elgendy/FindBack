@@ -111,7 +111,10 @@ void main() {
     await tester.tap(find.text('Open memory')); await settle(tester);
     await tester.tap(find.byTooltip('Memory actions')); await settle(tester);
     await tester.tap(find.text('Delete')); await settle(tester);
-    expect(find.text('Delete memory?'),findsNothing);
+    expect(find.text('Delete memory?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await settle(tester);
+    expect(find.text('Delete memory?'), findsNothing);
     expect(find.text('Memory deleted'),findsOneWidget);
     expect(await tester.runAsync(()=>services.db.localItem(item.id)),isNull);
     expect((services.reminders!.notifications as FakeNotifications).scheduled,isEmpty);

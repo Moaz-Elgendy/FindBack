@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import '../../../data/api_client.dart';
+import '../../../widgets/feedback.dart';
 
 class DeleteToast {
   static void show(BuildContext context,
@@ -19,11 +20,9 @@ class DeleteToast {
     final messenger = ScaffoldMessenger.of(context);
     var available = true;
     messenger.hideCurrentSnackBar();
-    final toast = messenger.showSnackBar(SnackBar(
-      behavior: SnackBarBehavior.floating,
+    final toast = showFindBackToast(context,
+      localOnly ? 'Deleted on this phone only' : 'Memory deleted',
       duration: lifetime,
-      content:
-          Text(localOnly ? 'Deleted on this phone only' : 'Memory deleted'),
       action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
@@ -40,7 +39,7 @@ class DeleteToast {
               }
             }
           }),
-    ));
+    );
     // SnackBar actions normally never expire with accessible navigation enabled.
     final timer = Timer(lifetime, () {
       if (!available) return;

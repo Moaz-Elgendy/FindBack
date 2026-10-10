@@ -104,8 +104,8 @@ void main() {
       final theme = FindBackTheme.build(brightness);
       final dark = brightness == Brightness.dark;
       expect(
-          theme.scaffoldBackgroundColor, Color(dark ? 0xFF0A1715 : 0xFFEDF7F5));
-      expect(theme.colorScheme.primary, Color(dark ? 0xFF35BFB1 : 0xFF0F766E));
+          theme.scaffoldBackgroundColor, Color(dark ? 0xFF0C1017 : 0xFFEDF7F5));
+      expect(theme.colorScheme.primary, Color(dark ? 0xFF47C4B4 : 0xFF0F766E));
       expect(
           theme.colorScheme.onPrimary, Color(dark ? 0xFF04201D : 0xFFFFFFFF));
       expect(theme.colorScheme.error, Color(dark ? 0xFFFF8A7D : 0xFFB42318));

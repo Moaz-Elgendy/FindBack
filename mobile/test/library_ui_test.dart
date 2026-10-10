@@ -82,7 +82,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byTooltip('Refresh'), findsNothing);
     expect(find.text('Reading 1'), findsOneWidget);
-    expect(find.text('Pull down to refresh'), findsOneWidget);
+    expect(find.text('Pull down to refresh'), findsNothing);
     final list = tester.widget<ListView>(find.byType(ListView).last);
     expect(list.physics, isA<AlwaysScrollableScrollPhysics>());
     finalized = true;
@@ -129,14 +129,14 @@ void main() {
     }
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Reading 1'), findsOneWidget);
-    expect(find.text('Saved on this phone. Will be read when you’re back online.'), findsOneWidget);
+    expect(find.text('Saved on this phone · waiting to upload'), findsOneWidget);
     expect(find.text('Save your first link'), findsNothing);
     expect(find.text('Nothing matches yet'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await drive(tester, services.dispose());
   });
 
-  testWidgets('empty library still supports pull-to-refresh', (tester) async {
+  testWidgets('empty library refreshes silently when the app returns', (tester) async {
     var requests = 0;
     final services = await setup(tester, recent: (limit, {category, cursor, filters}) async {
       requests++;
@@ -145,18 +145,16 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: HomeScreen(services: services)));
     await tester.pumpAndSettle();
     expect(find.text('Save your first link'), findsOneWidget);
-    expect(find.text('Pull down to refresh'), findsOneWidget);
+    expect(find.text('Pull down to refresh'), findsNothing);
     final before = requests;
-    final refreshing = tester.widget<RefreshIndicator>(
-        find.byType(RefreshIndicator)).onRefresh();
-    var refreshed = false;
-    refreshing.then((_) => refreshed = true);
-    for (var i = 0; i < 100 && !refreshed; i++) {
-      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
-      await tester.pump();
-    }
-    expect(refreshed, isTrue);
-    await refreshing;
+    expect(find.byType(RefreshIndicator), findsNothing);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.runAsync(() async {
+      for (var i = 0; i < 20 && requests <= before; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    });
     await tester.pumpAndSettle();
     expect(requests, greaterThan(before));
     await tester.pumpWidget(const SizedBox());
@@ -185,8 +183,9 @@ void main() {
     Navigator.of(tester.element(find.text('More filters').last)).pop();
     await tester.pumpAndSettle();
     records.removeWhere((item) => item.id == 'food');
-    final refreshed = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh();
-    await drive(tester, refreshed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(FilterChip, 'about Food'), findsNothing);
     await tester.pumpWidget(const SizedBox());
