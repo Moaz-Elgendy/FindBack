@@ -86,7 +86,7 @@ void main() {
             isGeneratingBrief: true),
         onTap: () {})));
     expect(
-        find.text('Just saved · reading it now'),
+        find.text('Saved on this phone'),
         findsOneWidget);
     var deleted = false;
     await tester.pumpWidget(app(ResultCard(

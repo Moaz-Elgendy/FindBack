@@ -48,9 +48,10 @@ variable "disk_size_gb" {
     error_message = "Use a disk between 20 and 100 GB."
   }
 }
-variable "github_repository" {
-  type    = string
-  default = "Moaz-Elgendy/FindBack"
+variable "github_oidc_subject_prefix" {
+  description = "Exact subject prefix from GitHub actions/oidc/customization/sub, including immutable owner/repository IDs."
+  type        = string
+  default     = "repo:Moaz-Elgendy@297489873/FindBack@1393710703"
 }
 variable "deploy_branch" {
   type    = string

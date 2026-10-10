@@ -2,7 +2,7 @@
 
 Automated verification for `285d023` passed [CI38042960896](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38042960896).
 The user subsequently approved merging and deploying that tested branch. `master`
-now contains it; deployment run [38048448001](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38048448001) is in progress.
+now contains it; deployment run [38048448001](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38048448001) passed after the OIDC trust repair below.
 Phase 5 commit `8c9930d` passed CI38039569558 (1131 backend / 463 Flutter tests,
 one existing skip each). Phase 6 CI passed with 1137 backend / 468 Flutter tests,
 one existing skip each. The device-label follow-up below requires a new CI gate.
@@ -49,7 +49,8 @@ an explicitly requested sign-in continuation. No review minor was deferred.
 
 ## Checks
 
-- Full Flutter: 468 passed, one existing skip. Final rendered/widget matrix: 32 passed.
+- Full Flutter checkpoint: 468 passed, one existing skip. Final rendered/widget matrix: 32 passed.
+  Full rerun after the offline-label fix: 470 passed, one existing skip.
 - Readiness API/UI regressions: 2 passed.
 - Account backend suite: 9 passed.
 - Final credential-cache/processing/sharing suites: 41 passed.
@@ -123,5 +124,24 @@ The installed APK certificate was added to the production App Link setting,
 preserving existing fingerprints and a protected copy of the previous environment.
 Before deployment, `/health` returned 200 and `/ready` returned 404.
 The old backend also summarized a missing Wikipedia page; do not treat that probe
-as a successful public-article extraction. Release readiness and sharing checks
-remain pending until the new deployment finishes.
+as a successful public-article extraction. Release `/ready` now reports API, DB/schema, Redis, worker, dispatcher and beat
+healthy; `assetlinks.json` serves the installed certificate. Registered sharing
+and deletion smoke checks are blocked by missing server-only
+`SUPABASE_SERVICE_ROLE_KEY`; secure configuration was requested. No disposable
+accounts were created. Device domain verification was requested, but the
+emulator disconnected before its verification status could be read.
+
+## Deployment OIDC repair
+
+The first deployment attempt failed because GitHub issued immutable subject
+prefix `repo:Moaz-Elgendy@297489873/FindBack@1393710703`, while IAM trusted the
+old name-only prefix. Terraform now uses the exact immutable prefix plus
+`ref:refs/heads/master`. A saved targeted plan was inspected: only the
+deploy-role subject changed; principal, audience and permissions were unchanged.
+The trust/pipeline regression was observed failing, then passed, and is now part
+of CI. The retry deployed `285d023` successfully.
+
+The first offline-label CI run also identified two existing tests still expecting
+the misleading label. Both now assert the correct local boundary. The full local
+Flutter suite passed 470 tests; the corrected follow-up needs its fresh CI gate.
+The rebuilt APK displayed “Saved on this phone” during the strict network block.

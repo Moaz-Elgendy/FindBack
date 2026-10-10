@@ -173,7 +173,7 @@ void main() {
     }
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Reading 1'), findsOneWidget);
-    expect(find.text('Just saved · reading it now'), findsOneWidget);
+    expect(find.text('Saved on this phone'), findsOneWidget);
     expect(find.text('Save your first link'), findsNothing);
     expect(find.text('Nothing matches yet'), findsNothing);
     await tester.pumpWidget(const SizedBox());

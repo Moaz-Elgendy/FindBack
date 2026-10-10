@@ -141,3 +141,5 @@ Ruling: classify in the worker, not by blocking ingestion on an anonymous networ
 - Evidence and retained rulings: `docs/phase6-verification.md`. Unchecked device flows: `docs/manual-device-checklist.md`.
 
 - Device follow-up: stable emulator; fresh public article ready; HTTPS-blocked local save survived restart and recovered. Fixed local card label with red→green regression (4 passed), analyze and APK passed. Dark theme persisted. User approved merge/deploy; `master` advanced to tested `285d023`; CI/deploy38048448001 underway after a validated PostgreSQL17 backup. Live provider/notification/sharing checks remain outstanding.
+
+- Production deployment38048448001 passed on retry after correcting exact immutable GitHub OIDC subject in IAM/Terraform; permissions unchanged. Public readiness reports all services healthy. Source regression script added to CI. Two stale local-label expectations corrected; full Flutter470 passed/one skip. Provider sharing/deletion smoke test blocked before creating accounts by missing server SUPABASE_SERVICE_ROLE_KEY; secure configuration requested.

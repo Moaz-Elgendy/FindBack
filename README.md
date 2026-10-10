@@ -230,4 +230,8 @@ URLs stay owner-scoped and cannot enter the public cache or snapshot links.
 
 See [Phase 6 evidence](docs/phase6-verification.md) and the
 [unchecked device checklist](docs/manual-device-checklist.md) before rollout.
-The feature branch does not deploy production.
+Production deployment runs from `master` after both test jobs pass. AWS OIDC
+trust must match GitHub’s exact immutable subject prefix (owner/repository IDs)
+and the deployment branch; Terraform keeps this in `github_oidc_subject_prefix`.
+Account deletion requires the server-only `SUPABASE_SERVICE_ROLE_KEY`; configure
+it securely on the server, never in Flutter build definitions.

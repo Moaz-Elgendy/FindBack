@@ -4,7 +4,7 @@ import subprocess
 import yaml
 
 root = Path(__file__).resolve().parents[1]
-workflow = yaml.load((root / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+workflow = yaml.load((root / '.github/workflows/ci-cd.yml').read_text(), Loader=yaml.BaseLoader)
 assert set(workflow['on']) == {'push', 'pull_request', 'workflow_dispatch'}
 jobs = workflow['jobs']; deploy = jobs['deploy']
 assert set(deploy['needs']) == {'backend', 'mobile'}
@@ -18,6 +18,11 @@ commands = '\n'.join(s.get('run', '') for s in deploy['steps'])
 assert 'docker push' in commands and 'ssm send-command' in commands
 assert 'GITHUB_SHA' in commands and 'raw.githubusercontent.com' in commands
 assert 'AWS_ACCESS_KEY_ID' not in str(deploy)
+trust = (root / 'infrastructure/cicd.tf').read_text()
+variables = (root / 'infrastructure/variables.tf').read_text()
+assert '"token.actions.githubusercontent.com:sub" = "${var.github_oidc_subject_prefix}:ref:refs/heads/${var.deploy_branch}"' in trust
+assert 'repo:Moaz-Elgendy@297489873/FindBack@1393710703' in variables
+assert 'StringEquals' in trust and 'StringLike' not in trust
 production = (root / 'infrastructure/compose.production.yml').read_text()
 assert 'BACKEND_IMAGE' in production and 'build:' not in production
 script = (root / 'infrastructure/deploy.sh').read_text()
