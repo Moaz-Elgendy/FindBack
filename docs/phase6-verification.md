@@ -247,9 +247,12 @@ the worker URL lock; a worker rechecks the item's content association after
 claiming its job. Completed private snapshots never seed the global cache.
 
 A read-only, private backup of the physical phone showed 22 completed guest
-briefs and 21 pending account cards. Thirteen unfinished account cards have
-matching completed guest originals and existing sync mappings. Restoration is
-pending deployment of the corrected server and APK. Ready account cards and
+briefs and 21 pending account cards. Twenty unfinished account cards have
+matching completed guest originals and existing sync mappings: thirteen guest
+rows were marked ready, and seven more retained usable final briefs behind
+pending/processing labels. A prepared private repair copy passed SQLite integrity
+checks and preserved all 25 account rows; the rollout applies it after the
+corrected backend and APK are available. Ready account cards and
 unmatched unfinished captures must remain untouched. No account, real card or
 provider counter was deleted/reset. Imported snapshots use lexical search;
 AI embeddings are not generated during account migration.
@@ -257,9 +260,17 @@ AI embeddings are not generated during account migration.
 Latest local checkpoint: Flutter analyze passed, the full Flutter suite passed
 475 tests with one existing skip, and the import/confirmation backend suite
 passed seven tests. The earlier full backend run passed 1138 tests with one
-existing skip before the import changes; the complete updated backend suite
-must pass CI before deployment. A harmless existing Starlette/httpx test-client
+existing skip before the import changes; the complete updated backend suite subsequently
+passed [CI run 38079165692](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38079165692)
+with 1144 backend tests and 475 Flutter tests passing (one existing skip each). A harmless existing Starlette/httpx test-client
 deprecation warning remains. Supabase's URL configuration was corrected by the
 user; a deliberately invalid diagnostic verification token returned a 303 to
 the production `/auth/confirmed` path, confirming localhost is no longer used.
 No real confirmation token was replayed.
+
+A fresh Supabase-generated signup confirmation link was verified with a disposable
+identity, without sending an email. Its successful verification redirected to
+the production confirmation page with the expected signup fragment; subsequent
+password sign-in passed. The disposable provider identity was deleted afterward.
+The actual email delivery and tap in a recipient's mail client remain separate
+manual checks.
