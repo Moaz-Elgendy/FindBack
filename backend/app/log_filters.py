@@ -12,14 +12,27 @@ is the one that matters most.
 
 `uvicorn.access` is deliberately excluded from both: its records have a fixed
 format string that expects specific args, and clearing args breaks the
-formatter. Access logs carry neither secrets nor content.
+formatter. Access logs preserve their arguments; share paths have a dedicated mask.
 """
 from __future__ import annotations
 
 import logging
+import re
 
 from app import env
 from app.services import privacy
+
+
+SHARE_PATH = re.compile(r'(/(?:s|api/v1/shares)/)[^/?#\s]+')
+
+
+class ShareAccessMask(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.args, tuple) and len(record.args) == 5:
+            args = list(record.args)
+            args[2] = SHARE_PATH.sub(r'\1<share-token>', str(args[2]))
+            record.args = tuple(args)
+        return True
 
 
 class SecretMask(logging.Filter):
@@ -39,6 +52,7 @@ class SecretMask(logging.Filter):
             secret = env.get(name)
             if secret and len(secret) > 5 and secret in text_:
                 text_ = text_.replace(secret, env.mask_key(secret))
+        text_ = SHARE_PATH.sub(r'\1<share-token>', text_)
         record.msg = text_
         record.args = ()
         # Note: we clear args after formatting the message so that downstream
@@ -54,7 +68,7 @@ def install_secret_masking() -> None:
     root logger alone would miss exactly the access/error logs we care about.
     uvicorn.access is intentionally excluded: its records have a fixed format
     string that expects specific args; clearing args breaks the formatter.
-    Access logs do not contain secrets.
+    Share paths are masked separately without clearing access arguments.
     """
     mask = SecretMask()
     for name in ("", "findback", "uvicorn", "uvicorn.error",
@@ -88,3 +102,6 @@ def install_log_filters() -> None:
     """Install both filters. Idempotent, so any process may call it any time."""
     install_secret_masking()
     install_privacy_filtering()
+    access = logging.getLogger('uvicorn.access')
+    if not any(isinstance(f, ShareAccessMask) for f in access.filters):
+        access.addFilter(ShareAccessMask())

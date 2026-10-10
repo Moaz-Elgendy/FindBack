@@ -93,6 +93,10 @@ def _seed_legacy_rows(url: str) -> dict:
         # Reset to a true pre-Phase-1 database: every table added after
         # revision 0001 must go, or re-running the chain would try to create
         # them again.
+        conn.execute(text("DROP TABLE IF EXISTS share_redemptions CASCADE"))
+        conn.execute(text("DROP TABLE IF EXISTS memory_shares CASCADE"))
+        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS display_name"))
+        conn.execute(text("ALTER TABLE items DROP COLUMN IF EXISTS shared_by"))
         conn.execute(text("DROP TABLE IF EXISTS collection_items CASCADE"))
         conn.execute(text("DROP TABLE IF EXISTS collections CASCADE"))
         conn.execute(text("ALTER TABLE items DROP CONSTRAINT IF EXISTS items_id_user_uq"))

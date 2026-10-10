@@ -104,6 +104,7 @@ class SummarizeAgainRequest(BaseModel):
 
 
 class ItemDetail(BaseModel):
+    shared_by: str | None = None
     edited: bool = False
     description_only: bool = False
     reprocessing: bool = False

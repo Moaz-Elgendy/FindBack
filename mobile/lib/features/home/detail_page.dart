@@ -1,3 +1,5 @@
+import '../../services/account_coordinator.dart';
+import '../account/account_page.dart';
 import '../../widgets/feedback.dart';
 import 'widgets/saved_date.dart';
 import 'widgets/memory_chip.dart';
@@ -181,11 +183,34 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _share(ItemDetail item) async {
+    final canShareMemory = item.isReady && !item.needsRetry && !item.linkOnly;
     final box = context.findRenderObject() as RenderBox?;
+    final choice = await showModalBottomSheet<String>(context: context,
+      builder: (sheet) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(enabled: canShareMemory, title: const Text('Share this memory'),
+          subtitle: Text(canShareMemory ? 'Send a copy of this summary' : 'A ready summary is needed'),
+          leading: const Icon(Icons.ios_share), onTap: canShareMemory ? () => Navigator.pop(sheet, 'memory') : null),
+        ListTile(title: const Text('Share original link'), leading: const Icon(Icons.link),
+          onTap: () => Navigator.pop(sheet, 'original')),
+      ])));
+    if (choice == null || !mounted) return;
     try {
-      await SharePlus.instance.share(ShareParams(text: item.url,
+      var link = item.url;
+      if (choice == 'memory') {
+        final accounts = AccountCoordinatorScope.maybeOf(context);
+        if (accounts?.auth.currentSession == null) {
+          _showSnack('Sign in to share a memory.');
+          if (accounts != null) await Navigator.push(context, MaterialPageRoute<void>(builder: (_) => AccountPage(auth: accounts.auth)));
+          return;
+        }
+        final services = _services;
+        if (services == null) return;
+        final share = await services.api.createShare(item.id);
+        link = share['url'] as String;
+      }
+      await SharePlus.instance.share(ShareParams(text: link,
         sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size));
-    } catch (_) { if (mounted) _showSnack('Could not share this link. Try again.'); }
+    } catch (_) { if (mounted) _showSnack('Could not share this memory. Try again.'); }
   }
 
   @override
@@ -273,6 +298,8 @@ class _DetailPageState extends State<DetailPage> {
         if (item.category == 'recipe') FilledButton.tonalIcon(onPressed: _toggleCookMode,
           icon: Icon(_cookMode ? Icons.dark_mode : Icons.restaurant), label: Text(_cookMode ? 'Exit Cook Mode' : 'Cook Mode')),
       ]),
+      if (item.briefSource == 'shared_snapshot') Padding(padding: const EdgeInsets.only(top: 16),
+        child: Text(item.sharedBy == null ? 'Shared by a FindBack user' : 'Shared by ${item.sharedBy}', style: theme.textTheme.bodySmall)),
       if (showSearchDebugTags && item.tags.isNotEmpty) ExpansionTile(title: Text('Tags', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)), subtitle: Text('${item.tags.length} search tags'),
         children: [Wrap(spacing: 6, runSpacing: 6, children: [for (final tag in item.tags) Chip(label: Text(tag))])]),
     ]);

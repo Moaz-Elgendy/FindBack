@@ -68,6 +68,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=GEN_RANDOM_UUID)
+    display_name = Column(String(80))
     email = Column(String(320), unique=True, nullable=False)
     # Phase 16: the issuer's stable identifier for this person. Identity is keyed
     # on this rather than on `email`, because an address can be reassigned and
@@ -128,6 +129,7 @@ class Item(Base):
     reprocess_failure = Column(Text)
     regeneration_day = Column(Date)
     regeneration_count = Column(Integer, default=0, server_default='0', nullable=False)
+    shared_by = Column(String(80))
     edited_title = Column(Text)
     edited_summary = Column(Text)
     link_only = Column(Boolean, default=False, server_default=text("false"), nullable=False)
@@ -515,3 +517,23 @@ class SnapshotItem(Base):
                          primary_key=True)
     # Keep counted ids after a save is purged; account deletion cascades via the snapshot.
     save_id = Column(UUID(as_uuid=True), primary_key=True)
+
+
+class MemoryShare(Base):
+    __tablename__ = 'memory_shares'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    token_hash = Column(String(64), unique=True, nullable=False)
+    snapshot = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    __table_args__ = (Index('memory_shares_owner_created_idx', 'user_id', 'created_at'),)
+
+
+class ShareRedemption(Base):
+    __tablename__ = 'share_redemptions'
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    token_hash = Column(String(64), primary_key=True)
+    item_id = Column(UUID(as_uuid=True), ForeignKey('items.id', ondelete='SET NULL'))
+    created_at = Column(DateTime(timezone=True), nullable=False)

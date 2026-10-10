@@ -12,4 +12,4 @@ Account has Export and destructive Delete controls, the exact warning “You are
 
 Snapshot sharing is Phase 5; Share still uses the existing source sharing action until that phase. Visual comparison of all prototype sections, device behavior and native links remain for Phase 6. Production deployment is unchanged.
 
-Verification: local `flutter analyze` clean; full Flutter suite 455 passed, one existing skip. The final metadata alignment regression also passed after centering the chip/date/menu row. Fresh review's legacy collection finding was reproduced and fixed with a data-preservation regression. CI gate pending.
+Verification: local `flutter analyze` clean; full Flutter suite 455 passed, one existing skip. The final metadata alignment regression also passed after centering the chip/date/menu row. Fresh review's legacy collection finding was reproduced and fixed with a data-preservation regression. CI https://github.com/Moaz-Elgendy/FindBack/actions/runs/38031745141 passed for commit `57d51be`.

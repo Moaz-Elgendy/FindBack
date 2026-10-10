@@ -1,3 +1,4 @@
+import 'share_settings.dart';
 import '../../widgets/feedback.dart';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -443,6 +444,14 @@ class _AccountPageState extends State<AccountPage> {
                     if (mounted) _toast('Delete confirmations reset');
                   }, failureMessage: 'Could not reset confirmations. Try again.')),
               ]),
+            ],
+            if (session != null && _api != null) ...[
+              _heading('Sharing'),
+              _group([ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.ios_share),
+                title: const Text('Display name and share links'), trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>
+                  Scaffold(appBar: AppBar(title: const Text('Sharing')), body: SafeArea(child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24), child: ShareSettings(api: _api!)))))))]),
             ],
             _heading('Your data'),
                   _group([

@@ -192,3 +192,24 @@ Migration `0025` reconciles snapshot privacy and preserves original counts for
 databases that already applied an earlier `0021`. After backing up the database,
 run `alembic upgrade head` before deploying. Previously lost snapshot IDs cannot
 be recovered; downgrading `0025` deliberately retains its privacy/count fixes.
+
+## Snapshot sharing
+
+Share a ready memory from its detail dock; the sheet also offers the original
+source URL. Sign in to create or redeem a memory link. Account → Sharing stores an
+optional public display name and lists active links with Revoke. No sender email
+is included. Link expiry, revocation and sender deletion never remove copies a
+recipient already saved. Source deletion leaves its explicit snapshot available.
+
+`SHARE_LINK_TTL_DAYS` is the single lifetime setting (30 by default). Configure
+`SHARE_LINK_ORIGIN`, `ANDROID_APP_LINK_PACKAGE`, and the installed build's actual
+`ANDROID_APP_LINK_FINGERPRINTS` before verifying Android App Links. The origin must
+match the compiled API origin and Manifest host. Set `ANDROID_PLAY_STORE_URL` only
+when a real listing exists; otherwise the fallback omits installation links.
+Native iOS association requires an Apple signing team; none is configured here.
+
+Migration `0027_memory_sharing` is additive. Recipient attribution stays in the
+existing SQLite brief payload; pending links use encrypted, origin-scoped device
+storage across sign-in. Snapshots copy only display content and a lexical index,
+with no private tags, hints, raw extraction, embeddings or AI processing at
+redemption. See [Phase 5 evidence](docs/phase5-verification.md).

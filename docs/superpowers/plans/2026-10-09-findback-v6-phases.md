@@ -51,7 +51,7 @@ backend health/ingest/outbox/tasks, Compose/deployment startup, and covering tes
   conditional feed requests, migrations and backend regression tests.
 - [x] Phase 3: exact palette tokens, shared anchored actions/dialogs/toasts,
   confirmation opt-out/reset, silent refresh, status mapping, SQLite migrations.
-- [ ] Phase 4: all requested Library/Memory/Collections/Account screen changes.
+- [x] Phase 4: all requested Library/Memory/Collections/Account screen changes.
 - [ ] Phase 5: immutable share snapshots, native links/fallback/verification,
   sign-in continuation/redemption, list/revoke shares, display name.
 - [ ] Phase 6: visual comparison in both themes/narrow widths, all tests and CI,
@@ -117,4 +117,13 @@ Ruling: classify in the worker, not by blocking ingestion on an anonymous networ
 - Polling excludes local queued rows, backs off through 60 seconds, and coalesces refreshes. Account removal clears confirmation preferences and resets theme to Auto.
 - Fresh review found hidden legacy collections with identical automatic membership; regression red→green now preserves their names and options. Navbar large-text and date-alignment regressions fixed.
 - Local analyze clean; full Flutter suite 455 passed/one existing skip, plus final feed alignment checks. Evidence: `docs/phase4-verification.md`.
-- CI gate pending; do not start Phase 5 until green.
+- Commit `57d51be`; CI https://github.com/Moaz-Elgendy/FindBack/actions/runs/38031745141 green. Phase 5 investigation started after this gate; implementation remains pending.
+
+### Phase 5 implementation in progress
+
+- Immutable sanitized snapshots, hashed tokens, default 30-day single expiry setting, active-link revocation, optional display names, independent recipient copies and account-origin-scoped pending tokens implemented.
+- Existing Android channel handles cold/warm share links; no public content on landing page; real signing fingerprints configure assetlinks. No configured iOS signing team; optional association/device checks remain deployment-dependent.
+- Migration fixtures updated without weakening schema-parity/downward-replay checks (64 passed). Snapshot/privacy/expiry/concurrency tests: 13 passed. Log-filter tests: 19 passed. Native boundary compilation and debug APK passed. Full-app pending-token continuation test passed.
+- Ruling: snapshots retain a sanitized lexical index and omit private embeddings — redemption must use no AI and private tags/hints must not leak — semantic-only snapshot retrieval requires a later sanitized embedding call.
+- Ruling: attribution uses the existing version-8 SQLite brief payload and pending tokens use secure storage — no new SQL field is needed — an old reader ignores attribution safely.
+- Full backend checkpoint: 1130 passed/one existing skip; final sharing/access-log regressions: 14 passed. Final Flutter: 463 passed/one existing skip; analyze clean; native check passed. CI is pending; Phase 6 not started.

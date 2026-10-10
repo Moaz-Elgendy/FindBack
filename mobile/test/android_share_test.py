@@ -20,11 +20,17 @@ classpath = os.pathsep.join(map(str, jars))
 stdlib = next(cache.glob('org.jetbrains.kotlin/kotlin-stdlib/2.2.21/*/*.jar'))
 
 sources = {
+    'Settings.kt': '''package android.provider
+object Settings {
+    const val ACTION_APP_NOTIFICATION_SETTINGS = "settings"
+    const val EXTRA_APP_PACKAGE = "package"
+}''',
     'Intent.kt': '''package android.content
 class Intent(val action: String? = null, val text: CharSequence? = null,
     val texts: ArrayList<CharSequence>? = null, val data: android.net.Uri? = null) {
     fun getCharSequenceExtra(key: String): CharSequence? = text
     fun getCharSequenceArrayListExtra(key: String): ArrayList<CharSequence>? = texts
+    fun putExtra(key: String, value: String): Intent = this
     companion object {
         const val ACTION_VIEW = "android.intent.action.VIEW"
         const val ACTION_SEND = "android.intent.action.SEND"
@@ -51,6 +57,8 @@ import io.flutter.embedding.engine.FlutterEngine
 open class FlutterActivity {
     @set:JvmName("storeIntent")
     var intent = Intent()
+    val packageName = "com.findback.findback"
+    fun startActivity(value: Intent) {}
     fun setIntent(value: Intent) { intent = value }
     open fun configureFlutterEngine(engine: FlutterEngine) {}
     open fun onNewIntent(intent: Intent) {}
@@ -100,6 +108,16 @@ fun main() {
     check(MethodChannel.initial("getInitialAuthLink") == null)
     activity.onNewIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(recovery)))
     check(MethodChannel.emitted.last() == recovery)
+    val sharedMemory = "https://findback.duckdns.org/s/" + "a".repeat(43)
+    activity.onNewIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(sharedMemory)))
+    check(MethodChannel.emitted.last() == sharedMemory)
+    val sharedCold = MainActivity()
+    sharedCold.setIntent(Intent(Intent.ACTION_VIEW, data = android.net.Uri(sharedMemory)))
+    sharedCold.configureFlutterEngine(FlutterEngine())
+    check(MethodChannel.initial("getInitialAuthLink") == sharedMemory)
+    check(MethodChannel.initial("getInitialAuthLink") == null)
+    activity.configureFlutterEngine(FlutterEngine())
+    MethodChannel.initial("getInitialAuthLink")
     MethodChannel.initial("pauseDelivery")
     val emittedBeforePause = MethodChannel.emitted.size
     activity.onNewIntent(Intent(Intent.ACTION_SEND, "https://example.test/paused"))

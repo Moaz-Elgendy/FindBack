@@ -203,6 +203,20 @@ class ApiClient {
 
   Future<void> deleteCollection(String id) => _delete('/api/v1/collections/$id');
 
+  Future<Map<String, dynamic>> createShare(String id) => _post('/api/v1/items/$id/share', const {});
+  Future<ItemDetail> redeemShare(String token) async =>
+      ItemDetail.fromJson(await _post('/api/v1/shares/$token/redeem', const {}));
+  Future<Map<String, dynamic>> shareProfile() => _get('/api/v1/account/profile', const {});
+  Future<void> saveDisplayName(String? name) async {
+    await _send(() async => _dio.putUri<dynamic>(AppConfig.apiUri('/api/v1/account/profile'),
+        data: {'display_name': name}, options: Options(headers: await _headers(true))));
+  }
+  Future<List<Map<String, dynamic>>> activeShares() async {
+    final data = await _get('/api/v1/account/shares', const {});
+    return (data['shares'] as List).map((v) => Map<String, dynamic>.from(v as Map)).toList();
+  }
+  Future<void> revokeShare(String id) => _delete('/api/v1/account/shares/$id');
+
   Future<void> deleteItem(String id) => _delete('/api/v1/items/$id');
 
   Future<void> deleteUndoable(String id) => _delete('/api/v1/items/$id', {'undoable': 'true'});

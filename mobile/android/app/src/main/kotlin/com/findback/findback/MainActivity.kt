@@ -67,6 +67,7 @@ class MainActivity : FlutterActivity() {
     private fun authLink(intent: Intent): String? {
         if (intent.action != Intent.ACTION_VIEW) return null
         val uri = intent.data ?: return null
+        if (uri.scheme == "https" && uri.host == "findback.duckdns.org" && Regex("^/s/[A-Za-z0-9_-]{43}$").matches(uri.path ?: "")) return uri.toString()
         return if (uri.scheme == "findback" && uri.host == "auth" && uri.path == "/recovery") uri.toString() else null
     }
 

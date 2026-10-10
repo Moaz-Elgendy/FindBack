@@ -1,3 +1,4 @@
+import 'share_links.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -40,10 +41,17 @@ class ShareIntentService {
   Stream<String> get shares => _incoming.stream;
   final _authIncoming = StreamController<String>.broadcast();
   Stream<String> get authLinks => _authIncoming.stream;
+  String? _pendingMemoryLink;
+
   Future<String?> readInitialAuthLink() async {
-    try { return await _channel.invokeMethod<String>('getInitialAuthLink'); }
-    on MissingPluginException { return null; }
-    on PlatformException { return null; }
+    String? native;
+    try { native = await _channel.invokeMethod<String>('getInitialAuthLink'); }
+    on MissingPluginException { /* The pending in-app link still applies. */ }
+    on PlatformException { /* The pending in-app link still applies. */ }
+    if (native != null) return native;
+    final pending = _pendingMemoryLink;
+    _pendingMemoryLink = null;
+    return pending;
   }
 
   Future<Object?> _onPlatformCall(MethodCall call) async {
@@ -54,7 +62,15 @@ class ShareIntentService {
     }
     if (call.method != 'onShare') return null;
     final Object? text = call.arguments;
-    if (text is String && text.isNotEmpty) _incoming.add(text);
+    if (text is String && text.isNotEmpty) {
+      final memory = _memoryPayload(text);
+      if (memory.link != null) {
+        _authIncoming.add(memory.link!);
+        if (extractUrlsFromShareText(memory.remaining).isNotEmpty) _incoming.add(memory.remaining);
+      } else {
+        _incoming.add(text);
+      }
+    }
     return null;
   }
 
@@ -71,6 +87,13 @@ class ShareIntentService {
     _channel.setMethodCallHandler(null);
     unawaited(_incoming.close());
     unawaited(_authIncoming.close());
+  }
+
+  static ({String? link, String remaining}) _memoryPayload(String text) {
+    final memories = extractUrlsFromShareText(text).where((url) => shareToken(url) != null).toList();
+    // shortcut: one pending memory per payload; add a token queue if bulk snapshot sharing is needed.
+    if (memories.length != 1) return (link: null, remaining: text);
+    return (link: memories.single, remaining: text.replaceAll(memories.single, ''));
   }
 
   /// The URL inside a share payload, or null when it is not a link.
@@ -90,6 +113,11 @@ class ShareIntentService {
     if (!_disposed) _channel.setMethodCallHandler(_onPlatformCall);
     try {
       final String? text = await _channel.invokeMethod<String>('getInitialShare');
+      final memory = _memoryPayload(text ?? '');
+      if (memory.link != null) {
+        _pendingMemoryLink = memory.link;
+        return extractUrlsFromShareText(memory.remaining).isEmpty ? null : memory.remaining;
+      }
       return (text == null || text.isEmpty) ? null : text;
     } on MissingPluginException {
       return null;

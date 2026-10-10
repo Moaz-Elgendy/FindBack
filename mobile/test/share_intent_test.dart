@@ -47,6 +47,54 @@ void main() {
         status: 'pending',
       );
 
+  test('memory link is held for sign-in and never queued for AI', () async {
+    final token = List.filled(43, 'a').join();
+    final link = 'https://findback.duckdns.org/s/$token';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getInitialShare') return link;
+      return null;
+    });
+    final share = ShareIntentService(channel: channel);
+    expect(await share.readInitialShare(), isNull);
+    expect(await share.readInitialAuthLink(), link);
+    expect(await share.readInitialAuthLink(), isNull);
+    await share.dispose();
+  });
+
+  test('recovery link does not discard a pending memory link', () async {
+    final link = 'https://findback.duckdns.org/s/${List.filled(43, 'a').join()}';
+    var recovery = true;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getInitialShare') return link;
+      if (call.method == 'getInitialAuthLink' && recovery) {
+        recovery = false;
+        return 'findback://auth/recovery';
+      }
+      return null;
+    });
+    final share = ShareIntentService(channel: channel);
+    await share.readInitialShare();
+    expect(await share.readInitialAuthLink(), 'findback://auth/recovery');
+    expect(await share.readInitialAuthLink(), link);
+    await share.dispose();
+  });
+
+  test('a memory link in a source batch never discards ordinary URLs', () async {
+    final link = 'https://findback.duckdns.org/s/${List.filled(43, 'a').join()}';
+    final payload = 'Memory $link and https://example.com/ordinary';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async =>
+          call.method == 'getInitialShare' ? payload : null);
+    final share = ShareIntentService(channel: channel);
+    final ordinary = await share.readInitialShare();
+    expect(ordinary, contains('https://example.com/ordinary'));
+    expect(ordinary, isNot(contains(link)));
+    expect(await share.readInitialAuthLink(), link);
+    await share.dispose();
+  });
+
   test('a share that launched the app is saved', () async {
     mockPlatform(initialShare: 'Look at this https://example.com/shared');
     final ShareIntentService share = ShareIntentService(channel: channel);

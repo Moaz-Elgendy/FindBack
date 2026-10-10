@@ -1,3 +1,8 @@
+import 'config.dart';
+import 'data/api_client.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'services/share_links.dart';
+import 'widgets/feedback.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 
@@ -197,11 +202,21 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
       await widget.accounts!.ready;
       if (!mounted) return;
       final link = await services.share.readInitialAuthLink();
-      if (link != null) await _recovery(link);
+      if (link != null) {
+        await _recovery(link);
+      } else {
+        await _resumeShare();
+      }
     });
   }
 
   Future<void> _recovery(String link) async {
+    final token = shareToken(link);
+    if (token != null) {
+      await _shareStorage.write(key: _pendingShareKey, value: token);
+      await _resumeShare(promptSignIn: true);
+      return;
+    }
     final accounts = widget.accounts;
     if (accounts == null) return;
     await accounts.ready;
@@ -223,6 +238,56 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
     }
   }
 
+  static final _pendingShareKey = 'findback.pendingShareToken.${Uri.parse(AppConfig.apiBaseUrl).origin}';
+  final _shareStorage = const FlutterSecureStorage();
+  bool _redeemingShare = false;
+
+  Future<void> _resumeShare({bool promptSignIn = false}) async {
+    final accounts = widget.accounts;
+    if (accounts == null || _redeemingShare) return;
+    await accounts.ready;
+    await accounts.settled;
+    final token = await _shareStorage.read(key: _pendingShareKey);
+    if (token == null || !mounted || _redeemingShare) return;
+    if (accounts.auth.currentSession == null) {
+      if (promptSignIn) {
+        final context = _navigator.currentContext;
+        if (context != null && context.mounted) showFindBackToast(context, 'Sign in to save this shared memory.');
+        await _navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) => AccountPage(auth: accounts.auth)));
+        if (mounted) await _resumeShare();
+      }
+      return;
+    }
+    _redeemingShare = true;
+    final bound = services;
+    final accountId = accounts.auth.currentSession!.id;
+    try {
+      final item = await bound.api.redeemShare(token);
+      if (!mounted || accounts.auth.currentSession?.id != accountId) return;
+      await bound.db.upsertRemoteItems([item]);
+      if (!mounted || accounts.auth.currentSession?.id != accountId) return;
+      if (await _shareStorage.read(key: _pendingShareKey) == token) {
+        await _shareStorage.delete(key: _pendingShareKey);
+      }
+      _navigator.currentState?.push(MaterialPageRoute<void>(builder: (_) =>
+        DetailPage(itemId: item.id, items: bound.items, services: bound)));
+    } catch (error) {
+      if (!mounted || accounts.auth.currentSession?.id != accountId) return;
+      final context = _navigator.currentContext;
+      if (error is ApiException && (error.statusCode == 404 || error.statusCode == 410)) {
+        if (await _shareStorage.read(key: _pendingShareKey) == token) await _shareStorage.delete(key: _pendingShareKey);
+      }
+      if (context != null && context.mounted) {
+        showFindBackToast(context, error is ApiException && error.statusCode == 410
+          ? 'This share link has expired or been revoked.' : 'Could not save this shared memory. Open the link to try again.');
+      }
+    } finally {
+      _redeemingShare = false;
+      final next = await _shareStorage.read(key: _pendingShareKey);
+      if (mounted && next != null && next != token) unawaited(_resumeShare());
+    }
+  }
+
   void _changed() {
     if (!mounted) return;
     _navigator.currentState?.popUntil((route) => route.isFirst);
@@ -230,6 +295,7 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
     _bindLinks();
     _bindReminders();
     _bindWeeklyNote();
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) unawaited(_resumeShare()); });
   }
 
   @override

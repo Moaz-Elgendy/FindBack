@@ -11,6 +11,7 @@ class ItemDetail {
     required this.keyPoints,
     required this.entities,
     required this.tags,
+    this.sharedBy,
     this.title,
     this.titleClean,
     this.summary,
@@ -45,6 +46,7 @@ class ItemDetail {
       keyPoints: stringList(json['key_points']),
       entities: objectMap(json['entities']),
       tags: stringList(json['tags']),
+      sharedBy: json['shared_by'] as String?,
       title: json['title'] as String?,
       titleClean: json['title_clean'] as String?,
       summary: json['summary'] as String?,
@@ -78,6 +80,7 @@ class ItemDetail {
   final List<String> keyPoints;
   final Map<String, Object?> entities;
   final List<String> tags;
+  final String? sharedBy;
   final String? title;
   final String? titleClean;
   final String? summary;
@@ -146,6 +149,7 @@ class ItemDetail {
         'status': status,
         'created_at': createdAt?.toIso8601String(),
         'brief_payload': jsonEncode(<String, Object?>{
+          'shared_by': sharedBy,
           'instant_brief': instantBrief, 'best_takeaway': bestTakeaway,
           'missing_info': missingInfo, 'needs_retry': needsRetry,
           'failure_reason': failureReason,
@@ -177,6 +181,7 @@ class ItemDetail {
       canonicalUrl: row['canonical_url'] as String? ?? url,
       keyPoints: stringList(brief['key_points']),
       entities: objectMap(brief['entities']),
+      sharedBy: brief['shared_by'] as String?,
       instantBrief: brief['instant_brief'] as String?,
       bestTakeaway: brief['best_takeaway'] as String?,
       missingInfo: brief['missing_info'] as String?,

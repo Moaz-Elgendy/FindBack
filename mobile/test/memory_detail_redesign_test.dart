@@ -61,6 +61,24 @@ void main() {
   Future<void> close(WidgetTester tester,AppServices services) async {
     await tester.pumpWidget(const SizedBox()); await tester.runAsync(services.dispose);
   }
+  testWidgets('failed brief offers original sharing without a false ready copy', (tester) async {
+    final failed = ItemDetail.fromJson({'id': 'failed', 'url': 'https://example.test/failed',
+      'title': 'Failed source', 'status': 'ready', 'needs_retry': true, 'key_points': []});
+    final services = await setup(tester, record: failed);
+    await tester.pumpWidget(AppServicesScope(services: services, child: MaterialApp(
+      theme: FindBackTheme.build(Brightness.light), home: DetailPage(itemId: failed.id,
+        items: services.items, services: services))));
+    await settle(tester);
+    await tester.tap(find.text('Share'));
+    await settle(tester);
+    final primary = tester.widget<ListTile>(find.widgetWithText(ListTile, 'Share this memory'));
+    expect(primary.enabled, isFalse);
+    expect(primary.onTap, isNull);
+    expect(find.text('Share original link'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(services.dispose);
+  });
+
   testWidgets('detail sets denied reminder, offers Settings and removes stored choice', (tester) async {
     final services=await setup(tester,allowed:false);
     await tester.pumpWidget(MaterialApp(theme:FindBackTheme.build(Brightness.light),home:DetailPage(itemId:item.id,items:services.items,services:services)));
