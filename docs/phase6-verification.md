@@ -137,10 +137,28 @@ account deletion and recipient survival. They used a clearly marked ready fixtur
 this does not establish successful AI ingestion. All disposable identities were
 cleaned up, and the separate disposable guest probe was removed.
 
-Live AI ingestion timed out: Gemini's configured daily request limit is 20 and
-all 20 requests were used. The user chose to keep this limit. Rechecking found
-about 8 hours 24 minutes remaining; do not increase limits or clear counters to
-complete verification. Fresh device/backend AI processing remains pending.
+The first live AI ingestion attempt was paused by Gemini's configured daily
+request limit (20/20). Groq is configured as the chat fallback and can complete
+the summary, but Gemini embeddings still use the same exhausted quota. A pending
+card had a summary and no embedding; this explains why chat fallback alone did
+not finish processing. Embeddings are not silently replaced with incompatible
+Groq vectors.
+
+The user subsequently authorized raising `GEMINI_DAILY_REQUEST_LIMIT` to 30.
+A protected environment backup was created, usage counters were preserved,
+compose validated, and API/worker/dispatcher/beat reloaded. A fresh guest save of
+`https://en.wikipedia.org/wiki/Serial-position_effect` reached `ready` through
+the deployed HTTPS API; the disposable save was removed. A later recheck reports
+Gemini usage 22/30 and every readiness component healthy. A physical Samsung SM-S731B was subsequently connected over wireless ADB.
+The installed APK hash matches the tested debug APK; existing saves remained
+visible. Android Share submitted `https://en.wikipedia.org/wiki/Generation_effect`.
+The feed updated automatically to a complete summary; SQLite recorded the card
+as `ready`. Worker logs referenced that exact card ID, and its production asset
+and job reached `READY`/`EMBED`. Android verified the production domain on this
+phone as well. A later direct item lookup was empty because API logs recorded
+an explicit `DELETE /api/v1/items/<test-card-id>` returning 204; this is not
+classified as an unexplained processing failure. No actual notification delivery
+or live sign-in continuation is claimed from this phone check.
 
 Additional emulator checks passed: guest export opens Android's share sheet,
 produces valid version-1 JSON with six saves, and includes no access-token,

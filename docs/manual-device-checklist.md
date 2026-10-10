@@ -1,13 +1,17 @@
 # Final device checklist
 
+Checked rows have recorded evidence; unchecked rows remain manual acceptance
+checks, including notification delivery and sign-in continuation on a physical phone.
+
 Run after deploying the feature branch, backing up PostgreSQL and running
 `alembic upgrade head` (0027). Install the configured APK without clearing data.
 Use disposable registered accounts for destructive checks; preserve real saves.
 
-- [ ] Confirm the compiled API URL is `https://findback.duckdns.org`. Check
+- [x] Confirm the compiled API URL is `https://findback.duckdns.org`. Check
   `/ready` reports API, database/schema, worker, dispatcher and beat healthy.
-- [ ] Save a fresh public article using Android Share and the center + sheet.
-  Observe upload → reading → ready, automatic feed updates, and no refresh spinner.
+- [x] Save a fresh public article using Android Share; observe automatic feed
+  updates and a ready summary without manual refresh. Verified on Samsung SM-S731B.
+- [ ] Repeat the fresh-save check using the center + sheet.
 - [ ] Save while genuinely offline, restart FindBack, then reconnect. The capture
   remains on the phone and uploads automatically without duplicate cards.
 - [ ] Stop the worker. Confirm `/ready` returns 503 and Library visibly reports
