@@ -108,8 +108,12 @@ class _ReminderButtonState extends State<ReminderButton> {
   @override Widget build(BuildContext context) {
     final colors = Theme.of(context).brightness == Brightness.dark ? FindBackTheme.dark : FindBackTheme.light;
     return OutlinedButton.icon(onPressed: _busy ? null : _open,
-      style: _reminder == null ? null : OutlinedButton.styleFrom(
-        backgroundColor: colors[FindBackColor.accentSoft], foregroundColor: colors[FindBackColor.accentInk]),
+      style: OutlinedButton.styleFrom(alignment: AlignmentDirectional.centerStart,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 15.5, fontWeight: FontWeight.w600),
+        side: BorderSide(color: colors[_reminder == null ? FindBackColor.line : FindBackColor.accent]!),
+        backgroundColor: colors[_reminder == null ? FindBackColor.card : FindBackColor.accentSoft],
+        foregroundColor: colors[_reminder == null ? FindBackColor.ink : FindBackColor.accentInk]),
       icon: Icon(_reminder == null ? Icons.notifications_none : Icons.notifications_active_outlined),
       label: Text(_busy ? 'Setting reminder…' : _reminder == null ? 'Remind me' : 'Reminder · ${_label(_reminder!)}'));
   }

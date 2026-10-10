@@ -465,10 +465,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 16, 12),
               child: Container(
           decoration: BoxDecoration(color: theme.colorScheme.surface,
-            border: Border.all(color: theme.colorScheme.outline), borderRadius: BorderRadius.circular(16)),
-          padding: const EdgeInsetsDirectional.fromSTEB(14, 6, 14, 12),
+            border: Border.all(color: theme.colorScheme.outlineVariant, width: 2), borderRadius: BorderRadius.circular(22)),
+          padding: const EdgeInsetsDirectional.fromSTEB(16, 14, 16, 14),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            TextField(
+            TextField(style: theme.textTheme.bodyLarge?.copyWith(fontSize: 17, fontWeight: FontWeight.w500, height: 1.4),
                 controller: _input, focusNode: _inputFocus, autofocus: true,
               minLines: 2, maxLines: 5,
                 textInputAction: TextInputAction.search,
@@ -508,9 +508,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ] else
         Padding(padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 16, 12), child: OutlinedButton.icon(
           style: OutlinedButton.styleFrom(backgroundColor: theme.colorScheme.surface,
-            alignment: AlignmentDirectional.centerStart, padding: const EdgeInsetsDirectional.fromSTEB(16, 16, 16, 16)),
+            foregroundColor: theme.colorScheme.onSurfaceVariant, side: BorderSide(color: theme.colorScheme.outlineVariant),
+            textStyle: theme.textTheme.labelLarge?.copyWith(fontSize: 15, fontWeight: FontWeight.w400),
+            alignment: AlignmentDirectional.centerStart, padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14)),
           onPressed: _openFind, icon: const Icon(Icons.search, size: 20),
           label: const Text('What do you remember?'))),
+            ValueListenableBuilder<ApiException?>(
+              valueListenable: widget.services.api.processingError,
+              builder: (context, error, _) => error == null ? const SizedBox.shrink()
+                : Padding(padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 16, 8),
+                    child: Semantics(liveRegion: true, child: Text(error.queuedMessage,
+                      style: theme.textTheme.bodySmall)))),
             ValueListenableBuilder<int>(
               valueListenable: widget.services.pending,
               builder: (context, count, _) => count == 0 ? const SizedBox.shrink()

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../config.dart';
 import '../models/item.dart';
@@ -43,6 +44,8 @@ class ApiException implements Exception {
 /// Typed wrapper over the FindBack API. Everything is `Future`-based and throws
 /// [ApiException]; no raw `Map` escapes to the UI.
 class ApiClient {
+  final processingError = ValueNotifier<ApiException?>(null);
+  bool _closed = false;
   Future<Map<String, dynamic>> validateGuestSession(String token) => _send(() =>
       _dio.getUri<dynamic>(AppConfig.apiUri('/api/v1/auth/me'),
           options: Options(headers: {'Authorization': 'Bearer $token'})));
@@ -69,7 +72,12 @@ class ApiClient {
   late final TokenStore _tokens;
   final _feedCache = <(String, String?), ({String etag, Map<String, dynamic> body})>{};
 
-  void close() => _dio.close(force: true);
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _dio.close(force: true);
+    processingError.dispose();
+  }
 
   Future<IngestResult> ingestUrl(String url, {String? preview, String? titleHint}) async {
     final data = await _post('/api/v1/ingest', <String, Object?>{
@@ -135,7 +143,17 @@ class ApiClient {
       }
       return response;
     });
-    return ItemPage.fromJson(data);
+    final page = ItemPage.fromJson(data);
+    ApiException? unavailable;
+    if (page.items.any((item) => item.isGeneratingBrief)) {
+      try {
+        await _send(() => _dio.getUri<dynamic>(AppConfig.apiUri('/ready')));
+      } on ApiException catch (error) {
+        if (error.kind == ApiFailureKind.server) unavailable = error;
+      }
+    }
+    if (!_closed) processingError.value = unavailable;
+    return page;
   }
 
   Future<List<MemoryReminder>> listReminders() async {

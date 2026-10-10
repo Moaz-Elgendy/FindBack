@@ -1,6 +1,6 @@
 # Phase 5 — immutable memory sharing
 
-Implementation remains under verification; no production deployment.
+Commit `8c9930d`; CI passed. No production deployment.
 
 Backend revision `0027_memory_sharing` adds optional account display names,
 recipient attribution, hashed opaque share tokens and independent redemption records.
@@ -55,7 +55,7 @@ of this branch's association route and the actual certificate configuration.
 - Native Kotlin boundary check passed for cold/warm share/recovery buffering.
 - Final full Flutter suite: 463 passed, one existing skip; analyze reports no issues.
 - Debug Android APK built; full-app pending-token/sign-in/cache regression passed.
-- Full backend suite: 1130 passed, one existing skip; final failed-brief/source-metadata regressions passed afterward. Final sharing/access-log targeted rerun: 14 passed. Native boundary rerun passed. CI is pending.
+- Full backend suite: 1130 passed, one existing skip; final failed-brief/source-metadata regressions passed afterward. Final sharing/access-log targeted rerun: 14 passed. Native boundary rerun passed. CI https://github.com/Moaz-Elgendy/FindBack/actions/runs/38039569558 passed: 1131 backend and 463 Flutter tests, one existing skip each; analyze clean.
 
 No live AI processing was used for snapshot redemption. Recipient snapshots use
 lexical search; they intentionally do not reuse private embeddings. Semantic

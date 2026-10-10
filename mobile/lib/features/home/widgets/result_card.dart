@@ -91,7 +91,7 @@ class _ResultCardState extends State<ResultCard> {
         },
         onShowFocusHighlight: (value) => setState(() => _focused = value),
         child: Card.outlined(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             color: colors[result.isFailed
                 ? FindBackColor.failedBackground
                 : result.isGeneratingBrief
@@ -125,7 +125,7 @@ class _ResultCardState extends State<ResultCard> {
                             onTap: widget.onTap,
                             onLongPress: _hasMenu ? _menu.open : null,
                             child: Padding(
-                                padding: const EdgeInsets.all(16),
+                                padding: const EdgeInsets.all(18),
                                 child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
@@ -174,7 +174,7 @@ class _ResultCardState extends State<ResultCard> {
                                                               category: result
                                                                   .category))),
                                               if (result.createdAt != null)
-                                                Flexible(
+                                                Expanded(
                                                     child: Padding(
                                                         padding:
                                                             const EdgeInsetsDirectional

@@ -43,8 +43,8 @@ def delete_account(db, user):
     if owner is None:
         return
     item_ids = [str(row[0]) for row in db.execute(text('SELECT id FROM items WHERE user_id=:u'), {'u': owner.id})]
-    delete_raw_snapshots(item_ids)
     delete_provider_identity(owner)
+    delete_raw_snapshots(item_ids)
     db.execute(insert(DeletedIdentity).values(subject_hash=subject_hash(owner.auth_subject)).on_conflict_do_nothing())
     # PUBLIC assets are shared; legacy rows may still have an owner attached.
     db.execute(text("UPDATE content_assets SET owner_user_id=NULL WHERE owner_user_id=:u AND visibility='PUBLIC'"), {'u': owner.id})

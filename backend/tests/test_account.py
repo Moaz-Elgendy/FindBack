@@ -61,8 +61,8 @@ def test_delete_preserves_other_user_and_shared_content_blocks_old_token(client,
         with pytest.raises(HTTPException) as failure:
             identity.resolve_user(session, {'sub': subject, 'email': 'a@example.test'})
         assert failure.value.status_code == 401
-    assert calls[0] == [two_users['a_item']]
-    assert calls[1] == subject
+    assert calls[0] == subject
+    assert calls[1] == [two_users['a_item']]
     client.as_user(two_users['b'])
     assert client.request('GET', f"/api/v1/items/{two_users['b_item']}").status_code == 200
 
@@ -72,8 +72,11 @@ def test_delete_provider_failure_keeps_saves_and_preferences(client, sessions, t
     def fail(user):
         raise HTTPException(503, 'Account deletion is temporarily unavailable')
     monkeypatch.setattr(account, 'delete_provider_identity', fail)
+    removed = []
+    monkeypatch.setattr(account, 'delete_raw_snapshots', lambda ids: removed.extend(ids))
     client.as_user(two_users['a'])
     assert client.request('DELETE', '/api/v1/account').status_code == 503
+    assert removed == [], 'Provider failure must preserve every stored snapshot'
     assert client.request('GET', f"/api/v1/items/{two_users['a_item']}").status_code == 200
 
 

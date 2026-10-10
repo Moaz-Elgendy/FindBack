@@ -59,7 +59,14 @@ void main() {
 
   Future<void> close(WidgetTester tester, AppServices services) async {
     await tester.pumpWidget(const SizedBox.shrink());
-    await tester.runAsync(services.dispose);
+    var disposed = false;
+    final closing = services.dispose().then((_) => disposed = true);
+    for (var i = 0; i < 200 && !disposed; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+      await tester.pump();
+    }
+    expect(disposed, isTrue);
+    await closing;
   }
 
   Future<void> capture(WidgetTester tester, GlobalKey boundary, String path) async {
@@ -77,6 +84,18 @@ void main() {
     'status': 'ready', 'instant_brief': 'A useful summary about $id.', 'brief_source': 'llm',
     'content_type': type, 'topics': topics, 'category': type,
     'created_at': DateTime.now().toUtc().toIso8601String(),
+  });
+
+  testWidgets('worker outage is visible while saved cards remain on screen', (tester) async {
+    final services = await setup(tester, records: [memory('AI', 'video', ['AI'])]);
+    await tester.pumpWidget(MaterialApp(theme: FindBackTheme.build(Brightness.light),
+      home: LibraryShell(services: services)));
+    await settle(tester);
+    services.api.processingError.value = ApiException('Processing unavailable', statusCode: 503, kind: ApiFailureKind.server);
+    await tester.pumpAndSettle();
+    expect(find.text('The processing service is unavailable. Your links are safe and will retry.'), findsOneWidget);
+    expect(find.text('AI memory'), findsOneWidget);
+    await close(tester, services);
   });
 
   testWidgets('Library launcher opens full-screen Find with focused input and returns', (tester) async {
@@ -210,7 +229,7 @@ void main() {
           tester.view.physicalSize = Size(width, 900); tester.view.devicePixelRatio = 1;
           addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
           final services = await setup(tester, records: [memory('AI', 'video', ['AI']),
-            memory('recipe', 'recipe', ['Food']), memory('product', 'product', ['Design'])]);
+            memory('recipe', 'recipe', ['Food']), memory('product', 'product', ['Design']), memory('AI second', 'video', ['AI'])]);
           final boundary = GlobalKey();
           await tester.pumpWidget(RepaintBoundary(key: boundary, child: MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -222,15 +241,21 @@ void main() {
           expect(tester.takeException(), isNull);
           expect(tester.getSize(find.byTooltip('Save a link')).shortestSide, greaterThanOrEqualTo(44));
           expect(find.text('Library'), findsOneWidget); expect(find.text('Collections'), findsOneWidget);
-          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1 && width != 320) {
+          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1) {
             await capture(tester, boundary, '/tmp/findback-home-${brightness.name}-${width.toInt()}.png');
           }
           await tester.tap(find.text('What do you remember?')); await settle(tester);
           expect(tester.takeException(), isNull);
           expect(find.widgetWithText(FilterChip, 'something to buy'), findsOneWidget);
           expect(find.byType(FilterChip), findsNWidgets(6));
-          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1 && width != 320) {
+          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1) {
             await capture(tester, boundary, '/tmp/findback-find-${brightness.name}-${width.toInt()}.png');
+          }
+          await tester.tap(find.text('Cancel')); await settle(tester);
+          await tester.tap(find.text('Collections')); await settle(tester);
+          expect(tester.takeException(), isNull);
+          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1) {
+            await capture(tester, boundary, '/tmp/findback-collections-${brightness.name}-${width.toInt()}.png');
           }
           await close(tester, services);
         });

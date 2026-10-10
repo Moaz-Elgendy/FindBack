@@ -10,6 +10,31 @@ class _Tokens extends TokenStore {
 }
 
 void main() {
+  test('processing feed retains cards and reports worker outage even on unchanged refresh', () async {
+    var healthy = false;
+    final paths = <String>[];
+    final api = ApiClient(tokens: _Tokens(), dio: Dio()..interceptors.add(
+      InterceptorsWrapper(onRequest: (request, handler) {
+        paths.add(request.path);
+        if (request.path.endsWith('/ready')) {
+          handler.resolve(Response(requestOptions: request, statusCode: healthy ? 200 : 503,
+            data: {'status': healthy ? 'ok' : 'degraded', 'worker': healthy ? 'ok' : 'down'}));
+        } else {
+          handler.resolve(Response(requestOptions: request, statusCode: healthy ? 304 : 200,
+            headers: Headers.fromMap({'etag': ['"reading"']}), data: healthy ? null : {
+              'items': [{'id': 'reading', 'url': 'https://example.test', 'status': 'processing'}]}));
+        }
+      })));
+    try {
+      expect((await api.listItems()).items.single.id, 'reading');
+      expect(api.processingError.value?.statusCode, 503);
+      healthy = true;
+      expect((await api.listItems()).items.single.id, 'reading');
+      expect(api.processingError.value, isNull);
+      expect(paths.where((path) => path.endsWith('/ready')), hasLength(2));
+    } finally { api.close(); }
+  });
+
   test('feed validators reuse content and stay scoped to account and query',
       () async {
     final tokens = _Tokens();

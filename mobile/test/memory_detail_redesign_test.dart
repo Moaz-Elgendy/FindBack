@@ -61,6 +61,19 @@ void main() {
   Future<void> close(WidgetTester tester,AppServices services) async {
     await tester.pumpWidget(const SizedBox()); await tester.runAsync(services.dispose);
   }
+  testWidgets('detail uses the reference title and left-aligned reminder control', (tester) async {
+    tester.view.devicePixelRatio = 1; tester.view.physicalSize = const Size(360, 800);
+    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+    final services = await setup(tester);
+    await tester.pumpWidget(MaterialApp(theme: FindBackTheme.build(Brightness.light),
+      home: DetailPage(itemId: item.id, items: services.items, services: services)));
+    await settle(tester);
+    expect(tester.widget<Text>(find.text(item.bestTitle)).style!.fontSize, 26);
+    final button = find.ancestor(of: find.text('Remind me'), matching: find.byType(OutlinedButton));
+    expect(tester.getTopLeft(find.text('Remind me')).dx - tester.getTopLeft(button).dx, lessThan(65));
+    await close(tester, services);
+  });
+
   testWidgets('failed brief offers original sharing without a false ready copy', (tester) async {
     final failed = ItemDetail.fromJson({'id': 'failed', 'url': 'https://example.test/failed',
       'title': 'Failed source', 'status': 'ready', 'needs_retry': true, 'key_points': []});
@@ -212,7 +225,7 @@ void main() {
             home:RepaintBoundary(key:boundary,child:DetailPage(itemId:item.id,items:services.items,services:services))));
           await settle(tester); expect(tester.takeException(),isNull);
           expect(find.text('Open original'),findsOneWidget); expect(find.text('Share'),findsOneWidget);
-          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale==1 && width!=320) {
+          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale==1) {
             await tester.runAsync(() async {
               final image=await (boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary).toImage();
               final bytes=await image.toByteData(format:ui.ImageByteFormat.png);

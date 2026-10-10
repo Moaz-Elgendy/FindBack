@@ -307,14 +307,26 @@ class _AccountPageState extends State<AccountPage> {
               children: [
                 if (session != null && !_recovering) ...[
                   _group([
-                    Row(children: [
-                      const CircleAvatar(radius: 24, child: Icon(Icons.person_outline)),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(session.email, style: Theme.of(context).textTheme.titleMedium)),
-                    ]),
-                    const SizedBox(height: 8),
-                    Align(alignment: AlignmentDirectional.centerStart, child: TextButton(
-                      onPressed: _busy ? null : () => _run(widget.auth.signOut), child: const Text('Sign out'))),
+                    LayoutBuilder(builder: (context, constraints) {
+                      final identity = Row(children: [
+                        const CircleAvatar(radius: 26, child: Icon(Icons.person_outline)),
+                        const SizedBox(width: 14),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(session.email, maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium),
+                          Text('Signed in', style: Theme.of(context).textTheme.bodySmall),
+                        ])),
+                      ]);
+                      final signOut = OutlinedButton(onPressed: _busy ? null : () => _run(widget.auth.signOut),
+                        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12),
+                          foregroundColor: Theme.of(context).colorScheme.onSurface,
+                          side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        child: const Text('Sign out'));
+                      return MediaQuery.textScalerOf(context).scale(15) > 20
+                        ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [identity, const SizedBox(height: 8), signOut])
+                        : Row(children: [Expanded(child: identity), const SizedBox(width: 12), signOut]);
+                    }),
                   ]),
                 ] else ...[
                   Text(_recovering
@@ -422,14 +434,27 @@ class _AccountPageState extends State<AccountPage> {
                   if (AppearanceScope.maybeOf(context) case final appearance?) ...[
                     _heading('Appearance'),
                     _group([
-                      Text('Theme', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      Wrap(spacing: 8, runSpacing: 8, children: [
-                        for (final option in const {ThemeMode.light: 'Light', ThemeMode.dark: 'Dark', ThemeMode.system: 'Auto'}.entries)
-                          ChoiceChip(label: Text(option.value), selected: appearance.mode == option.key,
-                            onSelected: _busy ? null : (_) => _run(() => appearance.select(option.key),
-                              failureMessage: 'Could not save appearance. Try again.')),
-                      ]),
+                      LayoutBuilder(builder: (context, constraints) {
+                        final theme = Theme.of(context);
+                        final controls = <Widget>[
+                          for (final option in const {ThemeMode.light: 'Light', ThemeMode.dark: 'Dark', ThemeMode.system: 'Auto'}.entries)
+                            Semantics(selected: appearance.mode == option.key, child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(minimumSize: const Size(44, 44),
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                textStyle: theme.textTheme.labelLarge?.copyWith(fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0),
+                                backgroundColor: appearance.mode == option.key ? theme.colorScheme.primary : theme.colorScheme.surface,
+                                foregroundColor: appearance.mode == option.key ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface,
+                                side: BorderSide(color: appearance.mode == option.key ? theme.colorScheme.primary : theme.colorScheme.outlineVariant),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+                              onPressed: _busy ? null : () => _run(() => appearance.select(option.key),
+                                failureMessage: 'Could not save appearance. Try again.'), child: Text(option.value))),
+                        ];
+                        final label = Text('Theme', style: theme.textTheme.titleMedium);
+                        return constraints.maxWidth < 270 || MediaQuery.textScalerOf(context).scale(15) > 18
+                          ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [label, const SizedBox(height: 8), Wrap(spacing: 8, runSpacing: 8, children: controls)])
+                          : Row(children: [label, const SizedBox(width: 12), Expanded(child: Row(children: [for (final (index, control) in controls.indexed) ...[
+                              if (index > 0) const SizedBox(width: 8), Expanded(child: control)]]))]);
+                      }),
                     ]),
                   ],
                   if (_services != null) ...[
@@ -465,7 +490,7 @@ class _AccountPageState extends State<AccountPage> {
                       ListTile(contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
                         title: Text('Delete account', style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                        subtitle: const Text('Removes saves and summaries.'),
+                        subtitle: const Text('Removes your saves and summaries.'),
                         trailing: TextButton(style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
                           onPressed: _busy || (widget.onDelete == null && AccountCoordinatorScope.maybeOf(context) == null) ? null : _deleteAccount,
                           child: const Text('Delete')),

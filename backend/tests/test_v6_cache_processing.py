@@ -154,3 +154,21 @@ def test_failed_anonymous_probe_clears_previous_public_proof(client, sessions, t
         assert not item.processing_metadata.get('anonymous_source')
         assert public_cache.lookup(session, url) is None
         assert session.get(ContentAsset, item.content_id).owner_user_id == item.user_id
+
+
+def test_credential_source_never_enters_anonymous_probe_or_global_cache(client, sessions, two_users, processing):
+    tasks, counts, _ = processing
+    url = 'https://example.com/protected-article?api_key=secret'
+    first = save(client, two_users['a'], url)
+    tasks.process_item.run(first)
+    second = save(client, two_users['b'], url)
+    tasks.process_item.run(second)
+    assert counts['anonymous'] == 0
+    assert counts['model'] == 2
+    with sessions() as session:
+        assert public_cache.lookup(session, url) is None
+        for item_id in [first, second]:
+            item = session.get(Item, uuid.UUID(item_id))
+            assert item.status == 'ready'
+            assert not item.processing_metadata.get('anonymous_source')
+            assert session.get(ContentAsset, item.content_id).owner_user_id == item.user_id

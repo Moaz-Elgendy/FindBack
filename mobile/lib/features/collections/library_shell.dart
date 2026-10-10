@@ -49,9 +49,9 @@ class _LibraryShellState extends State<LibraryShell> {
           decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
             border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant))),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _destination(0, Icons.bookmarks_outlined, Icons.bookmarks, 'Library'),
+            _destination(0, Icons.bookmark_border, Icons.bookmark_border, 'Library'),
             const SizedBox(width: 92),
-            _destination(1, Icons.collections_bookmark_outlined, Icons.collections_bookmark, 'Collections'),
+            _destination(1, Icons.grid_view_outlined, Icons.grid_view_outlined, 'Collections'),
           ]))),
         Align(alignment: Alignment.topCenter, child: DecoratedBox(
           decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [

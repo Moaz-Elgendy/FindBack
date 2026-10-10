@@ -77,6 +77,15 @@ void main() {
         home: AccountPage(auth: auth, api: api, notifications: notifications,
           onDelete: onDelete, onExport: onExport)));
 
+  testWidgets('Account normal text keeps identity and appearance controls on their reference rows', (tester) async {
+    tester.view.devicePixelRatio = 1; tester.view.physicalSize = const Size(360, 800);
+    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(app()); await tester.pumpAndSettle();
+    expect((tester.getCenter(find.text('person@example.test')).dy - tester.getCenter(find.text('Sign out')).dy).abs(), lessThan(24));
+    await tester.ensureVisible(find.text('Theme')); await tester.pumpAndSettle();
+    expect((tester.getCenter(find.text('Theme')).dy - tester.getCenter(find.text('Auto')).dy).abs(), lessThan(12));
+  });
+
   testWidgets('weekly opt-in explains before requesting; denied preference survives and Settings opens', (tester) async {
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
@@ -336,7 +345,7 @@ void main() {
             direction: scale == 2 ? TextDirection.rtl : TextDirection.ltr, onDelete: () async {}, capture: capture));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
-          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1 && width != 320) {
+          if (const bool.fromEnvironment('CAPTURE_REDESIGN') && scale == 1) {
             await tester.runAsync(() async {
               final image = await (capture.currentContext!.findRenderObject()! as RenderRepaintBoundary).toImage();
               final bytes = await image.toByteData(format: ui.ImageByteFormat.png);

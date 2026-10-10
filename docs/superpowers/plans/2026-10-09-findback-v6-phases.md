@@ -52,7 +52,7 @@ backend health/ingest/outbox/tasks, Compose/deployment startup, and covering tes
 - [x] Phase 3: exact palette tokens, shared anchored actions/dialogs/toasts,
   confirmation opt-out/reset, silent refresh, status mapping, SQLite migrations.
 - [x] Phase 4: all requested Library/Memory/Collections/Account screen changes.
-- [ ] Phase 5: immutable share snapshots, native links/fallback/verification,
+- [x] Phase 5: immutable share snapshots, native links/fallback/verification,
   sign-in continuation/redemption, list/revoke shares, display name.
 - [ ] Phase 6: visual comparison in both themes/narrow widths, all tests and CI,
   docs/env examples, final report and manual device checklist.
@@ -119,11 +119,23 @@ Ruling: classify in the worker, not by blocking ingestion on an anonymous networ
 - Local analyze clean; full Flutter suite 455 passed/one existing skip, plus final feed alignment checks. Evidence: `docs/phase4-verification.md`.
 - Commit `57d51be`; CI https://github.com/Moaz-Elgendy/FindBack/actions/runs/38031745141 green. Phase 5 investigation started after this gate; implementation remains pending.
 
-### Phase 5 implementation in progress
+### Phase 5 checkpoint
 
 - Immutable sanitized snapshots, hashed tokens, default 30-day single expiry setting, active-link revocation, optional display names, independent recipient copies and account-origin-scoped pending tokens implemented.
 - Existing Android channel handles cold/warm share links; no public content on landing page; real signing fingerprints configure assetlinks. No configured iOS signing team; optional association/device checks remain deployment-dependent.
 - Migration fixtures updated without weakening schema-parity/downward-replay checks (64 passed). Snapshot/privacy/expiry/concurrency tests: 13 passed. Log-filter tests: 19 passed. Native boundary compilation and debug APK passed. Full-app pending-token continuation test passed.
 - Ruling: snapshots retain a sanitized lexical index and omit private embeddings — redemption must use no AI and private tags/hints must not leak — semantic-only snapshot retrieval requires a later sanitized embedding call.
 - Ruling: attribution uses the existing version-8 SQLite brief payload and pending tokens use secure storage — no new SQL field is needed — an old reader ignores attribution safely.
-- Full backend checkpoint: 1130 passed/one existing skip; final sharing/access-log regressions: 14 passed. Final Flutter: 463 passed/one existing skip; analyze clean; native check passed. CI is pending; Phase 6 not started.
+- Full backend checkpoint: 1130 passed/one existing skip; final sharing/access-log regressions: 14 passed. Final Flutter: 463 passed/one existing skip; analyze clean; native check passed. Commit `8c9930d`; CI38039569558 green (1131 backend / 463 Flutter, one existing skip each). Phase 6 started after this gate.
+
+
+### Phase 6 verification
+
+- Fresh whole-branch review completed. Provider-failure snapshot preservation and same-token account-switch continuation were reproduced red→green and fixed.
+- Credential-bearing URLs now bypass anonymous global probing/publication/reuse and sharing; two-account processing regression and query-key classification regressions observed red→green (41 backend tests passed).
+- Worker/dispatcher/beat readiness is now observed during processing feed refreshes, including 304 responses; Library preserves cards and visibly reports failure, then clears it on recovery (2 API/UI regressions red→green).
+- Rendered all seven HTML sections in both themes; Flutter screenshot matrix covers 320/360/390dp. Corrected Account rows, detail title/navigation/reminder/font styling, feed menu/card spacing, Find field styling and bookmark/grid icons.
+- Full Flutter: 468 passed/one existing skip after removing an invalid letter-spacing adjustment. Final visual checks: 32 passed; analyze clean; configured APK and Docker builds passed. Full backend: 1137 passed/one existing skip. Final CI gate pending.
+- An initial full backend run had one 252ms/save timing failure against the unchanged 250ms budget. Isolated rerun passed at 54ms/save; final full rerun's first burst passed at 44ms/save. No threshold was changed.
+- Physical/device verification remains incomplete: Android 15 emulator repeatedly reported Pixel Launcher/System UI ANRs and disconnected, including after a data-preserving reboot. No data reset, production deployment or invented signing/listing configuration.
+- Evidence and retained rulings: `docs/phase6-verification.md`. Unchecked device flows: `docs/manual-device-checklist.md`.

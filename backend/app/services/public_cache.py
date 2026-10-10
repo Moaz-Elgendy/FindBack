@@ -19,11 +19,15 @@ WALL = re.compile(r'(?:log\s?in|sign in) (?:to|with)|this (?:video|post|content|
                   r'^(?:facebook|instagram|tiktok|youtube)\s*[-–:]?\s*(?:login|log in|sign in)|^private video', re.I)
 
 
+def has_credentials(url):
+    parsed = urlparse(url)
+    return bool(parsed.username or parsed.password or any(
+        re.search(r'token|secret|password|signature|credential|api.?key|authorization|^auth$|^sig$|^x-(?:amz|goog)-', key, re.I)
+        for key, _ in parse_qsl(parsed.query)))
+
+
 def anonymous_usable(url, fetched):
-    # A credential-bearing URL is not proof that the content is public.
-    params = [key.lower() for key, _ in parse_qsl(urlparse(url).query)]
-    if any(key in ('token', 'access_token', 'auth', 'password', 'signature', 'sig') or
-           key.startswith(('x-amz-', 'x-goog-')) for key in params):
+    if has_credentials(url):
         return False
     title = fetched.get('title') or ''
     body = (fetched.get('text') or '').strip()
@@ -56,6 +60,8 @@ def serialized(db, url):
 
 
 def lookup(db, url, *, now=None):
+    if has_credentials(url):
+        return None
     now = now or datetime.now(timezone.utc)
     asset = (db.query(ContentAsset).filter(ContentAsset.cache_url == canonical_url(url),
              ContentAsset.visibility == VISIBILITY_PUBLIC, ContentAsset.cache_payload.isnot(None),
@@ -73,7 +79,7 @@ def lookup(db, url, *, now=None):
 
 
 def publish(db, item):
-    if (item.needs_retry or not item.summary or not item.title_clean or
+    if (has_credentials(item.url) or item.needs_retry or not item.summary or not item.title_clean or
             not (item.processing_metadata or {}).get('anonymous_source') or
             (item.brief_v2 or {}).get('brief_source') != 'llm'):
         return None
@@ -121,6 +127,9 @@ def prepare(db, item, job):
     from copy import deepcopy
     from app.services import pipeline
     if item.reprocess_snapshot:
+        return False
+    if has_credentials(item.url):
+        item.processing_metadata = dict(item.processing_metadata or {}, anonymous_source=False)
         return False
     cached = lookup(db, item.url)
     if cached is not None:

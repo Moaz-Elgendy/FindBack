@@ -284,7 +284,7 @@ class _FindBackAppState extends State<FindBackApp> with WidgetsBindingObserver {
     } finally {
       _redeemingShare = false;
       final next = await _shareStorage.read(key: _pendingShareKey);
-      if (mounted && next != null && next != token) unawaited(_resumeShare());
+      if (mounted && next != null && (next != token || accounts.auth.currentSession?.id != accountId || !identical(services, bound))) unawaited(_resumeShare());
     }
   }
 

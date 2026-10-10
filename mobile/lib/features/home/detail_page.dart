@@ -218,7 +218,13 @@ class _DetailPageState extends State<DetailPage> {
     final theme = Theme.of(context);
     final item = _item;
     return Scaffold(
-      appBar: AppBar(leading: BackButton(onPressed: () => Navigator.maybePop(context)),
+      appBar: AppBar(leadingWidth: 112, leading: Padding(padding: const EdgeInsetsDirectional.only(start: 16, top: 6, bottom: 6),
+        child: OutlinedButton.icon(onPressed: () => Navigator.maybePop(context),
+          style: OutlinedButton.styleFrom(backgroundColor: theme.colorScheme.surface,
+            foregroundColor: theme.colorScheme.onSurface, padding: const EdgeInsets.symmetric(horizontal: 12),
+            side: BorderSide(color: theme.colorScheme.outlineVariant),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+          icon: const Icon(Icons.chevron_left, size: 18), label: const Text('Back'))),
         actions: [if (item != null && _services != null) FindBackActionMenu(actions: [
     for (final action in ['Edit', 'Copy summary', 'Summarize again', 'Delete'])
       FindBackAction(label: action, icon: switch (action) { 'Edit' => Icons.edit_outlined, 'Copy summary' => Icons.copy_outlined, 'Summarize again' => Icons.refresh, _ => Icons.delete_outline }, destructive: action == 'Delete', onPressed: () => _action(action)),
@@ -233,6 +239,7 @@ class _DetailPageState extends State<DetailPage> {
             const SizedBox(width: 10),
             OutlinedButton(onPressed: () => _share(item),
               style: OutlinedButton.styleFrom(backgroundColor: theme.colorScheme.surface,
+                foregroundColor: theme.colorScheme.onSurface, textStyle: theme.textTheme.labelLarge?.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
                 side: BorderSide(color: theme.colorScheme.outlineVariant),
                 padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16)),
               child: const Text('Share')),
@@ -248,8 +255,8 @@ class _DetailPageState extends State<DetailPage> {
       [for (final point in item.keyPoints) BriefKeyPoint(point: point)];
     final colors = theme.brightness == Brightness.dark ? FindBackTheme.dark : FindBackTheme.light;
     return ListView(padding: const EdgeInsetsDirectional.fromSTEB(20, 12, 20, 24), children: [
-      Text(item.bestTitle, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600,
-        height: 1.2, color: theme.colorScheme.onSurface)),
+      Text(item.bestTitle, style: theme.textTheme.headlineSmall?.copyWith(
+        fontSize: 26, height: 1.15, fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface)),
       const SizedBox(height: 12),
       Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
         MemoryChip(type: item.contentType ?? 'link', category: item.category ?? 'other'),

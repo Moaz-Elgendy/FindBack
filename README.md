@@ -213,3 +213,21 @@ existing SQLite brief payload; pending links use encrypted, origin-scoped device
 storage across sign-in. Snapshots copy only display content and a lexical index,
 with no private tags, hints, raw extraction, embeddings or AI processing at
 redemption. See [Phase 5 evidence](docs/phase5-verification.md).
+
+
+## Verification and rollout
+
+Back up PostgreSQL before deploying; startup applies additive migrations through
+`0027_memory_sharing`. SQLite upgrades automatically to version 8 and preserves
+saved copies. Keep API, worker, dispatcher and beat running through the provided
+deployment configuration. During processing, Library also checks `/ready` on its
+existing refresh cadence and shows an outage without hiding saved cards.
+
+Compile only public mobile settings (`API_BASE_URL`, `SUPABASE_URL`,
+`SUPABASE_PUBLISHABLE_KEY`); the Flutter binary does not read `.env` at runtime.
+Never pass the server's complete `.env` as mobile build definitions. Credential
+URLs stay owner-scoped and cannot enter the public cache or snapshot links.
+
+See [Phase 6 evidence](docs/phase6-verification.md) and the
+[unchecked device checklist](docs/manual-device-checklist.md) before rollout.
+The feature branch does not deploy production.

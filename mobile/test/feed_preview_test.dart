@@ -64,6 +64,8 @@ void main() {
     expect(find.text('First useful idea'), findsOneWidget);
     expect(tester.getCenter(find.byType(SavedDate)).dy,
         closeTo(tester.getCenter(find.byType(MemoryChip)).dy, 1));
+    expect(tester.getRect(find.byType(MenuAnchor)).right,
+        closeTo(tester.getRect(find.ancestor(of: find.byType(SavedDate), matching: find.byType(Row))).right, 1));
     expect(find.text('Fourth useful idea'), findsNothing);
     await tester.tap(find.text('+1 more'));
     await tester.pumpAndSettle();

@@ -5,7 +5,7 @@ from html import escape
 import os
 import re
 import secrets
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +21,7 @@ from app.database import get_db
 from app.models import Item, Chunk, MemoryShare, ShareRedemption
 from app.schemas import ItemDetail
 from app.utils.url_safety import validate_url
+from app.services.public_cache import has_credentials
 from app.utils.canonical import source_domain, source_type
 
 router = APIRouter(tags=['sharing'])
@@ -94,7 +95,7 @@ def create_share(item_id: UUID, db: Session = Depends(get_db), user=Depends(regi
         raise HTTPException(429, 'You can create up to 20 share links per day', headers={'Retry-After': '86400'})
     detail = ItemDetail.model_validate(item)
     url = validate_url(item.canonical_url)
-    if any(re.search(r'(?:token|secret|password|signature|credential|api.?key|authorization)', key, re.I) for key, _ in parse_qsl(urlsplit(url).query)):
+    if has_credentials(url):
         raise HTTPException(409, 'Use a public source URL without access credentials before sharing')
     points = detail.key_points_with_refs or [{'point': p} for p in detail.key_points]
     # Whitelist display content; no extraction, private notes/tags/hints or asset references.

@@ -103,6 +103,11 @@ def test_cached_output_excludes_edits_hints_notes_and_identity(sessions, two_use
     ('https://facebook.com/posts/1', 'Log in to Facebook', 'Sign in to continue to view this content'),
     ('https://youtube.com/watch?v=dQw4w9WgXcQ', 'Private video', 'This video is private'),
     ('https://example.com/page?access_token=secret', 'An accessible page', 'Public looking text'),
+    ('https://example.com/page?api_key=secret', 'An accessible page', 'A credential-protected article body that looks public and has useful content.'),
+    ('https://example.com/page?authorization=secret', 'An accessible page', 'A credential-protected article body that looks public and has useful content.'),
+    ('https://example.com/page?client_secret=secret', 'An accessible page', 'A credential-protected article body that looks public and has useful content.'),
+    ('https://example.com/page?credential=secret', 'An accessible page', 'A credential-protected article body that looks public and has useful content.'),
+    ('https://example.com/page?X-Amz-Signature=secret', 'An accessible page', 'A credential-protected article body that looks public and has useful content.'),
 ])
 def test_login_walled_or_credential_links_are_not_public(url, title, body):
     assert not public_cache.anonymous_usable(url, {'title': title, 'text': body, 'input_provenance': 'page'})

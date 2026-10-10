@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:findback/app.dart';
 import 'package:findback/app_services.dart';
 import 'package:findback/data/api_client.dart';
@@ -17,11 +18,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class RedeemingApi extends ApiClient {
-  RedeemingApi(this.saved, {super.tokens});
+  RedeemingApi(this.saved, {super.tokens, this.gate});
   final List<String> saved;
+  final Completer<void>? gate;
   @override
   Future<ItemDetail> redeemShare(String token) async {
     saved.add(token);
+    if (saved.length == 1 && gate != null) await gate!.future;
     return ItemDetail.fromJson({
       'id': 'recipient-copy', 'url': 'https://example.test/shared',
       'title': 'Shared snapshot title', 'summary': 'An independent copy',
@@ -33,7 +36,8 @@ class RedeemingApi extends ApiClient {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  testWidgets('pending token survives app restart then sign-in saves exactly one copy', (tester) async {
+  for (final switchAccount in [false, true]) {
+  testWidgets('pending token survives restart and sign-in; account switch $switchAccount', (tester) async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
     FlutterSecureStorage.setMockInitialValues({});
@@ -61,10 +65,11 @@ void main() {
     }
     final auth = AuthService();
     final saved = <String>[];
+    final gate = switchAccount ? Completer<void>() : null;
     final accounts = (await tester.runAsync(() => AccountCoordinator.create(auth: auth,
       factory: (scope, guest, tokens) async {
         final db = await LocalDb.openAt('${directory.path}/${scope ?? 'legacy'}.db');
-        final api = RedeemingApi(saved, tokens: tokens);
+        final api = RedeemingApi(saved, tokens: tokens, gate: gate);
         return AppServices(db: db, api: api, guest: guest,
           items: GuestLibrary(db, api).items,
           capture: CaptureService(ingest: (_, __, ___) async => throw UnimplementedError(),
@@ -95,17 +100,29 @@ void main() {
     }
     expect(switched, isTrue);
     await tester.pumpWidget(FindBackApp(services: accounts.services, accounts: accounts));
+    if (switchAccount) {
+      for (var i = 0; i < 100 && saved.isEmpty; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(saved, [token]);
+      auth.session.value = AuthSession(id: 'recipient-two', email: 'two@example.test',
+        accessToken: 'token-two', refreshToken: 'refresh-two', expiresAt: DateTime.now().add(const Duration(hours: 1)));
+      await drive(accounts.settled);
+      gate!.complete();
+    }
     for (var i = 0; i < 100; i++) {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
       await tester.pump(const Duration(milliseconds: 20));
       if (find.text('Shared by Alex').evaluate().isNotEmpty) break;
     }
     expect(find.text('Shared by Alex'), findsOneWidget);
-    expect(saved, [token]);
+    expect(saved, switchAccount ? [token, token] : [token]);
     expect(await tester.runAsync(() => storage.read(key: 'findback.pendingShareToken.https://findback.duckdns.org')), isNull);
     expect((await tester.runAsync(() => accounts.services.db.localItem('recipient-copy')))!.sharedBy, 'Alex');
     await tester.pumpWidget(const SizedBox());
     await drive(accounts.close());
     await tester.runAsync(() => directory.delete(recursive: true));
   });
+  }
 }

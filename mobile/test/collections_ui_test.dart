@@ -56,7 +56,7 @@ void main() {
     }
     await tester.pumpWidget(MaterialApp(home: LibraryShell(services: services)));
     await drain();
-    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined)); await drain();
+    await tester.tap(find.byIcon(Icons.grid_view_outlined)); await drain();
     expect(find.text('Your collections start here'), findsOneWidget);
     expect(find.textContaining('Kept on this device'), findsOneWidget);
     expect(find.byType(RefreshIndicator), findsNothing);
@@ -85,7 +85,7 @@ void main() {
     expect(find.byTooltip('Collection options'), findsOneWidget);
     Navigator.of(tester.element(find.text('My project'))).pop();
     await drain();
-    await tester.tap(find.byIcon(Icons.bookmarks_outlined)); await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.bookmark_border)); await tester.pumpAndSettle();
     expect(find.text('FindBack'), findsOneWidget);
     await tester.runAsync(() => services.db.setDeleteConfirmationSuppressed(true));
     FlutterSecureStorage.setMockInitialValues({});
