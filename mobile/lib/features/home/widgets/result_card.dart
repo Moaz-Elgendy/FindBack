@@ -132,7 +132,9 @@ class _ResultCardState extends State<ResultCard> {
                                     children: [
                                       if (result.isGeneratingBrief) ...[
                                         Text(
-                                            'Just saved · reading it now',
+                                            result.isLocalOnly
+                                                ? 'Saved on this phone'
+                                                : 'Just saved · reading it now',
                                             style: theme.textTheme.bodySmall
                                                 ?.copyWith(
                                                     color: colors[FindBackColor

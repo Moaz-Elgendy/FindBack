@@ -1,8 +1,11 @@
 # Phase 6 verification
 
-Final verification is in progress. This feature branch has not been merged or deployed.
+Automated verification for `285d023` passed [CI38042960896](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38042960896).
+The user subsequently approved merging and deploying that tested branch. `master`
+now contains it; deployment run [38048448001](https://github.com/Moaz-Elgendy/FindBack/actions/runs/38048448001) is in progress.
 Phase 5 commit `8c9930d` passed CI38039569558 (1131 backend / 463 Flutter tests,
-one existing skip each). Phase 6's final CI gate is pending.
+one existing skip each). Phase 6 CI passed with 1137 backend / 468 Flutter tests,
+one existing skip each. The device-label follow-up below requires a new CI gate.
 
 ## Visual comparison
 
@@ -65,8 +68,18 @@ an explicitly requested sign-in continuation. No review minor was deferred.
 ADB intermittently exposed Android 15 emulator `emulator-5554`. Installed the
 Phase 5 APK with `adb install -r`, preserving data. Pixel Launcher/System UI then
 reported ANRs, and the emulator repeatedly disconnected, including after reboot.
-No FindBack database or account was cleared. A reliable fresh-save/recovery run
-through the final configured APK has not been completed.
+No FindBack database or account was cleared. The emulator later became stable.
+The configured APK was installed preserving data; a fresh Testing effect article
+reached a ready summary through Android Share and automatic refresh.
+A stricter offline check blocked outgoing HTTPS with temporary IPv4/IPv6 firewall
+rules. SQLite confirmed a local pending Metacognition save with no server ID.
+It survived restart and completed automatically after both rules were removed.
+The check found and fixed a misleading local card label: local pending saves now
+say “Saved on this phone”, while server pending cards retain “reading it now”.
+The regression was observed failing, then all four feed preview tests passed;
+analyze and the configured APK rebuild passed.
+Detail navigation, anchored menu and Android clipboard preview were exercised.
+Dark mode persisted after restart. Screenshots are retained with the Phase 6 artifacts.
 
 The original phone build used `http://localhost:8000`, with no flavor/override or
 ADB reverse; only PostgreSQL/Redis were running. Phase 1 repaired and reproduced
@@ -98,3 +111,17 @@ The reviewer set credential-cache privacy and worker-down UI aside pending
 stronger evidence; both became concrete, tested fixes above. Visual fidelity was
 reviewed through rendered screenshots separately. Live provider/device behavior
 remains explicitly unverified rather than assumed to pass.
+
+## Approved deployment preparation
+
+The production PostgreSQL server is version 17. A version-matched custom-format
+backup was created and `pg_restore --list` validated it before migration:
+`/opt/findback/backups/v6-20261010/before-v6.dump` (526678 bytes, SHA-256
+`f037e8ac0029df7c8c1e8d9b476dafa88ad79a191c22636805ccefd457e120cc`).
+The first attempt with PostgreSQL 16 correctly refused the version mismatch.
+The installed APK certificate was added to the production App Link setting,
+preserving existing fingerprints and a protected copy of the previous environment.
+Before deployment, `/health` returned 200 and `/ready` returned 404.
+The old backend also summarized a missing Wikipedia page; do not treat that probe
+as a successful public-article extraction. Release readiness and sharing checks
+remain pending until the new deployment finishes.

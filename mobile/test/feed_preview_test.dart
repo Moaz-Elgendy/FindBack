@@ -8,6 +8,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final local in [true, false]) {
+    testWidgets('${local ? 'local' : 'server'} pending card reports its processing boundary',
+        (tester) async {
+      final item = ItemDetail.fromJson({
+        'id': local ? 'local-offline' : 'server-pending',
+        'url': 'https://example.com/article',
+        'status': 'pending',
+      });
+      await tester.pumpWidget(MaterialApp(
+          theme: FindBackTheme.build(Brightness.light),
+          home: Scaffold(body: ResultCard(
+              result: SearchResult.fromItem(item), onTap: () {}))));
+      expect(find.text(local ? 'Saved on this phone' : 'Just saved · reading it now'),
+          findsOneWidget);
+      expect(find.text(local ? 'Just saved · reading it now' : 'Saved on this phone'),
+          findsNothing);
+    });
+  }
+
   testWidgets('failed cards retain source URL and expose both recovery actions',
       (tester) async {
     var retried = false, kept = false;
